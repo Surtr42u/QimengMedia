@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="QimengCapsuleChip">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">30dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:background">@drawable/bg_capsule_soft</item>
+        <item name="android:gravity">center</item>
+        <item name="android:minWidth">48dp</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:textColor">?attr/qmColorTextSecondary</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="QimengProfileRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">72dp</item>
+        <item name="android:layout_marginBottom">12dp</item>
+        <item name="android:background">@drawable/bg_empty_panel</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingHorizontal">18dp</item>
+        <item name="android:textColor">?attr/qmColorTextPrimary</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <style name="NoActiveIndicator">
+        <item name="android:layout_height">0dp</item>
+        <item name="android:layout_width">0dp</item>
+    </style>
+</resources>

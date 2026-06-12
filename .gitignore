@@ -1,0 +1,21 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+*.apk
+*.aab
+.kotlin/
+gradle.properties
+
+# 运行日志和性能监控文件
+*.log
+*.txt
+!gradle/wrapper/gradle-wrapper.properties
+perf_monitor/

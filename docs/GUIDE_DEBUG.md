@@ -1,0 +1,303 @@
+# GUIDE_DEBUG - 真机调试、日志诊断与性能监测
+
+## 实现路径
+
+涉及文件：
+
+| 文件 | 职责 |
+|---|---|
+| `core/AppLog.kt` | 文件日志工具，同时写 logcat 和内部文件 |
+| `QimengApplication.kt` | 初始化 AppLog，全局 UncaughtExceptionHandler 写文件日志 |
+
+## 职责
+
+管理真机调试全流程：日志抓取、性能监测、闪退诊断、功能异常定位。日志与性能数据统一通过 AppLog 文件输出，一次读取即可同时获取运行日志和性能指标。
+
+不管：业务逻辑实现（见各功能指南）、UI 交互（见 GUIDE_UI.md）
+
+---
+
+## 第一部分：运行日志
+
+### 为什么需要文件日志
+
+Android 16 上 `adb logcat -d` 对非 root 设备返回空缓冲区（`0 B readable`），无法通过传统 logcat 读取应用日志。因此项目内置 `AppLog` 工具，将关键日志同时写入应用内部文件，通过 `adb shell run-as` 读取。
+
+### AppLog 工具
+
+#### 设计
+
+- 同时写 `android.util.Log`（logcat）和内部文件 `files/app_log.txt`
+- 文件大小限制 2MB，超限时保留最后 500 行
+- 每行格式：`MM-dd HH:mm:ss.SSS LEVEL/TAG: message`
+- 全局 UncaughtExceptionHandler 将未捕获异常也写入文件
+- **线程安全**：`writeLog()` 使用 `synchronized` 锁保护，多线程并发写入不会丢失日志或损坏文件
+
+#### API
+
+```kotlin
+AppLog.d(tag, msg)  // DEBUG
+AppLog.i(tag, msg)  // INFO
+AppLog.w(tag, msg, throwable?)  // WARN，可选异常堆栈
+AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
+```
+
+#### 日志标签约定
+
+| 标签 | 用途 |
+|---|---|
+| `Scan` | 常规扫描（scanDirectory/refreshScanSource） |
+| `CosScan` | COS 扫描（scanCosDirectory/scanCosMedia/queryCosFolder） |
+| `Detail` | 详情页加载（图片/视频预览、解码） |
+| `Home` | 首页推荐刷新 |
+| `AutoSync` | 自动同步 |
+| `AutoRefresh` | MediaStore 自动增量刷新（MediaStoreObserver） |
+| `AppPrefs` | 偏好管理（AppPrefsManager 写入失败等） |
+| `Profile` | 数据管理页面操作 |
+| `QimengMedia` | 全局异常、Application 生命周期 |
+
+#### 添加日志的原则
+
+1. **关键操作入口**加日志：方法开始、成功/失败
+2. **关键数据**加日志：文件数量、作者数量、查询结果
+3. **分支路径**加日志：MediaStore hit/miss、SAF fallback
+4. **异常捕获**加日志：catch 块中用 `AppLog.e(tag, msg, exception)`
+5. **避免高频日志**：循环内部不加日志，避免 2MB 限制过快触发
+6. **采样日志**：大量数据取前 3 条样本（如 `allSafMedia.take(3).forEach { AppLog.d(...) }`）
+
+---
+
+## 第二部分：性能监测
+
+### 监测方法
+
+项目使用 **Android Studio Profiler (Perfetto)** 作为性能分析工具，不内置任何性能监测 SDK 或脚本，避免影响 App 体积和运行时性能。
+
+### 性能数据采集流程
+
+1. **Android Studio → Profiler → CPU/Memory**：实时查看 CPU 使用率、内存分配、线程活动
+2. **Perfetto trace 导出**：录制 trace 后导出 `.perfetto-trace` 文件，在 [ui.perfetto.dev](https://ui.perfetto.dev) 深入分析
+3. **AppLog 时间戳辅助定位**：通过日志时间戳与 Profiler 时间线对照，精确定位性能瓶颈
+
+### 关键性能指标与阈值
+
+| 指标 | 正常范围 | 异常阈值 | 日志标签 |
+|---|---|---|---|
+| 扫描 600 文件 | < 5s | > 15s | `Scan`/`CosScan` |
+| 缩略图首屏加载 | < 500ms | > 2s | `Detail` |
+| 详情页图片解码 | < 1s | > 3s | `Detail` |
+| 视频帧截取 | < 500ms/帧 | > 2s/帧 | `Detail` |
+| 数据库批量写入 500 条 | < 200ms | > 1s | `Scan` |
+| 内存占用（缩略图列表） | < 200MB | > 400MB | Profiler |
+| Coil 内存缓存命中率 | > 60% | < 30% | 观察缩略图闪烁 |
+
+### 性能问题快速定位
+
+#### 缩略图加载慢/不显示
+
+1. 读日志，搜索 `Detail` 标签
+2. 检查 `loadVideoPreview: coilSuccess/coilFailed` — Coil 是否成功截帧
+3. 检查 `preloadThumbnails: queued N thumbnails` — 预加载是否执行
+4. 用 Profiler 观察 CPU：是否有大量 `MediaMetadataRetriever` 线程
+5. 常见原因：
+   - `videoFrameMillis(3000)` 导致 seek 开销大 → 改用 `videoFrameMillis(0)` 取首帧
+   - 同时解码视频帧数过多 → 减少 RecyclerView 缓存（`setItemViewCacheSize(20)`）
+   - SAF URI + `Size.ORIGINAL` 导致 Binder IPC 卡住 → 改用 `decodeFileDescriptor`
+
+#### 列表滑动卡顿
+
+1. 用 Profiler 录制 CPU trace，查看主线程是否有 IO 操作
+2. 搜索日志中是否有主线程数据库查询
+3. 常见原因：
+   - 主线程 SAF `DocumentFile` 操作 → 移到 `Dispatchers.IO`
+   - 全量加载 `MediaFileEntity` → 改用轻量查询（只取需要的字段）
+   - RecyclerView 缓存过大 → 减少 `setItemViewCacheSize`
+
+#### 内存溢出/OOM
+
+1. Profiler → Memory，观察内存曲线
+2. 检查是否有大 Bitmap 未释放
+3. 常见原因：
+   - 详情页 `Size.ORIGINAL` 加载超大图 → 使用 `decodeFileDescriptor` + `inSampleSize`
+   - 缩略图缓存数量过多 → 减少 RecyclerView pool size
+   - 预加载过多全尺寸图片 → 限制预加载数量（当前左右各 3 张）
+
+#### 扫描速度慢
+
+1. 读日志，搜索 `Scan`/`CosScan` 标签
+2. 检查 `MediaStore hit=true/false` — 是否命中 MediaStore 快速路径
+3. 检查 `SAF fallback: found N files` — SAF 扫描文件数
+4. 常见原因：
+   - 非 MediaStore 索引目录 → SAF 递归扫描慢（5000+ 文件需 90+ 秒）
+   - 非增量扫描 → 应使用 `refreshScanSource` 而非 `scanDirectory`
+
+### Coil 缓存策略
+
+| 场景 | 内存缓存 | 磁盘缓存 | 尺寸 |
+|---|---|---|---|
+| 缩略图列表 | 35% 可用内存 | 20% 磁盘空间 | 480×270 |
+| 详情页图片 | 不缓存（手动解码） | 不缓存 | 全尺寸 inSampleSize=1 |
+| 详情页视频预览 | 缓存 | 缓存 | 1440×2560 |
+| 预加载（图片） | 缓存 | 缓存 | Size.ORIGINAL |
+| 预加载（视频） | 缓存 | 缓存 | 720×1280 |
+
+**注意**：详情页退出时只释放 ImageView drawable 和取消请求，**不清空内存缓存**（避免 600+ 缩略图同时重新加载）。
+
+---
+
+## 第三部分：ADB 调试流程
+
+### 环境准备
+
+```powershell
+# ADB 路径（替换为你的 SDK 路径）
+$adb = "C:\Users\<用户名>\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+
+# 查看已连接设备
+& $adb devices
+
+# 指定设备（替换为你的设备序列号）
+$serial = "<设备序列号>"
+```
+
+### 安装与启动
+
+```powershell
+# 编译
+cd <项目根目录>; .\gradlew.bat assembleDebug
+
+# 安装
+& $adb -s $serial install -r app\build\outputs\apk\debug\app-debug.apk
+
+# 清空旧日志 + 重启 App
+& $adb -s $serial shell "am force-stop com.qimeng.media"
+& $adb -s $serial shell "run-as com.qimeng.media sh -c 'echo > files/app_log.txt'"
+& $adb -s $serial shell "am start -n com.qimeng.media/.MainActivity"
+```
+
+### 读取日志
+
+```powershell
+# 方式1：通过 ProcessStartInfo（推荐，避免 PowerShell 编码问题）
+$pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+$pinfo.FileName = "C:\Users\<用户名>\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+$pinfo.Arguments = "-s $serial shell run-as com.qimeng.media cat files/app_log.txt"
+$pinfo.RedirectStandardOutput = $true
+$pinfo.RedirectStandardError = $true
+$pinfo.UseShellExecute = $false
+$pinfo.CreateNoWindow = $true
+$p = [System.Diagnostics.Process]::Start($pinfo)
+$stdout = $p.StandardOutput.ReadToEnd()
+$p.WaitForExit()
+[System.IO.File]::WriteAllText("<项目根目录>\app_log.txt", $stdout, [System.Text.Encoding]::UTF8)
+
+# 方式2：直接输出（注意 PowerShell CLIXML 编码问题，中文可能乱码）
+& $adb -s $serial shell "run-as com.qimeng.media cat files/app_log.txt"
+```
+
+### 清空日志
+
+```powershell
+& $adb -s $serial shell "run-as com.qimeng.media sh -c 'echo > files/app_log.txt'"
+```
+
+### 实时监控
+
+```powershell
+# 注意：Android 16 logcat 可能不可读，依赖 AppLog 文件日志
+# 定期读取最新日志（每 5 秒）
+while ($true) {
+    # 读取文件日志（同上方式1）
+    Start-Sleep 5
+}
+```
+
+---
+
+## 第四部分：诊断模式
+
+### 闪退诊断
+
+1. 复现闪退操作
+2. 重新打开 App（闪退后 AppLog 文件仍保留）
+3. 读取日志，查找 `E/QimengMedia: Uncaught exception` 行
+4. 根据堆栈定位问题
+
+### 扫描卡死诊断
+
+1. 触发扫描操作
+2. 读取日志，查看：
+   - `scanCosDirectory: start` — 扫描是否启动
+   - `MediaStore hit=true/false` — 是否命中 MediaStore
+   - `SAF fallback: found N files` — SAF 扫描文件数
+   - `scanCosDirectory: success` — 扫描是否完成
+3. 如果日志停在 `start` 没有 `success`，说明扫描卡住或 ScanStatus 未恢复
+
+### COS 作者/相册不显示诊断
+
+1. 触发 COS 扫描
+2. 读取日志，查看：
+   - `authors=N, works=M` — N=0 说明路径解析失败
+   - `SAF sample uri` — 确认 URI 格式
+   - `SAF rootDocumentId` — 确认根路径
+3. 如果 authors=0，检查 SAF 路径解析算法是否正确处理了 URL 编码
+
+### 缩略图/详情页不显示诊断
+
+1. 打开对应页面
+2. 读取日志，搜索 `Detail` 标签：
+   - `loadImage: start` — 加载是否启动
+   - `loadImage: success/failed` — 图片解码是否成功
+   - `loadVideoPreview: coilSuccess/coilFailed` — 视频帧截取是否成功
+   - `loadVideoPreview: retrieverSuccess/allFailed` — 回退方案是否成功
+3. 如果只有 `start` 没有 `success/failed`，说明请求被取消或卡住
+4. 用 Profiler 检查 CPU 和内存，确认是否有资源竞争
+
+### 详情页闪退诊断（IllegalArgumentException: width and height must be > 0）
+
+1. 复现：详情页点击图片后闪退
+2. 读取日志，查找 `E/QimengMedia: Uncaught exception` + `Bitmap.createScaledBitmap` 堆栈
+3. 根因：`LargeImageDecoder` 从 Coil 内存缓存直接取出 Bitmap 对象，缓存驱逐时 bitmap 被 recycle，ImageView 绘制已回收 bitmap 崩溃
+4. 修复后行为：
+   - 缓存命中时仅检查是否存在（`isInCoilMemoryCache`），返回 null 让 Fragment 走 Coil load 路径，Coil 正确管理 bitmap 生命周期
+   - `MediaDetailFragment` 所有 `setImageBitmap` 调用前增加 `!bitmap.isRecycled` 检查，已回收 bitmap 自动回退到 Coil load
+
+### 性能劣化诊断
+
+1. 使用 Android Studio Profiler 录制 CPU trace
+2. 对照 AppLog 时间戳定位具体操作
+3. 检查主线程是否有 IO/数据库操作
+4. 检查是否有大量并发请求（如同时解码多个视频帧）
+
+---
+
+## 已知限制
+
+- **Android 16 logcat 不可读**：`adb logcat -d` 返回空缓冲区，必须使用 AppLog 文件日志
+- **SAF 扫描速度**：5000+ 文件 SAF 递归扫描需 90+ 秒，这是 SAF IPC 固有限制
+- **MediaStore 非标准目录**：用户自定义路径（如 `/storage/emulated/0/1/HHH/`）不被 MediaStore 索引，COS 扫描始终走 SAF 回退
+- **PowerShell 编码**：直接 `adb shell` 输出中文可能乱码（GBK 解码 UTF-8），使用 ProcessStartInfo + 文件中转可避免
+- **视频帧截取性能**：`videoFrameMillis(3000)` 需 seek 到 3 秒位置，对大视频文件 CPU 开销大；缩略图应使用 `videoFrameMillis(0)` 取首帧
+
+## 修改注意事项
+
+- 新增关键操作入口时，必须添加 AppLog 日志
+- 日志标签遵循约定（Scan/CosScan/Detail/Home/AutoSync/Profile/QimengMedia）
+- 修改 AppLog 后需确认文件写入权限（`run-as` 可访问 `files/` 目录）
+- 不要在循环体内添加高频日志
+- 性能优化后需用 Profiler 验证效果，不能仅凭日志判断
+
+## 文档同步
+
+修改调试/性能相关功能时必须同步：
+
+- `docs/GUIDE_DEBUG.md`
+- `docs/PROJECT_GUIDE.md`（如新增文件）
+- `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
+- `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
+
+- 测试优先级：核心算法和解析器用 JVM 测试，DAO 用内存数据库测试
+- 涉及 SAF、真实 Uri、视频播放、图片缩放时需真机验证
+- 协程测试使用 test dispatcher
+
+> 最后更新：2026-06-05

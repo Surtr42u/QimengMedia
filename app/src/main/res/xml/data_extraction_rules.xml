@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- 本应用禁用云备份（allowBackup=false），此规则仅作模板保留 -->
+    </cloud-backup>
+</data-extraction-rules>

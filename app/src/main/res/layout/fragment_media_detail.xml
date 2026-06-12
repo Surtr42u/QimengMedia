@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/detailRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/qmColorBg"
+    tools:context=".ui.detail.MediaDetailFragment">
+
+    <FrameLayout
+        android:id="@+id/detailContentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+    <com.qimeng.media.ui.detail.ZoomImageView
+        android:id="@+id/detailImageView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        tools:src="?attr/qmColorSurface" />
+
+    <com.qimeng.media.ui.detail.BiliPlayerView
+        android:id="@+id/detailVideoPlayer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/videoTouchOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/videoPlayButton"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:text="▶"
+        android:textColor="@android:color/white"
+        android:textSize="32sp"
+        android:alpha="0.85"
+        android:visibility="gone" />
+
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/detailTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="?attr/qmColorBg"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp">
+
+        <ImageView
+            android:id="@+id/detailBackButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_back"
+            app:tint="?attr/qmColorPrimary" />
+
+        <TextView
+            android:id="@+id/detailFileName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="?attr/qmColorTextPrimary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            tools:text="8/3822" />
+
+        <ImageView
+            android:id="@+id/detailInfoButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_info"
+            app:tint="?attr/qmColorPrimary" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/detailBottomDock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="?attr/qmColorBg"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="24dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="10dp">
+
+        <ImageView
+            android:id="@+id/detailLikeBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_like"
+            app:tint="?attr/qmColorPrimary" />
+
+        <ImageView
+            android:id="@+id/detailFavoriteBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_favorite"
+            app:tint="?attr/qmColorPrimary" />
+
+        <ImageView
+            android:id="@+id/detailTagBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="20dp"
+            android:layout_weight="1"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_tag"
+            app:tint="?attr/qmColorPrimary" />
+
+        <ImageView
+            android:id="@+id/detailJumpBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="20dp"
+            android:layout_weight="1"
+            android:padding="9dp"
+            android:src="@drawable/ic_detail_jump"
+            app:tint="?attr/qmColorPrimary" />
+    </LinearLayout>
+</FrameLayout>

@@ -1,0 +1,54 @@
+# Detekt 配置 - 绮梦影库
+# 对已有代码适度宽容，对新代码严格
+# 后续逐步收紧阈值
+
+complexity:
+  LongMethod:
+    threshold: 120  # 当前最大152行，逐步收紧
+  CyclomaticComplexMethod:
+    threshold: 20   # 当前最大43，逐步收紧
+  NestedBlockDepth:
+    threshold: 4
+  ComplexCondition:
+    threshold: 4
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+
+style:
+  MagicNumber:
+    active: false   # Android UI 代码大量使用魔法数字，暂不检查
+  MaxLineLength:
+    active: false   # 暂不强制行长度
+  WildcardImport:
+    active: false   # 暂不强制
+  NewLineAtEndOfFile:
+    active: true
+  UnusedPrivateMember:
+    active: true
+  ReturnCount:
+    active: false   # Android UI 多分支返回常见，暂不限制
+  ThrowsCount:
+    active: false   # SAF/IO 操作多 throw 常见，暂不限制
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  TooGenericExceptionThrown:
+    active: false
+  SwallowedException:
+    active: false
+
+naming:
+  FunctionParameterNaming:
+    active: false
+
+empty-blocks:
+  EmptyCatchBlock:
+    active: false
+
+coroutines:
+  GlobalCoroutineUsage:
+    active: true
+  RedundantSuspendModifier:
+    active: true

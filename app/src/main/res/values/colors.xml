@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="qm_bg">#F7F7F7</color>
+    <color name="qm_surface">#FFFFFFFF</color>
+    <color name="qm_surface_soft">#EFEFEF</color>
+    <color name="qm_primary">#4A4A4A</color>
+    <color name="qm_primary_soft">#1F4A4A4A</color>
+    <color name="qm_text_primary">#151515</color>
+    <color name="qm_text_secondary">#5E5E5E</color>
+    <color name="qm_chip_bg">#EAEAEA</color>
+    <color name="qm_divider">#DCDCDC</color>
+    <color name="qm_placeholder">#E0E0E0</color>
+</resources>

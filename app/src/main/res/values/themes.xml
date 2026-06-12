@@ -1,0 +1,27 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Base.Theme.绮梦影库" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 隐藏启动画面图标（Android 12+） -->
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">@color/qm_bg</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:statusBarColor">?attr/qmColorBg</item>
+        <item name="android:navigationBarColor">?attr/qmColorSurface</item>
+        <item name="colorPrimary">@color/qm_primary</item>
+        <item name="colorOnPrimary">@color/qm_bg</item>
+        <item name="colorSurface">@color/qm_surface</item>
+        <item name="colorOnSurface">@color/qm_text_primary</item>
+        <item name="qmColorBg">@color/qm_bg</item>
+        <item name="qmColorSurface">@color/qm_surface</item>
+        <item name="qmColorSurfaceSoft">@color/qm_surface_soft</item>
+        <item name="qmColorPrimary">@color/qm_primary</item>
+        <item name="qmColorPrimarySoft">@color/qm_primary_soft</item>
+        <item name="qmColorTextPrimary">@color/qm_text_primary</item>
+        <item name="qmColorTextSecondary">@color/qm_text_secondary</item>
+        <item name="qmColorChipBg">@color/qm_chip_bg</item>
+        <item name="qmColorDivider">@color/qm_divider</item>
+    </style>
+
+    <style name="Theme.绮梦影库" parent="Base.Theme.绮梦影库" />
+</resources>
