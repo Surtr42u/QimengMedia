@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "items": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "timeMillis": 30000,
+        "name": "示例时间轴标签X",
+        "createdAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "timeMillis": 60000,
+        "name": "示例时间轴标签Y",
+        "createdAtMillis": 1700000001000
+      }
+    ]
+  }
+}

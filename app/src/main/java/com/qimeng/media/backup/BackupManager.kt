@@ -444,6 +444,16 @@ class BackupManager(private val context: Context) {
         val detailPrefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
         val favSet = detailPrefs.getStringSet(KEY_FAVORITES, emptySet())?.toMutableSet() ?: mutableSetOf()
 
+        // 构建 recordKey -> MediaFileEntity 映射（用于 mediaType 和 isCosFile）
+        val allMediaFiles = db.mediaFileDao().getAll()
+        val mediaFileMap = allMediaFiles.associateBy { it.recordKey }
+
+        // COS 数据
+        val cosMedia = db.mediaFileDao().observeCosMedia().firstOrNull().orEmpty()
+        val cosRecordKeys = cosMedia.map { it.recordKey }.toSet()
+        val cosWorks = db.cosWorkDao().getAll()
+        val cosStats = db.viewStatsDao().getByRecordKeys(cosRecordKeys.toList())
+
         val favorites = JSONArray()
         favSet.forEach { key -> if (key.isNotBlank()) favorites.put(key) }
 
@@ -488,11 +498,13 @@ class BackupManager(private val context: Context) {
             })
         }
 
+        // viewStats 新增 mediaType 和 isCosFile 字段
         val viewStats = JSONArray()
         val statsList = db.viewStatsDao().getAllByFileName()
         val statsMap = mutableMapOf<String, ViewStatsEntity>()
         statsList.forEach { stats ->
             statsMap[stats.recordKey] = stats
+            val mediaFile = mediaFileMap[stats.recordKey]
             viewStats.put(JSONObject().apply {
                 put("recordKey", stats.recordKey)
                 put("fileName", stats.fileName)
@@ -501,6 +513,8 @@ class BackupManager(private val context: Context) {
                 put("totalBrowseSeconds", stats.totalBrowseSeconds)
                 put("lastOpenedAtMillis", stats.lastOpenedAtMillis ?: JSONObject.NULL)
                 put("updatedAtMillis", stats.updatedAtMillis)
+                put("mediaType", mediaFile?.mediaType ?: "image")
+                put("isCosFile", mediaFile?.isCosFile ?: false)
             })
         }
 
@@ -551,6 +565,80 @@ class BackupManager(private val context: Context) {
             authors.put(authorObj)
         }
 
+        // 读取已关注的作者ID列表
+        val followPrefs = context.getSharedPreferences(PREFS_AUTHOR_FOLLOW, Context.MODE_PRIVATE)
+        val followedIds = followPrefs.getStringSet("followed_authors", emptySet()).orEmpty()
+        val followedArray = JSONArray()
+        followedIds.sorted().forEach { followedArray.put(it) }
+
+        // 给每个作者对象加上浏览次数和关注标记
+        for (i in 0 until authors.length()) {
+            val authorObj = authors.optJSONObject(i) ?: continue
+            val authorId = authorObj.optString("authorId", "")
+            var totalViews = 0
+            authorFilesMap[authorId]?.forEach { rk ->
+                totalViews += (statsMap[rk]?.viewCount ?: 0) + (statsMap[rk]?.playCount ?: 0)
+            }
+            authorObj.put("viewCount", totalViews)
+            authorObj.put("followed", followedIds.contains(authorId))
+        }
+
+        // cosWorks：从原 exportCosPrefs 合并，扩展字段
+        val cosWorksJson = JSONArray()
+        val cosStatsMap = cosStats.associateBy { it.recordKey }
+        // 构建 COS 作品的文件列表映射（folderUri -> recordKeys）
+        val cosWorkFilesMap = mutableMapOf<String, MutableList<String>>()
+        cosMedia.forEach { file ->
+            cosWorks.forEach { work ->
+                val prefix = if (work.folderUri.endsWith("/")) work.folderUri else "${work.folderUri}/"
+                if (file.uriString.startsWith(prefix)) {
+                    cosWorkFilesMap.getOrPut(work.folderUri) { mutableListOf() }.add(file.recordKey)
+                }
+            }
+        }
+        cosWorks.forEach { work ->
+            val workFiles = cosWorkFilesMap[work.folderUri].orEmpty()
+            var viewCountSum = 0
+            var playCountSum = 0
+            var totalBrowseSecondsSum = 0L
+            var likeCountSum = 0
+            var favoriteCount = 0
+            val workTags = mutableMapOf<String, Int>()
+            workFiles.forEach { rk ->
+                viewCountSum += cosStatsMap[rk]?.viewCount ?: 0
+                playCountSum += cosStatsMap[rk]?.playCount ?: 0
+                totalBrowseSecondsSum += cosStatsMap[rk]?.totalBrowseSeconds ?: 0L
+                likeCountSum += likeMap[rk]?.first ?: 0
+                if (rk in favSet) favoriteCount++
+                recordKeyTags[rk]?.forEach { tag ->
+                    workTags[tag] = (workTags[tag] ?: 0) + 1
+                }
+            }
+            val workObj = JSONObject().apply {
+                put("authorName", work.authorName)
+                put("workName", work.workName)
+                put("folderUri", work.folderUri)
+                put("fileCount", work.fileCount)
+                put("viewCount", viewCountSum)
+                put("playCount", playCountSum)
+                put("totalBrowseSeconds", totalBrowseSecondsSum)
+                put("likeCount", likeCountSum)
+                put("favoriteCount", favoriteCount)
+            }
+            if (workTags.isNotEmpty()) {
+                val tagsObj = JSONObject()
+                workTags.entries.sortedByDescending { it.value }.forEach { (tagName, count) ->
+                    tagsObj.put(tagName, count)
+                }
+                workObj.put("tags", tagsObj)
+            }
+            val filesArray = JSONArray()
+            workFiles.forEach { filesArray.put(it) }
+            workObj.put("files", filesArray)
+            cosWorksJson.put(workObj)
+        }
+
+        // 统计数据
         val totalBrowseSeconds = statsList.sumOf { it.totalBrowseSeconds }
         val totalViews = statsList.sumOf { it.viewCount.toLong() }
         val totalPlays = statsList.sumOf { it.playCount.toLong() }
@@ -572,38 +660,21 @@ class BackupManager(private val context: Context) {
             authorScoreMap[authorId] = score
         }
 
-        // 计算每个作者的浏览次数（viewCount + playCount 总和）
-        val authorViewCountMap = mutableMapOf<String, Int>()
-        authorFilesMap.forEach { (authorId, files) ->
-            var totalViews = 0
-            files.forEach { rk ->
-                totalViews += (statsMap[rk]?.viewCount ?: 0) + (statsMap[rk]?.playCount ?: 0)
-            }
-            authorViewCountMap[authorId] = totalViews
-        }
-
-        // 读取已关注的作者ID列表
-        val followPrefs = context.getSharedPreferences(PREFS_AUTHOR_FOLLOW, Context.MODE_PRIVATE)
-        val followedIds = followPrefs.getStringSet("followed_authors", emptySet()).orEmpty()
-        val followedArray = JSONArray()
-        followedIds.sorted().forEach { followedArray.put(it) }
-
-        // 给每个作者对象加上浏览次数和关注标记
-        for (i in 0 until authors.length()) {
-            val authorObj = authors.optJSONObject(i) ?: continue
-            val authorId = authorObj.optString("authorId", "")
-            authorObj.put("viewCount", authorViewCountMap[authorId] ?: 0)
-            authorObj.put("followed", followedIds.contains(authorId))
-        }
+        // 常规/COS 收藏文件数
+        val normalFavCount = favSet.count { it !in cosRecordKeys }
+        val cosFavCount = favSet.count { it in cosRecordKeys }
+        // 常规/COS 文件总数
+        val normalFileCount = allMediaFiles.count { !it.isCosFile }
+        val cosFileCount = allMediaFiles.count { it.isCosFile }
 
         val reportText = buildReportText(
             favSet = favSet,
             likeMap = likeMap,
             statsList = statsList,
             statsMap = statsMap,
+            mediaFileMap = mediaFileMap,
             tagFreq = tagFreq,
             authorScoreMap = authorScoreMap,
-            authorViewCountMap = authorViewCountMap,
             followedIds = followedIds,
             authorIdToName = authorIdToName,
             authorFilesMap = authorFilesMap,
@@ -613,11 +684,16 @@ class BackupManager(private val context: Context) {
             totalBrowseSeconds = totalBrowseSeconds,
             totalViews = totalViews,
             totalPlays = totalPlays,
+            normalFileCount = normalFileCount,
+            cosFileCount = cosFileCount,
+            normalFavCount = normalFavCount,
+            cosFavCount = cosFavCount,
+            cosRecordKeys = cosRecordKeys,
             now = now
         )
 
         JSONObject().apply {
-            put("schemaVersion", 1)
+            put("schemaVersion", 2)
             put("exportedAtMillis", now)
             put("appIdentifier", "com.qimeng.media")
             put("data", JSONObject().apply {
@@ -628,6 +704,7 @@ class BackupManager(private val context: Context) {
                 put("viewStats", viewStats)
                 put("authors", authors)
                 put("followedAuthorIds", followedArray)
+                put("cosWorks", cosWorksJson)
             })
         } to reportText
     }
@@ -637,9 +714,9 @@ class BackupManager(private val context: Context) {
         likeMap: Map<String, Pair<Int, String?>>,
         statsList: List<ViewStatsEntity>,
         statsMap: Map<String, ViewStatsEntity>,
+        mediaFileMap: Map<String, com.qimeng.media.data.db.entity.MediaFileEntity>,
         tagFreq: Map<String, Int>,
         authorScoreMap: Map<String, Int>,
-        authorViewCountMap: Map<String, Int>,
         followedIds: Set<String>,
         authorIdToName: Map<String, String>,
         authorFilesMap: Map<String, List<String>>,
@@ -649,6 +726,11 @@ class BackupManager(private val context: Context) {
         totalBrowseSeconds: Long,
         totalViews: Long,
         totalPlays: Long,
+        normalFileCount: Int,
+        cosFileCount: Int,
+        normalFavCount: Int,
+        cosFavCount: Int,
+        cosRecordKeys: Set<String>,
         now: Long
     ): String {
         val sb = StringBuilder()
@@ -660,8 +742,10 @@ class BackupManager(private val context: Context) {
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine()
 
+        // 1. 【总览】
         sb.appendLine("【总览】")
-        sb.appendLine("  收藏文件数：${favSet.size}")
+        sb.appendLine("  文件总数：常规 $normalFileCount / COS $cosFileCount")
+        sb.appendLine("  收藏文件数：常规 $normalFavCount / COS $cosFavCount")
         sb.appendLine("  有点赞的文件数：${likeMap.size}")
         sb.appendLine("  标签总数：${tagList.size}")
         sb.appendLine("  作者总数：${authorList.size}")
@@ -672,96 +756,129 @@ class BackupManager(private val context: Context) {
         sb.appendLine("  总浏览时长：$hours 小时")
         sb.appendLine()
 
+        // 热度分计算
+        data class HotEntry(
+            val recordKey: String,
+            val hotScore: Int,
+            val isCosFile: Boolean,
+            val mediaType: String,
+            val viewCount: Int,
+            val playCount: Int,
+            val totalBrowseSeconds: Long,
+            val likeCount: Int,
+            val isFavorite: Boolean
+        )
+
+        val hotEntries = statsList.map { stats ->
+            val mf = mediaFileMap[stats.recordKey]
+            val isCos = mf?.isCosFile ?: (stats.recordKey in cosRecordKeys)
+            val mType = mf?.mediaType ?: "image"
+            val likeCount = likeMap[stats.recordKey]?.first ?: 0
+            val isFav = stats.recordKey in favSet
+            val hotScore = if (mType == "video") {
+                stats.viewCount + stats.playCount + (stats.totalBrowseSeconds / 60).toInt() + likeCount + (if (isFav) 5 else 0)
+            } else {
+                stats.viewCount + likeCount + (if (isFav) 5 else 0)
+            }
+            HotEntry(stats.recordKey, hotScore, isCos, mType, stats.viewCount, stats.playCount, stats.totalBrowseSeconds, likeCount, isFav)
+        }
+
+        fun HotEntry.formatLine(): String {
+            val favMark = if (isFavorite) " / ★收藏" else ""
+            return if (mediaType == "video") {
+                val mins = totalBrowseSeconds / 60
+                "$recordKey [视频] — 播放 $playCount 次 / 浏览 $mins 分钟 / 点赞 $likeCount$favMark"
+            } else {
+                "$recordKey [图片] — 查看 $viewCount 次 / 点赞 $likeCount$favMark"
+            }
+        }
+
+        // 2. 【总 Top 30】
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【点赞最多的文件 Top 20】")
-        likeMap.entries.sortedByDescending { it.value.first }.take(20).forEachIndexed { i, (key, pair) ->
-            sb.appendLine("  ${i + 1}. $key — 点赞 ${pair.first} 次")
+        sb.appendLine("【总 Top 30】（COS+常规混合，按热度分降序）")
+        hotEntries.sortedByDescending { it.hotScore }.take(30).forEachIndexed { i, entry ->
+            sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
 
+        // 3. 【常规 Top 20】
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【观看最多的文件 Top 20】")
-        statsList.sortedByDescending { it.viewCount + it.playCount }.take(20).forEachIndexed { i, stats ->
-            val total = stats.viewCount + stats.playCount
-            val mins = stats.totalBrowseSeconds / 60
-            sb.appendLine("  ${i + 1}. ${stats.recordKey} — 查看 ${stats.viewCount} 次 / 播放 ${stats.playCount} 次 / 浏览 ${mins} 分钟")
+        sb.appendLine("【常规 Top 20】（只显示非 COS 文件）")
+        hotEntries.filter { !it.isCosFile }.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
+            sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
 
+        // 4. 【COS Top 20】
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【收藏的文件】（共 ${favSet.size} 个）")
-        favSet.sorted().forEach { sb.appendLine("  · $it") }
-        sb.appendLine()
-
-        sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【使用最多的标签 Top 20】")
-        tagFreq.entries.sortedByDescending { it.value }.take(20).forEachIndexed { i, (name, count) ->
-            sb.appendLine("  ${i + 1}. $name — ${count} 个文件")
+        sb.appendLine("【COS Top 20】（只显示 COS 文件）")
+        hotEntries.filter { it.isCosFile }.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
+            sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
 
+        // 5. 【作者 Top 20】
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【偏好度最高的作者 Top 20】")
+        sb.appendLine("【作者 Top 20】（按偏好度降序）")
         authorScoreMap.entries.sortedByDescending { it.value }.take(20).forEachIndexed { i, (authorId, score) ->
             val name = authorIdToName[authorId] ?: authorId
             val fileCount = authorFilesMap[authorId]?.size ?: 0
-            val viewCount = authorViewCountMap[authorId] ?: 0
             val followedMark = if (authorId in followedIds) " ★" else ""
             val tags = authorTagsMap[authorId]
             val tagPart = if (tags != null && tags.isNotEmpty()) {
                 " / 标签：" + tags.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.key}(${it.value})" }
             } else ""
-            sb.appendLine("  ${i + 1}. $name$followedMark — ${fileCount} 个文件 / 浏览 $viewCount 次 / 偏好度 $score$tagPart")
+            sb.appendLine("  ${i + 1}. $name$followedMark — ${fileCount} 个文件 / 偏好度 $score$tagPart")
         }
         sb.appendLine()
 
-        sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【浏览次数最高的作者 Top 20】")
-        authorViewCountMap.entries.sortedByDescending { it.value }.take(20).forEachIndexed { i, (authorId, viewCount) ->
-            val name = authorIdToName[authorId] ?: authorId
-            val fileCount = authorFilesMap[authorId]?.size ?: 0
-            val followedMark = if (authorId in followedIds) " ★" else ""
-            sb.appendLine("  ${i + 1}. $name$followedMark — ${fileCount} 个文件 / 浏览 $viewCount 次")
-        }
-        sb.appendLine()
-
+        // 6. 【关注的作者】
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【关注的作者】（共 ${followedIds.size} 个）")
         if (followedIds.isEmpty()) {
             sb.appendLine("  暂无关注作者")
         } else {
             followedIds.mapNotNull { id -> authorIdToName[id]?.let { id to it } }
-                .sortedByDescending { (id, _) -> authorViewCountMap[id] ?: 0 }
+                .sortedByDescending { (id, _) -> authorScoreMap[id] ?: 0 }
                 .forEachIndexed { i, (id, name) ->
                     val fileCount = authorFilesMap[id]?.size ?: 0
-                    val viewCount = authorViewCountMap[id] ?: 0
-                    sb.appendLine("  ${i + 1}. $name — ${fileCount} 个文件 / 浏览 $viewCount 次")
+                    val score = authorScoreMap[id] ?: 0
+                    sb.appendLine("  ${i + 1}. $name — ${fileCount} 个文件 / 偏好度 $score")
                 }
         }
         sb.appendLine()
 
+        // 7. 【标签 Top 10】
+        sb.appendLine("───────────────────────────────────────")
+        sb.appendLine("【标签 Top 10】（按关联文件数降序）")
+        tagFreq.entries.sortedByDescending { it.value }.take(10).forEachIndexed { i, (name, count) ->
+            sb.appendLine("  ${i + 1}. $name — ${count} 个文件")
+        }
+        sb.appendLine()
+
+        // 8. 【所有标签】
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【所有标签】（共 ${tagList.size} 个）")
-        tagFreq.entries.sortedByDescending { it.value }.forEach { (name, count) ->
-            sb.appendLine("  · $name ($count 个文件)")
+        tagList.sortedByDescending { tagFreq[it.name] ?: 0 }.forEach { tag ->
+            val count = tagFreq[tag.name] ?: 0
+            sb.appendLine("  · ${tag.name} ($count 个文件)")
         }
         sb.appendLine()
 
+        // 9. 【收藏的文件】
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【所有作者】（共 ${authorList.size} 个，★ = 已关注）")
-        authorScoreMap.entries.sortedByDescending { it.value }.forEach { (authorId, score) ->
-            val name = authorIdToName[authorId] ?: authorId
-            val fileCount = authorFilesMap[authorId]?.size ?: 0
-            val viewCount = authorViewCountMap[authorId] ?: 0
-            val followedMark = if (authorId in followedIds) " ★" else ""
-            val tags = authorTagsMap[authorId]
-            val tagPart = if (tags != null && tags.isNotEmpty()) {
-                " / 标签：" + tags.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.key}(${it.value})" }
-            } else ""
-            sb.appendLine("  · $name$followedMark — ${fileCount} 个文件 / 浏览 $viewCount 次 / 偏好度 $score$tagPart")
-        }
+        sb.appendLine("【收藏的文件】（共 ${favSet.size} 个）")
+        favSet.sorted().forEach { sb.appendLine("  · $it") }
         sb.appendLine()
 
+        // 10. 排行说明 + 报告结束
+        sb.appendLine("───────────────────────────────────────")
+        sb.appendLine("【排行说明】")
+        sb.appendLine("  热度分计算规则：")
+        sb.appendLine("    图片：查看次数 + 点赞次数 + (收藏 ? 5 : 0)")
+        sb.appendLine("    视频：查看次数 + 播放次数 + 浏览分钟数 + 点赞次数 + (收藏 ? 5 : 0)")
+        sb.appendLine("  作者偏好度 = 所有关联文件的 (查看次数+播放次数) 之和 + 每个收藏文件 +5 + 每个文件的点赞次数之和")
+        sb.appendLine()
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine("  报告结束")
         sb.appendLine("═══════════════════════════════════════")
@@ -800,160 +917,7 @@ class BackupManager(private val context: Context) {
         val success1 = writeFile(BackupFileNames.PERSONAL_PREFS, "application/json", json.toString(2).toByteArray(Charsets.UTF_8))
         val success2 = writeFile(BackupFileNames.PERSONAL_PREFS_REPORT, "text/plain", reportText.toByteArray(Charsets.UTF_8))
 
-        val (cosJson, cosReportText) = exportCosPrefs(database)
-        val success3 = writeFile(BackupFileNames.COS_PREFS, "application/json", cosJson.toString(2).toByteArray(Charsets.UTF_8))
-        val success4 = writeFile(BackupFileNames.COS_PREFS_REPORT, "text/plain", cosReportText.toByteArray(Charsets.UTF_8))
-
-        success1 && success2 && success3 && success4
-    }
-
-    private suspend fun exportCosPrefs(database: AppDatabase): Pair<JSONObject, String> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val db = database
-
-        val detailPrefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
-        val favSet = detailPrefs.getStringSet(KEY_FAVORITES, emptySet()) ?: emptySet()
-
-        val cosWorks = db.cosWorkDao().getAll()
-        val cosMedia = db.mediaFileDao().observeCosMedia().firstOrNull().orEmpty()
-        val cosRecordKeys = cosMedia.map { it.recordKey }.toSet()
-
-        val cosStats = db.viewStatsDao().getByRecordKeys(cosRecordKeys.toList())
-        val statsMap = cosStats.associateBy { it.recordKey }
-
-        val likeCountPrefix = "like_count_"
-        val likeMap = mutableMapOf<String, Int>()
-        for (entry in detailPrefs.all.entries) {
-            val key = entry.key as String
-            if (key.startsWith(likeCountPrefix) && entry.value is Int) {
-                val recordKey = key.removePrefix(likeCountPrefix)
-                if (recordKey in cosRecordKeys) {
-                    likeMap[recordKey] = entry.value as Int
-                }
-            }
-        }
-
-        val cosFavs = cosRecordKeys.intersect(favSet)
-
-        val cosCrossRefs = db.tagDao().getCrossRefsByRecordKeys(cosRecordKeys.toList())
-        val cosTagList = db.tagDao().getAllTags()
-        val cosTagIdToName = cosTagList.associateBy { it.tagId }
-        val cosRecordKeyTags = mutableMapOf<String, MutableSet<String>>()
-        cosCrossRefs.forEach { xref ->
-            val tagName = cosTagIdToName[xref.tagId]?.name ?: return@forEach
-            cosRecordKeyTags.getOrPut(xref.recordKey) { mutableSetOf() }.add(tagName)
-        }
-
-        val authorGroups = cosWorks.groupBy { it.authorName }
-        val authorScoreMap = mutableMapOf<String, Int>()
-        val authorFileCountMap = mutableMapOf<String, Int>()
-        val authorTagsMap = mutableMapOf<String, MutableMap<String, Int>>()
-        for ((authorName, works) in authorGroups) {
-            var score = 0
-            var fileCount = 0
-            val tagsCount = mutableMapOf<String, Int>()
-            for (work in works) {
-                val prefix = if (work.folderUri.endsWith("/")) work.folderUri else "${work.folderUri}/"
-                val workFiles = cosMedia.filter { it.uriString.startsWith(prefix) }
-                fileCount += workFiles.size
-                for (file in workFiles) {
-                    score += (statsMap[file.recordKey]?.viewCount ?: 0) + (statsMap[file.recordKey]?.playCount ?: 0)
-                    if (file.recordKey in cosFavs) score += 5
-                    score += likeMap[file.recordKey] ?: 0
-                    cosRecordKeyTags[file.recordKey]?.forEach { tag ->
-                        tagsCount[tag] = (tagsCount[tag] ?: 0) + 1
-                    }
-                }
-            }
-            authorScoreMap[authorName] = score
-            authorFileCountMap[authorName] = fileCount
-            if (tagsCount.isNotEmpty()) {
-                authorTagsMap[authorName] = tagsCount
-            }
-        }
-
-        val worksJson = JSONArray()
-        cosWorks.forEach { work ->
-            worksJson.put(JSONObject().apply {
-                put("authorName", work.authorName)
-                put("workName", work.workName)
-                put("folderUri", work.folderUri)
-                put("fileCount", work.fileCount)
-            })
-        }
-
-        val statsJson = JSONArray()
-        cosStats.forEach { stats ->
-            statsJson.put(JSONObject().apply {
-                put("recordKey", stats.recordKey)
-                put("fileName", stats.fileName)
-                put("viewCount", stats.viewCount)
-                put("playCount", stats.playCount)
-                put("totalBrowseSeconds", stats.totalBrowseSeconds)
-            })
-        }
-
-        val authorTagsJson = JSONArray()
-        authorTagsMap.forEach { (authorName, tags) ->
-            val tagsObj = JSONObject()
-            tags.entries.sortedByDescending { it.value }.forEach { (tagName, count) ->
-                tagsObj.put(tagName, count)
-            }
-            authorTagsJson.put(JSONObject().apply {
-                put("authorName", authorName)
-                put("tags", tagsObj)
-            })
-        }
-
-        val cosJson = JSONObject().apply {
-            put("schemaVersion", 1)
-            put("exportedAtMillis", now)
-            put("appIdentifier", "com.qimeng.media")
-            put("data", JSONObject().apply {
-                put("cosWorks", worksJson)
-                put("viewStats", statsJson)
-                put("favoriteCount", cosFavs.size)
-                put("totalFiles", cosMedia.size)
-                put("authorTags", authorTagsJson)
-            })
-        }
-
-        val sortedAuthors = authorScoreMap.entries.sortedByDescending { it.value }
-        val reportText = buildString {
-            appendLine("═══════════════════════════════════════")
-            appendLine("  绮梦影库 · COS 个人偏好报告")
-            appendLine("═══════════════════════════════════════")
-            appendLine()
-            appendLine("导出时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(now)}")
-            appendLine()
-            appendLine("── 总览 ──")
-            appendLine("COS 文件总数：${cosMedia.size}")
-            appendLine("COS 作者数量：${authorGroups.size}")
-            appendLine("COS 作品数量：${cosWorks.size}")
-            appendLine("COS 收藏数量：${cosFavs.size}")
-            appendLine("COS 总浏览时长：${formatSeconds(cosStats.sumOf { it.totalBrowseSeconds })}")
-            appendLine()
-            appendLine("── 作者偏好度 Top 20 ──")
-            for ((i, entry) in sortedAuthors.take(20).withIndex()) {
-                appendLine("${i + 1}. ${entry.key} — 偏好度 ${entry.value}（${authorFileCountMap[entry.key] ?: 0} 文件）")
-            }
-            appendLine()
-            appendLine("── 全部作者 ──")
-            for ((authorName, works) in authorGroups.entries.sortedByDescending { authorScoreMap[it.key] ?: 0 }) {
-                val score = authorScoreMap[authorName] ?: 0
-                appendLine("· $authorName — 偏好度 $score（${works.size} 作品，${authorFileCountMap[authorName] ?: 0} 文件）")
-                val authorTags = authorTagsMap[authorName]
-                if (authorTags != null && authorTags.isNotEmpty()) {
-                    val tagStr = authorTags.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.key}(${it.value})" }
-                    appendLine("    标签：$tagStr")
-                }
-                for (work in works.sortedByDescending { it.fileCount }) {
-                    appendLine("    └ ${work.workName}（${work.fileCount} 张）")
-                }
-            }
-        }
-
-        cosJson to reportText
+        success1 && success2
     }
 
     private fun formatSeconds(seconds: Long): String {
@@ -968,7 +932,7 @@ class BackupManager(private val context: Context) {
         private const val PREFS_AUTHOR_FOLLOW = "author_follow_prefs"
     }
 
-    /** 全量同步：同时写入 app数据/ 和 个人偏好/ 两个子目录 */
+    /** 全量同步：同时写入 app数据/、个人偏好/ 和 格式说明/ 三个子目录 */
     suspend fun fullSyncToDirectory(dirUri: Uri, database: AppDatabase, appPrefsManager: AppPrefsManager): Boolean = withContext(Dispatchers.IO) {
         try {
             // 同步 app数据/
@@ -979,11 +943,78 @@ class BackupManager(private val context: Context) {
             if (prefsDir != null) {
                 exportPersonalPrefsToFile(prefsDir, database)
             }
+            // 同步 格式说明/（仅在目录不存在时写入，避免每次同步覆盖）
+            val specDir = ensureSubDirectory(dirUri, "格式说明")
+            if (specDir != null) {
+                exportFormatSpec(specDir)
+            }
             count > 0
         } catch (e: Exception) {
             AppLog.e("BackupManager", "fullSyncToDirectory failed", e)
             false
         }
+    }
+
+    /** 将格式说明文件（规范 + 示例）写入指定目录 */
+    private fun exportFormatSpec(specDirUri: Uri) {
+        val dir = DocumentFile.fromTreeUri(context, specDirUri) ?: return
+
+        fun copyAsset(assetPath: String, destName: String, mimeType: String) {
+            try {
+                // 已存在则跳过，避免每次同步覆盖
+                if (dir.findFile(destName) != null) return
+                val content = context.assets.open(assetPath).readBytes()
+                val tempName = "${destName}.tmp"
+                dir.findFile(tempName)?.delete()
+                val tempFile = dir.createFile(mimeType, tempName) ?: return
+                context.contentResolver.openOutputStream(tempFile.uri)?.use { out ->
+                    out.write(content)
+                    out.flush()
+                } ?: return
+                tempFile.renameTo(destName)
+            } catch (e: Exception) {
+                AppLog.d("BackupManager", "copyAsset failed for $assetPath: ${e.message}")
+            }
+        }
+
+        // 写入 FORMAT_SPEC.md
+        copyAsset("FORMAT_SPEC.md", BackupFileNames.FORMAT_SPEC, "text/markdown")
+        // 写入 personal_prefs_example.json
+        copyAsset("personal_prefs_example.json", BackupFileNames.PERSONAL_PREFS_EXAMPLE, "application/json")
+
+        // 写入 app_data_examples/ 子目录
+        val examplesDir = dir.findFile(BackupFileNames.APP_DATA_EXAMPLES_DIR)
+            ?.takeIf { it.isDirectory }
+            ?: dir.createDirectory(BackupFileNames.APP_DATA_EXAMPLES_DIR)
+            ?: return
+
+        fun copyExampleAsset(assetPath: String, destName: String) {
+            try {
+                if (examplesDir.findFile(destName) != null) return
+                val content = context.assets.open(assetPath).readBytes()
+                val tempName = "${destName}.tmp"
+                examplesDir.findFile(tempName)?.delete()
+                val tempFile = examplesDir.createFile("application/json", tempName) ?: return
+                context.contentResolver.openOutputStream(tempFile.uri)?.use { out ->
+                    out.write(content)
+                    out.flush()
+                } ?: return
+                tempFile.renameTo(destName)
+            } catch (e: Exception) {
+                AppLog.d("BackupManager", "copyExampleAsset failed for $assetPath: ${e.message}")
+            }
+        }
+
+        copyExampleAsset("app_data_examples/settings_example.json", BackupFileNames.SETTINGS_EXAMPLE)
+        copyExampleAsset("app_data_examples/authors_example.json", BackupFileNames.AUTHORS_EXAMPLE)
+        copyExampleAsset("app_data_examples/tags_example.json", BackupFileNames.TAGS_EXAMPLE)
+        copyExampleAsset("app_data_examples/album_rules_example.json", BackupFileNames.ALBUM_RULES_EXAMPLE)
+        copyExampleAsset("app_data_examples/media_stats_example.json", BackupFileNames.MEDIA_STATS_EXAMPLE)
+        copyExampleAsset("app_data_examples/history_example.json", BackupFileNames.HISTORY_EXAMPLE)
+        copyExampleAsset("app_data_examples/scan_sources_example.json", BackupFileNames.SCAN_SOURCES_EXAMPLE)
+        copyExampleAsset("app_data_examples/likes_example.json", BackupFileNames.LIKES_EXAMPLE)
+        copyExampleAsset("app_data_examples/recommendation_prefs_example.json", BackupFileNames.RECOMMENDATION_PREFS_EXAMPLE)
+        copyExampleAsset("app_data_examples/timeline_tags_example.json", BackupFileNames.TIMELINE_TAGS_EXAMPLE)
     }
 
     /** 在dirUri下查找名为subDirName的子目录，返回其URI，不存在则返回null */

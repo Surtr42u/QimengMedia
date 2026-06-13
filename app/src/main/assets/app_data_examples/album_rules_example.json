@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "rules": [
+      {
+        "sourceName": "示例出处A",
+        "enabled": true,
+        "createdAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      },
+      {
+        "sourceName": "示例出处B",
+        "enabled": false,
+        "createdAtMillis": 1700000001000,
+        "updatedAtMillis": 1700000001000
+      }
+    ]
+  }
+}

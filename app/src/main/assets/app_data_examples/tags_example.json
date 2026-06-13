@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "tags": [
+      {
+        "tagId": 1,
+        "name": "示例标签X",
+        "createdAtMillis": 1700000000000
+      },
+      {
+        "tagId": 2,
+        "name": "示例标签Y",
+        "createdAtMillis": 1700000001000
+      }
+    ],
+    "mediaTags": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "tagName": "示例标签X"
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "fileName": "示例图片B.jpg",
+        "tagName": "示例标签Y"
+      }
+    ]
+  }
+}

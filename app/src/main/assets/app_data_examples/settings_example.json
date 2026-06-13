@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "items": [
+      {
+        "key": "示例设置键A",
+        "value": "示例值A",
+        "updatedAtMillis": 1700000000000
+      },
+      {
+        "key": "示例设置键B",
+        "value": "示例值B",
+        "updatedAtMillis": 1700000001000
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "items": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "viewCount": 5,
+        "playCount": 3,
+        "totalBrowseSeconds": 120,
+        "lastOpenedAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "fileName": "示例图片B.jpg",
+        "viewCount": 12,
+        "playCount": 0,
+        "totalBrowseSeconds": 60,
+        "lastOpenedAtMillis": 1700000001000,
+        "updatedAtMillis": 1700000001000
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "items": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "mediaType": "video",
+        "openedAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "fileName": "示例图片B.jpg",
+        "mediaType": "image",
+        "openedAtMillis": 1700000001000
+      }
+    ]
+  }
+}

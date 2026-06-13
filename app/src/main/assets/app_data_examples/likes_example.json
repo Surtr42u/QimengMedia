@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "likes": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "likeCount": 3,
+        "lastLikeDate": "2026-01-15"
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "likeCount": 1,
+        "lastLikeDate": null
+      }
+    ],
+    "favorites": [
+      "示例文件A.mp4",
+      "示例图片B.jpg"
+    ]
+  }
+}

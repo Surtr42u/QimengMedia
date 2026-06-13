@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "sources": [
+      {
+        "uriString": "content://com.android.externalstorage.documents/tree/primary%3ADCIM",
+        "displayName": "示例扫描目录A",
+        "isBackupDirectory": false,
+        "addedAtMillis": 1700000000000,
+        "lastScannedAtMillis": 1700000000000
+      },
+      {
+        "uriString": "content://com.android.externalstorage.documents/tree/primary%3APictures",
+        "displayName": "示例扫描目录B",
+        "isBackupDirectory": false,
+        "addedAtMillis": 1700000001000,
+        "lastScannedAtMillis": 1700000001000
+      }
+    ]
+  }
+}

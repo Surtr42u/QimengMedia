@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 2,
+  "exportedAtMillis": 1700000000000,
+  "appIdentifier": "com.qimeng.media",
+  "data": {
+    "favorites": [
+      "示例文件A.mp4",
+      "示例图片B.jpg"
+    ],
+    "likes": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "likeCount": 3,
+        "lastLikeDate": "2026-01-15"
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "likeCount": 1,
+        "lastLikeDate": null
+      }
+    ],
+    "tags": [
+      {
+        "tagId": 1,
+        "name": "示例标签X",
+        "createdAtMillis": 1700000000000
+      },
+      {
+        "tagId": 2,
+        "name": "示例标签Y",
+        "createdAtMillis": 1700000001000
+      }
+    ],
+    "mediaTags": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "tagName": "示例标签X"
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "fileName": "示例图片B.jpg",
+        "tagName": "示例标签Y"
+      }
+    ],
+    "viewStats": [
+      {
+        "recordKey": "示例文件A.mp4",
+        "fileName": "示例文件A.mp4",
+        "mediaType": "video",
+        "isCosFile": false,
+        "viewCount": 5,
+        "playCount": 3,
+        "totalBrowseSeconds": 120,
+        "lastOpenedAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例图片B.jpg",
+        "fileName": "示例图片B.jpg",
+        "mediaType": "image",
+        "isCosFile": false,
+        "viewCount": 12,
+        "playCount": 0,
+        "totalBrowseSeconds": 60,
+        "lastOpenedAtMillis": 1700000001000,
+        "updatedAtMillis": 1700000001000
+      },
+      {
+        "recordKey": "示例COS图片C.jpg",
+        "fileName": "示例COS图片C.jpg",
+        "mediaType": "image",
+        "isCosFile": true,
+        "viewCount": 8,
+        "playCount": 0,
+        "totalBrowseSeconds": 30,
+        "lastOpenedAtMillis": 1700000002000,
+        "updatedAtMillis": 1700000002000
+      }
+    ],
+    "authors": [
+      {
+        "authorId": "示例作者ID",
+        "displayName": "示例作者名",
+        "files": [
+          "示例文件A.mp4"
+        ],
+        "tags": {
+          "示例标签X": 1
+        },
+        "viewCount": 8,
+        "followed": false
+      },
+      {
+        "authorId": "cos_示例COS作者",
+        "displayName": "示例COS作者",
+        "files": [
+          "示例COS图片C.jpg"
+        ],
+        "tags": {
+          "示例标签Y": 1
+        },
+        "viewCount": 8,
+        "followed": true
+      }
+    ],
+    "followedAuthorIds": [
+      "cos_示例COS作者"
+    ],
+    "cosWorks": [
+      {
+        "authorName": "示例COS作者",
+        "workName": "示例作品名",
+        "folderUri": "content://com.android.externalstorage.documents/tree/primary%3ADCIM%2FCOS%2F%E7%A4%BA%E4%BE%8BCOS%E4%BD%9C%E8%80%85%2F%E7%A4%BA%E4%BE%8B%E4%BD%9C%E5%93%81%E5%90%8D",
+        "fileCount": 10,
+        "viewCount": 80,
+        "playCount": 0,
+        "totalBrowseSeconds": 300,
+        "likeCount": 5,
+        "favoriteCount": 2,
+        "tags": {
+          "示例标签Y": 8,
+          "示例标签X": 2
+        },
+        "files": [
+          "示例COS图片C.jpg"
+        ]
+      }
+    ]
+  }
+}

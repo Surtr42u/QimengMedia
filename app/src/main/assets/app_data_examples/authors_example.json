@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "authors": [
+      {
+        "authorId": "示例作者ID",
+        "displayName": "示例作者名",
+        "files": [],
+        "createdAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      }
+    ]
+  }
+}

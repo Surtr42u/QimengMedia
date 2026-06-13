@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "tagRelevance": 0.22,
+    "tagCollection": 0.15,
+    "engagement": 0.10,
+    "recency": 0.15,
+    "likeScore": 0.05,
+    "discovery": 0.20,
+    "freshness": 0.05,
+    "browseDepth": 0.03,
+    "maxRandom": 0.30
+  }
+}
