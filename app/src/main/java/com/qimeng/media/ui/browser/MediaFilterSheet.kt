@@ -186,7 +186,7 @@ object MediaFilterSheet {
                                 val newChip = Chip(context).apply {
                                     text = name
                                     isCheckable = true
-                                    isChecked = true
+                                    isChecked = false
                                     setOnClickListener {
                                         val next = state.selectedTags.toMutableSet()
                                         if (isChecked) next.add(name) else next.remove(name)
@@ -194,9 +194,6 @@ object MediaFilterSheet {
                                     }
                                 }
                                 tagGroup.addView(newChip)
-                                val next = state.selectedTags.toMutableSet()
-                                next.add(name)
-                                state = state.copy(selectedTags = next)
                             }
                         }
                         .setNegativeButton("取消", null)

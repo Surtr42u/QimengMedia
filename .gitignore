@@ -19,3 +19,9 @@ gradle.properties
 *.txt
 !gradle/wrapper/gradle-wrapper.properties
 perf_monitor/
+
+# 签名文件（绝不能提交）
+*.jks
+*.keystore
+keystore.properties
+/app/release/
