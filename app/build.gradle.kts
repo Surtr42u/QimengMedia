@@ -16,8 +16,8 @@ android {
         applicationId = "com.qimeng.media"
         minSdk = 31
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 7
+        versionName = "1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

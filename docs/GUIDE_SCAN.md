@@ -10,7 +10,7 @@
 - `MediaStoreObserver`：基于 ContentObserver 监听 MediaStore 变化，自动增量更新已注册的常规扫描目录。2 秒防抖。**只监听常规目录，不监听 COS 目录。**
 - `SafMediaScanner`：基于 SAF `DocumentFile` 递归扫描用户授权目录。MediaStore 查不到时的回退方案。
 - `ScanUtils`：扫描器共享工具方法（`mediaTypeForExtension`、`shortHash`、`buildEntities`），MediaStoreScanner 和 SafMediaScanner 共用，消除重复代码。
-- `ProfileFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；扫描目录入口统一放在"数据管理/扫描目录"。
+- `ProfileFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；常规目录入口统一放在"数据管理/常规目录"。
 - `MediaLibraryViewModel`：触发扫描、读取既有 `ScanSourceEntity`，统一调度双引擎。
 
 ## 两套扫描体系

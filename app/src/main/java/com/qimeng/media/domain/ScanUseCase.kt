@@ -13,6 +13,7 @@ import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
 import com.qimeng.media.scan.MediaStoreScanner
 import com.qimeng.media.scan.SafMediaScanner
+import kotlinx.coroutines.flow.firstOrNull
 
 /**
  * 扫描调度 UseCase：负责目录扫描、增量刷新、COS 扫描、删除扫描源等操作。
@@ -383,6 +384,43 @@ class ScanUseCase(
                 repository.deleteOrphanAuthors()
             }
         }
+
+        // 清理历史残留：view_stats/view_history/timeline_tags/SharedPreferences 中
+        // 引用了已不存在的 recordKey 的数据（修复旧版 deleteMediaAndRefs 未清理的遗留问题）
+        cleanupStaleRefs()
+    }
+
+    /** 清理引用了已删除文件的残留数据（统计、历史、时间轴标签、SharedPreferences） */
+    private suspend fun cleanupStaleRefs() {
+        val validKeys = repository.getAllRecordKeys().toSet()
+        if (validKeys.isEmpty()) return
+
+        // 清理 view_stats 残留
+        val allStats = repository.observeAllStats().firstOrNull().orEmpty()
+        val staleStatsKeys = allStats.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }
+        if (staleStatsKeys.isNotEmpty()) {
+            AppLog.d("ScanUseCase", "cleanupStaleRefs: stale view_stats=${staleStatsKeys.size}")
+            repository.deleteMediaAndRefs(staleStatsKeys)
+        }
+
+        // 清理 view_history 残留
+        val allHistory = repository.observeLatestHistory().firstOrNull().orEmpty()
+        val staleHistoryKeys = allHistory.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }
+        if (staleHistoryKeys.isNotEmpty()) {
+            AppLog.d("ScanUseCase", "cleanupStaleRefs: stale view_history=${staleHistoryKeys.size}")
+            repository.deleteMediaAndRefs(staleHistoryKeys)
+        }
+
+        // 清理 timeline_tags 残留
+        val allTimelineTags = repository.getAllTimelineTags()
+        val staleTimelineKeys = allTimelineTags.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }.distinct()
+        if (staleTimelineKeys.isNotEmpty()) {
+            AppLog.d("ScanUseCase", "cleanupStaleRefs: stale timeline_tags=${staleTimelineKeys.size}")
+            repository.deleteMediaAndRefs(staleTimelineKeys)
+        }
+
+        // 清理 SharedPreferences 残留（点赞、收藏中引用了已删除文件的 recordKey）
+        com.qimeng.media.core.MediaDetailPrefsCleaner.cleanOrphanEntries(application, validKeys)
     }
 
     /** 尝试使用 MediaStore 快速扫描 */

@@ -57,7 +57,7 @@ class AllFilesFragment : Fragment() {
     private var filterType: String? = null
     private var filterState = MediaFilterState()
     private var viewMode = ""
-    private var selectedPartitions = mutableSetOf<String>()
+    private var selectedPartitions = mutableSetOf("常规", "COS")
     private var partitionPillsExpanded = true
     private var selectedSources = mutableSetOf<String>()
     private var selectedChars = mutableSetOf<String>()
@@ -223,8 +223,13 @@ class AllFilesFragment : Fragment() {
 
     private fun render() {
         if (_binding == null) return
-        val isCosPartition = "COS" in selectedPartitions
-        val workingMedia = if (isCosPartition) cachedCosMedia else cachedMedia
+        val isCosPartition = selectedPartitions == setOf("COS")
+        val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
+        val workingMedia = when {
+            isCosPartition -> cachedCosMedia
+            isAllPartition -> cachedMedia + cachedCosMedia
+            else -> cachedMedia
+        }
         val renderStart = System.currentTimeMillis()
 
         // 立即根据展开状态设置胶囊栏可见性，避免异步计算期间旧UI残留
@@ -253,12 +258,20 @@ class AllFilesFragment : Fragment() {
                 }
 
                 // 缓存键：只在数据/filterType/partition/selectedSources变化时重算分组
-                val newSourceKey = "$isCosPartition|$filterType|$dataVersion"
-                val newCharKey = "$isCosPartition|$filterType|${selectedSources.sorted()}|$dataVersion"
+                val partitionKey = selectedPartitions.sorted().joinToString("+")
+                val newSourceKey = "$partitionKey|$filterType|$dataVersion"
+                val newCharKey = "$partitionKey|$filterType|${selectedSources.sorted()}|$dataVersion"
 
                 if (newSourceKey != sourceGroupsKey) {
-                    cachedSourceGroups = if (isCosPartition) MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
-                        else MediaGroupHelper.groupBySource(typed)
+                    cachedSourceGroups = when {
+                        isCosPartition -> MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
+                        isAllPartition -> {
+                            val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
+                            val cos = MediaGroupHelper.groupByCosAuthor(typed.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors)
+                            mergeGroups(regular, cos)
+                        }
+                        else -> MediaGroupHelper.groupBySource(typed)
+                    }
                     sourceGroupsKey = newSourceKey
                 }
 
@@ -268,7 +281,15 @@ class AllFilesFragment : Fragment() {
                         val sourceMediaSet = cachedSourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
                         typed.filter { it in sourceMediaSet }
                     } else typed
-                    cachedCharGroups = if (isCosPartition) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks) else MediaGroupHelper.groupByCharacter(baseForChars)
+                    cachedCharGroups = when {
+                        isCosPartition -> MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                        isAllPartition -> {
+                            val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
+                            val cos = MediaGroupHelper.groupByCosWork(baseForChars.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                            mergeGroups(regular, cos)
+                        }
+                        else -> MediaGroupHelper.groupByCharacter(baseForChars)
+                    }
                     charGroupsKey = newCharKey
                 }
 
@@ -343,7 +364,11 @@ class AllFilesFragment : Fragment() {
                     }
                 }
             }
-            val label = if (isCosPartition) "COS" else "文件"
+            val label = when {
+                isCosPartition -> "COS"
+                isAllPartition -> "文件"
+                else -> "常规"
+            }
             binding.allFilesSummaryText.text = "${filtered.size} $label · ${MediaBrowserLogic.formatSize(totalSize)}"
             if (fingerprint != lastRenderedFingerprint) {
                 lastRenderedFingerprint = fingerprint
@@ -373,7 +398,7 @@ class AllFilesFragment : Fragment() {
 
     private fun updateChipStyles() {
         val colors = ThemeHelper.resolve(requireContext())
-        val partitionCount = 2 // 默认 + COS
+        val partitionCount = 2 // 常规 + COS
         val sourceCount = cachedSourceGroups.size
         val charCount = cachedCharGroups.size
         val typeCount = 3 // 图片 + 视频 + 动图
@@ -426,14 +451,16 @@ class AllFilesFragment : Fragment() {
             return
         }
 
-        // 分区选项：全部 / 默认（普通文件） / COS
-        val partitions = listOf("默认" to cachedMedia.size, "COS" to cachedCosMedia.size)
+        // 分区选项：全部 / 常规 / COS
+        val partitions = listOf("常规" to cachedMedia.size, "COS" to cachedCosMedia.size)
         val totalCount = cachedMedia.size + cachedCosMedia.size
         val flow = MediaPillsHelper.createFlowLayout(requireContext())
 
-        val allPill = MediaPillsHelper.createPill(requireContext(), "全部 ($totalCount)", false, colors)
+        val isAllSelected = selectedPartitions.containsAll(listOf("常规", "COS"))
+        val allPill = MediaPillsHelper.createPill(requireContext(), "全部 ($totalCount)", isAllSelected, colors)
         allPill.setOnClickListener {
             selectedPartitions.clear()
+            selectedPartitions.addAll(listOf("常规", "COS"))
             selectedSources.clear()
             selectedChars.clear()
             lastRenderedFingerprint = ""
@@ -443,19 +470,21 @@ class AllFilesFragment : Fragment() {
 
         for ((name, count) in partitions) {
             val isActive = when (name) {
-                "默认" -> "COS" !in selectedPartitions
-                "COS" -> "COS" in selectedPartitions
+                "常规" -> selectedPartitions.contains("常规") && !selectedPartitions.contains("COS")
+                "COS" -> selectedPartitions.contains("COS") && !selectedPartitions.contains("常规")
                 else -> false
             }
             val pill = MediaPillsHelper.createPill(requireContext(), "$name ($count)", isActive, colors)
             pill.setOnClickListener {
                 when (name) {
-                    "默认" -> {
-                        selectedPartitions.remove("COS")
+                    "常规" -> {
+                        selectedPartitions.clear()
+                        selectedPartitions.add("常规")
                         selectedSources.clear()
                         selectedChars.clear()
                     }
                     "COS" -> {
+                        selectedPartitions.clear()
                         selectedPartitions.add("COS")
                         selectedSources.clear()
                         selectedChars.clear()
@@ -503,9 +532,26 @@ class AllFilesFragment : Fragment() {
         )
     }
 
+    /** 合并常规和COS分组，同key时合并文件列表而非覆盖（如"其他"） */
+    private fun mergeGroups(
+        regular: Map<String, List<MediaFileEntity>>,
+        cos: Map<String, List<MediaFileEntity>>
+    ): Map<String, List<MediaFileEntity>> {
+        val merged = regular.toMutableMap()
+        for ((key, value) in cos) {
+            merged[key] = merged[key]?.plus(value) ?: value
+        }
+        return merged
+    }
+
     private fun renderTypePills() {
-        val isCosPartition = "COS" in selectedPartitions
-        val workingMedia = if (isCosPartition) cachedCosMedia else cachedMedia
+        val isCosPartition = selectedPartitions == setOf("COS")
+        val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
+        val workingMedia = when {
+            isCosPartition -> cachedCosMedia
+            isAllPartition -> cachedMedia + cachedCosMedia
+            else -> cachedMedia
+        }
         MediaPillsHelper.renderTypePills(
             requireContext(),
             binding.allPillsWrapper,

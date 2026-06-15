@@ -98,7 +98,7 @@
         <TextView
             android:id="@+id/dataManagementRow"
             style="@style/QimengProfileRow"
-            android:text="数据管理\n扫描目录与备份保存位置" />
+            android:text="数据管理\n常规目录与备份保存位置" />
 
         <TextView
             android:id="@+id/compatCheckRow"

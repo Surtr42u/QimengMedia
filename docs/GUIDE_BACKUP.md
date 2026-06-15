@@ -6,7 +6,7 @@
 
 当前实现：
 - `BackupManager`：从 Room 读取所有数据表，生成 JSON 文件写入 SAF 授权目录；同时支持从 JSON 读取并恢复数据。
-- `ProfileFragment`：通过"数据管理"行打开项目主题底部弹层，统一承载扫描目录、保存位置、相册规则、TXT 导入作者；保存位置写入 `settings` 表。
+- `ProfileFragment`：通过"数据管理"行打开项目主题底部弹层，统一承载常规目录、保存位置、相册规则、TXT 导入作者；保存位置写入 `settings` 表。
 
 ## 职责
 
@@ -79,7 +79,7 @@
   - 实现：`AutoSyncUseCase` → `BackupManager.autoSyncToDirectory()` / `BackupManager.fullSyncToDirectory()`
 - 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。
 - 自动同步状态展示。
-- 扫描目录：从数据管理弹层添加媒体目录，并和已授权扫描目录一起重新索引。
+- 常规目录：从数据管理弹层添加媒体目录，并和已授权扫描目录一起重新索引。
 - 清空历史记录。
 - TXT 导入作者入口。
 
@@ -92,6 +92,14 @@
 - 格式说明目录：`绮梦影库/格式说明/`，包含格式使用指南和示例文件，仅在首次同步时写入，已存在则跳过。
 - 导入时遇到不存在的文件，保留记录但标记未匹配。
 - 备份 JSON 损坏时要提示用户，不允许崩溃。
+- **导出过滤**：所有含 recordKey 的导出数据（authors/tags/mediaTags/mediaStats/history/likes/favorites/timeline_tags）均以 `media_files` 表中当前存在的 recordKey 集合为白名单过滤，确保已删除文件的数据不会出现在导出中。此过滤作为兜底机制，即使级联删除有遗漏，导出结果也不会包含残留数据。
+
+### schemaVersion 变更记录
+
+| 文件 | 当前版本 | 变更说明 |
+|---|---|---|
+| `authors.json` | 2 | v1→v2：files 数组从空改为填入关联的 recordKey 列表，导入时恢复 AuthorMediaCrossRef；向后兼容 v1（files 为空或缺失时跳过） |
+| 其余9个JSON | 1 | 无变更 |
 
 ## 个人偏好导出
 
@@ -125,9 +133,9 @@ JSON 可完整还原 TXT 报告（viewStats 含 mediaType 和 isCosFile，可区
 
 纯中文文本，包含以下章节：
 - 【总览】文件总数（常规/COS）、收藏数（常规/COS）、标签数、作者数、关注作者数、总查看/播放次数、总浏览时长
-- 【总 Top 30】COS+常规混合，按热度分降序
-- 【常规 Top 20】非 COS 文件
-- 【COS Top 20】COS 文件
+- 【总 Top 30】COS作品+常规文件混合，按热度分降序（COS 按作品聚合，常规按单个文件）
+- 【常规 Top 20】非 COS 文件，按单个文件热度分降序
+- 【COS Top 20】按作品聚合，按热度分降序
 - 【作者 Top 20】不分 COS/常规，按偏好度降序
 - 【关注的作者】全部列出
 - 【标签 Top 10】按关联文件数降序
@@ -136,8 +144,11 @@ JSON 可完整还原 TXT 报告（viewStats 含 mediaType 和 isCosFile，可区
 - 排行说明
 
 热度分计算：
-- 图片：viewCount + likeCount + (收藏 ? 5 : 0)
-- 视频：viewCount + playCount + floor(浏览秒/60) + likeCount + (收藏 ? 5 : 0)
+- 常规图片：viewCount + likeCount + (收藏 ? 5 : 0)
+- 常规视频：viewCount + playCount + floor(浏览秒/60) + likeCount + (收藏 ? 5 : 0)
+- COS作品：作品下所有文件的(viewCount + playCount + floor(浏览秒/60) + likeCount)之和 + 收藏文件数×5
+
+COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作品名 [COS作品] — X 个文件 / 查看 X 次 / 点赞 X 次 / ★收藏"。作品中任一文件被收藏即标记 ★收藏。
 
 作者偏好度 = 所有关联文件的 (viewCount + playCount) 之和 + 每个收藏文件 +5 + 每个文件的 likeCount 之和
 

@@ -78,6 +78,9 @@ interface MediaFileDao {
     @Query("SELECT recordKey FROM media_files WHERE isCosFile = 1")
     suspend fun getAllCosRecordKeys(): List<String>
 
+    @Query("SELECT recordKey FROM media_files")
+    suspend fun getAllRecordKeys(): List<String>
+
     @Query("UPDATE media_files SET width = :width, height = :height, durationMillis = :durationMillis WHERE recordKey = :recordKey")
     suspend fun updateMetadata(recordKey: String, width: Int?, height: Int?, durationMillis: Long?)
 }

@@ -7,6 +7,7 @@ import com.qimeng.media.core.AppLog
 import com.qimeng.media.data.db.AppDatabase
 import com.qimeng.media.data.db.entity.AlbumRuleEntity
 import com.qimeng.media.data.db.entity.AuthorEntity
+import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
@@ -34,6 +35,8 @@ class BackupManager(private val context: Context) {
         val dir = DocumentFile.fromTreeUri(context, dirUri) ?: return@withContext 0
         val now = System.currentTimeMillis()
         var count = 0
+        // 获取当前所有有效 recordKey，用于过滤已删除文件的残留数据
+        val validKeys = database.mediaFileDao().getAllRecordKeys().toSet()
 
         /**
          * 原子写入JSON文件：先写入临时文件，成功后再重命名
@@ -71,12 +74,12 @@ class BackupManager(private val context: Context) {
         writeJson(BackupFileNames.AUTHORS, exportAuthors(database, now))
         writeJson(BackupFileNames.TAGS, exportTags(database, now))
         writeJson(BackupFileNames.ALBUM_RULES, exportAlbumRules(database, now))
-        writeJson(BackupFileNames.MEDIA_STATS, exportMediaStats(database, now))
-        writeJson(BackupFileNames.HISTORY, exportHistory(database, now))
+        writeJson(BackupFileNames.MEDIA_STATS, exportMediaStats(database, now, validKeys))
+        writeJson(BackupFileNames.HISTORY, exportHistory(database, now, validKeys))
         writeJson(BackupFileNames.SCAN_SOURCES, exportScanSources(database, now))
-        writeJson(BackupFileNames.LIKES, exportLikes(now))
+        writeJson(BackupFileNames.LIKES, exportLikes(now, validKeys))
         writeJson(BackupFileNames.RECOMMENDATION_PREFS, exportRecommendationPrefs(appPrefsManager, now))
-        writeJson(BackupFileNames.TIMELINE_TAGS, exportTimelineTags(database, now))
+        writeJson(BackupFileNames.TIMELINE_TAGS, exportTimelineTags(database, now, validKeys))
         count
     }
 
@@ -124,10 +127,19 @@ class BackupManager(private val context: Context) {
     }
 
     private suspend fun exportAuthors(db: AppDatabase, now: Long): JSONObject {
+        val authorList = db.authorDao().getAllAuthors()
+        val authorMediaList = db.authorDao().observeAllAuthorMedia().firstOrNull().orEmpty()
+        val validKeys = db.mediaFileDao().getAllRecordKeys().toSet()
+        // 构建 authorId -> recordKey 列表的映射
+        val authorFilesMap = mutableMapOf<String, MutableList<String>>()
+        authorMediaList.forEach { xref ->
+            if (xref.recordKey !in validKeys) return@forEach
+            authorFilesMap.getOrPut(xref.authorId) { mutableListOf() }.add(xref.recordKey)
+        }
         val authors = JSONArray()
-        db.authorDao().getAllAuthors().forEach { author ->
+        authorList.forEach { author ->
             val files = JSONArray()
-            // For now, empty files array (will be filled when author-media cross refs are added)
+            (authorFilesMap[author.authorId] ?: emptyList()).forEach { files.put(it) }
             authors.put(JSONObject().apply {
                 put("authorId", author.authorId)
                 put("displayName", author.displayName)
@@ -137,7 +149,7 @@ class BackupManager(private val context: Context) {
             })
         }
         return JSONObject().apply {
-            put("schemaVersion", 1)
+            put("schemaVersion", 2)
             put("exportedAtMillis", now)
             put("data", JSONObject().put("authors", authors))
         }
@@ -145,6 +157,7 @@ class BackupManager(private val context: Context) {
 
     private suspend fun exportTags(db: AppDatabase, now: Long): JSONObject {
         val allTags = db.tagDao().getAllTags()
+        val validKeys = db.mediaFileDao().getAllRecordKeys().toSet()
         val tags = JSONArray()
         allTags.forEach { tag ->
             tags.put(JSONObject().apply {
@@ -156,6 +169,7 @@ class BackupManager(private val context: Context) {
         val mediaTags = JSONArray()
         val tagIdToName = allTags.associateBy { it.tagId }
         db.tagDao().getAllCrossRefs().forEach { xref ->
+            if (xref.recordKey !in validKeys) return@forEach
             val tagName = tagIdToName[xref.tagId]?.name ?: ""
             mediaTags.put(JSONObject().apply {
                 put("recordKey", xref.recordKey)
@@ -187,9 +201,10 @@ class BackupManager(private val context: Context) {
         }
     }
 
-    private suspend fun exportMediaStats(db: AppDatabase, now: Long): JSONObject {
+    private suspend fun exportMediaStats(db: AppDatabase, now: Long, validKeys: Set<String>): JSONObject {
         val items = JSONArray()
         db.viewStatsDao().getAllByFileName().forEach { stats ->
+            if (stats.recordKey !in validKeys) return@forEach
             items.put(JSONObject().apply {
                 put("recordKey", stats.recordKey)
                 put("fileName", stats.fileName)
@@ -207,9 +222,10 @@ class BackupManager(private val context: Context) {
         }
     }
 
-    private suspend fun exportHistory(db: AppDatabase, now: Long): JSONObject {
+    private suspend fun exportHistory(db: AppDatabase, now: Long, validKeys: Set<String>): JSONObject {
         val items = JSONArray()
         db.viewHistoryDao().getLatest(1000).forEach { history ->
+            if (history.recordKey !in validKeys) return@forEach
             items.put(JSONObject().apply {
                 put("recordKey", history.recordKey)
                 put("fileName", history.fileName)
@@ -280,17 +296,37 @@ class BackupManager(private val context: Context) {
     private suspend fun importAuthors(json: JSONObject, db: AppDatabase) {
         val data = json.optJSONObject("data") ?: return
         val arr = data.optJSONArray("authors") ?: return
+        // 构建 recordKey -> fileName 映射，用于恢复作者-文件关联
+        val mediaMap = db.mediaFileDao().getAll().associateBy { it.recordKey }
+        val crossRefs = mutableListOf<AuthorMediaCrossRef>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            val authorId = obj.optString("authorId", "author_$i")
+            val authorId = obj.optString("authorId", "author_$i").take(64)
             db.authorDao().upsertAuthor(
                 AuthorEntity(
-                    authorId = authorId.take(64),
+                    authorId = authorId,
                     displayName = obj.optString("displayName", ""),
                     createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
                     updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis())
                 )
             )
+            // 恢复作者-文件关联（兼容旧版：files 不存在或为空数组时跳过）
+            val filesArr = obj.optJSONArray("files") ?: continue
+            for (j in 0 until filesArr.length()) {
+                val recordKey = filesArr.optString(j).takeIf { it.isNotEmpty() } ?: continue
+                val media = mediaMap[recordKey] ?: continue
+                crossRefs.add(
+                    AuthorMediaCrossRef(
+                        authorId = authorId,
+                        recordKey = recordKey,
+                        fileName = media.fileName,
+                        isMatched = true
+                    )
+                )
+            }
+        }
+        if (crossRefs.isNotEmpty()) {
+            db.authorDao().upsertAllAuthorMedia(crossRefs)
         }
     }
 
@@ -376,7 +412,7 @@ class BackupManager(private val context: Context) {
         }
     }
 
-    private fun exportLikes(now: Long): JSONObject {
+    private fun exportLikes(now: Long, validKeys: Set<String>): JSONObject {
         val prefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
         val items = JSONArray()
         val likeCountPrefix = "like_count_"
@@ -385,6 +421,7 @@ class BackupManager(private val context: Context) {
             val key = entry.key as String
             if (key.startsWith(likeCountPrefix) && entry.value is Int) {
                 val recordKey = key.removePrefix(likeCountPrefix)
+                if (recordKey !in validKeys) continue
                 val likeCount = entry.value as Int
                 val lastLikeDate = prefs.getString(likeDatePrefix + recordKey, null)
                 items.put(JSONObject().apply {
@@ -396,7 +433,7 @@ class BackupManager(private val context: Context) {
         }
         val favorites = prefs.getStringSet(KEY_FAVORITES, emptySet()).orEmpty()
         val favItems = JSONArray()
-        favorites.forEach { key -> favItems.put(key) }
+        favorites.forEach { key -> if (key in validKeys) favItems.put(key) }
         return JSONObject().apply {
             put("schemaVersion", 1)
             put("exportedAtMillis", now)
@@ -447,6 +484,7 @@ class BackupManager(private val context: Context) {
         // 构建 recordKey -> MediaFileEntity 映射（用于 mediaType 和 isCosFile）
         val allMediaFiles = db.mediaFileDao().getAll()
         val mediaFileMap = allMediaFiles.associateBy { it.recordKey }
+        val validKeys = mediaFileMap.keys
 
         // COS 数据
         val cosMedia = db.mediaFileDao().observeCosMedia().firstOrNull().orEmpty()
@@ -455,7 +493,7 @@ class BackupManager(private val context: Context) {
         val cosStats = db.viewStatsDao().getByRecordKeys(cosRecordKeys.toList())
 
         val favorites = JSONArray()
-        favSet.forEach { key -> if (key.isNotBlank()) favorites.put(key) }
+        favSet.forEach { key -> if (key.isNotBlank() && key in validKeys) favorites.put(key) }
 
         val likes = JSONArray()
         val likeCountPrefix = "like_count_"
@@ -465,6 +503,7 @@ class BackupManager(private val context: Context) {
             val key = entry.key as String
             if (key.startsWith(likeCountPrefix) && entry.value is Int) {
                 val recordKey = key.removePrefix(likeCountPrefix)
+                if (recordKey !in validKeys) continue
                 val likeCount = entry.value as Int
                 val lastLikeDate = detailPrefs.getString(likeDatePrefix + recordKey, null)
                 likeMap[recordKey] = Pair(likeCount, lastLikeDate)
@@ -490,6 +529,7 @@ class BackupManager(private val context: Context) {
         val tagIdToName = tagList.associateBy { it.tagId }
         val crossRefs = db.tagDao().getAllCrossRefs()
         crossRefs.forEach { xref ->
+            if (xref.recordKey !in validKeys) return@forEach
             val tagName = tagIdToName[xref.tagId]?.name ?: ""
             mediaTags.put(JSONObject().apply {
                 put("recordKey", xref.recordKey)
@@ -503,6 +543,7 @@ class BackupManager(private val context: Context) {
         val statsList = db.viewStatsDao().getAllByFileName()
         val statsMap = mutableMapOf<String, ViewStatsEntity>()
         statsList.forEach { stats ->
+            if (stats.recordKey !in validKeys) return@forEach
             statsMap[stats.recordKey] = stats
             val mediaFile = mediaFileMap[stats.recordKey]
             viewStats.put(JSONObject().apply {
@@ -524,6 +565,7 @@ class BackupManager(private val context: Context) {
         val authorMediaList = db.authorDao().observeAllAuthorMedia().firstOrNull().orEmpty()
         val authorFilesMap = mutableMapOf<String, MutableList<String>>()
         authorMediaList.forEach { xref ->
+            if (xref.recordKey !in validKeys) return@forEach
             authorFilesMap.getOrPut(xref.authorId) { mutableListOf() }.add(xref.recordKey)
         }
 
@@ -638,10 +680,11 @@ class BackupManager(private val context: Context) {
             cosWorksJson.put(workObj)
         }
 
-        // 统计数据
-        val totalBrowseSeconds = statsList.sumOf { it.totalBrowseSeconds }
-        val totalViews = statsList.sumOf { it.viewCount.toLong() }
-        val totalPlays = statsList.sumOf { it.playCount.toLong() }
+        // 统计数据（使用过滤后的 statsMap，确保不含已删除文件）
+        val filteredStatsList = statsMap.values.toList()
+        val totalBrowseSeconds = filteredStatsList.sumOf { it.totalBrowseSeconds }
+        val totalViews = filteredStatsList.sumOf { it.viewCount.toLong() }
+        val totalPlays = filteredStatsList.sumOf { it.playCount.toLong() }
 
         val tagFreq = mutableMapOf<String, Int>()
         crossRefs.forEach { xref ->
@@ -660,17 +703,18 @@ class BackupManager(private val context: Context) {
             authorScoreMap[authorId] = score
         }
 
-        // 常规/COS 收藏文件数
-        val normalFavCount = favSet.count { it !in cosRecordKeys }
-        val cosFavCount = favSet.count { it in cosRecordKeys }
+        // 常规/COS 收藏文件数（使用过滤后的收藏集合）
+        val filteredFavSet = favSet.filter { it in validKeys }.toSet()
+        val normalFavCount = filteredFavSet.count { it !in cosRecordKeys }
+        val cosFavCount = filteredFavSet.count { it in cosRecordKeys }
         // 常规/COS 文件总数
         val normalFileCount = allMediaFiles.count { !it.isCosFile }
         val cosFileCount = allMediaFiles.count { it.isCosFile }
 
         val reportText = buildReportText(
-            favSet = favSet,
+            favSet = filteredFavSet,
             likeMap = likeMap,
-            statsList = statsList,
+            statsList = filteredStatsList,
             statsMap = statsMap,
             mediaFileMap = mediaFileMap,
             tagFreq = tagFreq,
@@ -689,6 +733,8 @@ class BackupManager(private val context: Context) {
             normalFavCount = normalFavCount,
             cosFavCount = cosFavCount,
             cosRecordKeys = cosRecordKeys,
+            cosWorks = cosWorks,
+            cosWorkFilesMap = cosWorkFilesMap,
             now = now
         )
 
@@ -731,6 +777,8 @@ class BackupManager(private val context: Context) {
         normalFavCount: Int,
         cosFavCount: Int,
         cosRecordKeys: Set<String>,
+        cosWorks: List<com.qimeng.media.data.db.entity.CosWorkEntity>,
+        cosWorkFilesMap: Map<String, List<String>>,
         now: Long
     ): String {
         val sb = StringBuilder()
@@ -756,11 +804,10 @@ class BackupManager(private val context: Context) {
         sb.appendLine("  总浏览时长：$hours 小时")
         sb.appendLine()
 
-        // 热度分计算
+        // 常规文件热度条目
         data class HotEntry(
             val recordKey: String,
             val hotScore: Int,
-            val isCosFile: Boolean,
             val mediaType: String,
             val viewCount: Int,
             val playCount: Int,
@@ -769,9 +816,29 @@ class BackupManager(private val context: Context) {
             val isFavorite: Boolean
         )
 
-        val hotEntries = statsList.map { stats ->
+        // COS 作品聚合条目
+        data class CosWorkEntry(
+            val authorName: String,
+            val workName: String,
+            val hotScore: Int,
+            val fileCount: Int,
+            val viewCount: Int,
+            val likeCount: Int,
+            val hasFavorite: Boolean
+        )
+
+        // 统一排行条目（用于混合排序）
+        data class RankEntry(
+            val score: Int,
+            val isCosWork: Boolean,
+            val hotEntry: HotEntry? = null,
+            val cosEntry: CosWorkEntry? = null
+        )
+
+        val normalEntries = statsList.mapNotNull { stats ->
             val mf = mediaFileMap[stats.recordKey]
             val isCos = mf?.isCosFile ?: (stats.recordKey in cosRecordKeys)
+            if (isCos) return@mapNotNull null // COS 文件走作品聚合
             val mType = mf?.mediaType ?: "image"
             val likeCount = likeMap[stats.recordKey]?.first ?: 0
             val isFav = stats.recordKey in favSet
@@ -780,7 +847,27 @@ class BackupManager(private val context: Context) {
             } else {
                 stats.viewCount + likeCount + (if (isFav) 5 else 0)
             }
-            HotEntry(stats.recordKey, hotScore, isCos, mType, stats.viewCount, stats.playCount, stats.totalBrowseSeconds, likeCount, isFav)
+            HotEntry(stats.recordKey, hotScore, mType, stats.viewCount, stats.playCount, stats.totalBrowseSeconds, likeCount, isFav)
+        }
+
+        // COS 作品聚合：按 folderUri 汇总所有文件的统计
+        val cosWorkEntries = cosWorks.map { work ->
+            val workFiles = cosWorkFilesMap[work.folderUri].orEmpty()
+            var viewCountSum = 0
+            var playCountSum = 0
+            var browseSecondsSum = 0L
+            var likeCountSum = 0
+            var favFileCount = 0
+            workFiles.forEach { rk ->
+                val s = statsMap[rk]
+                viewCountSum += s?.viewCount ?: 0
+                playCountSum += s?.playCount ?: 0
+                browseSecondsSum += s?.totalBrowseSeconds ?: 0L
+                likeCountSum += likeMap[rk]?.first ?: 0
+                if (rk in favSet) favFileCount++
+            }
+            val hotScore = viewCountSum + playCountSum + (browseSecondsSum / 60).toInt() + likeCountSum + favFileCount * 5
+            CosWorkEntry(work.authorName, work.workName, hotScore, workFiles.size, viewCountSum, likeCountSum, favFileCount > 0)
         }
 
         fun HotEntry.formatLine(): String {
@@ -793,26 +880,34 @@ class BackupManager(private val context: Context) {
             }
         }
 
-        // 2. 【总 Top 30】
+        fun CosWorkEntry.formatLine(): String {
+            val favMark = if (hasFavorite) " / ★收藏" else ""
+            return "$authorName - $workName [COS作品] — $fileCount 个文件 / 查看 $viewCount 次 / 点赞 $likeCount$favMark"
+        }
+
+        // 2. 【总 Top 30】（COS 作品 + 常规文件混合排序）
+        val mixedItems = normalEntries.map { RankEntry(it.hotScore, false, hotEntry = it) } +
+            cosWorkEntries.map { RankEntry(it.hotScore, true, cosEntry = it) }
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【总 Top 30】（COS+常规混合，按热度分降序）")
-        hotEntries.sortedByDescending { it.hotScore }.take(30).forEachIndexed { i, entry ->
-            sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
+        sb.appendLine("【总 Top 30】（COS作品+常规混合，按热度分降序）")
+        mixedItems.sortedByDescending { it.score }.take(30).forEachIndexed { i, item ->
+            val line = if (item.isCosWork) item.cosEntry!!.formatLine() else item.hotEntry!!.formatLine()
+            sb.appendLine("  ${i + 1}. $line")
         }
         sb.appendLine()
 
         // 3. 【常规 Top 20】
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【常规 Top 20】（只显示非 COS 文件）")
-        hotEntries.filter { !it.isCosFile }.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
+        normalEntries.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
             sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
 
-        // 4. 【COS Top 20】
+        // 4. 【COS Top 20】（按作品聚合）
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【COS Top 20】（只显示 COS 文件）")
-        hotEntries.filter { it.isCosFile }.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
+        sb.appendLine("【COS Top 20】（按作品聚合，按热度分降序）")
+        cosWorkEntries.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
             sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
@@ -875,8 +970,9 @@ class BackupManager(private val context: Context) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【排行说明】")
         sb.appendLine("  热度分计算规则：")
-        sb.appendLine("    图片：查看次数 + 点赞次数 + (收藏 ? 5 : 0)")
-        sb.appendLine("    视频：查看次数 + 播放次数 + 浏览分钟数 + 点赞次数 + (收藏 ? 5 : 0)")
+        sb.appendLine("    常规图片：查看次数 + 点赞次数 + (收藏 ? 5 : 0)")
+        sb.appendLine("    常规视频：查看次数 + 播放次数 + 浏览分钟数 + 点赞次数 + (收藏 ? 5 : 0)")
+        sb.appendLine("    COS作品：作品下所有文件的(查看+播放+浏览分钟+点赞)之和 + 收藏文件数×5")
         sb.appendLine("  作者偏好度 = 所有关联文件的 (查看次数+播放次数) 之和 + 每个收藏文件 +5 + 每个文件的点赞次数之和")
         sb.appendLine()
         sb.appendLine("═══════════════════════════════════════")
@@ -1031,10 +1127,11 @@ class BackupManager(private val context: Context) {
         return dir.createDirectory(subDirName)?.uri
     }
 
-    private suspend fun exportTimelineTags(db: AppDatabase, now: Long): JSONObject {
+    private suspend fun exportTimelineTags(db: AppDatabase, now: Long, validKeys: Set<String>): JSONObject {
         val tags = db.timelineTagDao().getAll()
         val items = JSONArray()
         tags.forEach { tag ->
+            if (tag.recordKey !in validKeys) return@forEach
             items.put(JSONObject().apply {
                 put("recordKey", tag.recordKey)
                 put("fileName", tag.fileName)

@@ -27,7 +27,7 @@
 - 记录键工厂（RecordKeyFactory）。
 - 自动同步到用户指定备份目录（后续接入文件读写）。
 
-当前状态：数据骨架已完成，JSON 模型已定义。备份导出/导入底层已实现（7 个 JSON 文件 SAF 目录读写）。数据管理 UI 当前统一承载扫描目录、备份保存位置、相册规则和 TXT 导入作者。后续需实现自动同步。
+当前状态：数据骨架已完成，JSON 模型已定义。备份导出/导入底层已实现（7 个 JSON 文件 SAF 目录读写）。数据管理 UI 当前统一承载常规目录、备份保存位置、相册规则和 TXT 导入作者。后续需实现自动同步。
 
 ## 阶段 3：扫描与索引
 
@@ -82,6 +82,16 @@
 - APK 打包。
 
 当前状态：进行中。大量文件性能已优化（5000+ 文件扫描可接受，增量扫描 + 分批写入 + scanTreeFast），AppLog 文件日志工具已实现（Android 16 logcat 不可读的替代方案），ADB 真机调试流程已建立，多项闪退/卡死 Bug 已修复（ActivityResultLauncher 注册、OnScrollChangedListener 生命周期、ScanStatus 卡死、SAF 路径解析、COS 作者关联），全局 UncaughtExceptionHandler 已添加。自动同步已实现（AppPrefs.autoSync + 30秒防抖），兼容性检查已实现（CompatChecker 6项检查）。
+
+---
+
+## 版本更新记录
+
+### v1.5
+
+- **分区药丸默认改为「全部」**：全部页/收藏页/浏览历史的分区药丸默认选中"全部"（非"默认/常规"），"全部"显示常规+COS合并后的所有文件，"常规"只显示非COS文件
+- **mergeGroups() 分组合并**：「全部」分区模式下，使用 `mergeGroups()` 合并常规和COS的出处分组/角色分组结果，相同 key（如"其他"）的文件列表拼接而非覆盖；AllFilesFragment、FavoriteFragment、BrowseHistoryFragment 均使用此模式
+- **BrowseHistoryFragment 空状态完善**：常规/全部模式空状态显示"没有浏览记录"，COS模式空状态显示"没有COS浏览记录"
 
 ---
 

@@ -222,7 +222,7 @@ class ProfileFragment : Fragment() {
         val ctx = requireContext()
         val container = SheetUiHelper.sheetContainer(ctx)
         container.addView(SheetUiHelper.sheetTitle(ctx, "数据管理"))
-        container.addView(SheetUiHelper.sheetAction(ctx, "扫描目录") {
+        container.addView(SheetUiHelper.sheetAction(ctx, "常规目录") {
             showScanDirectoryDialog()
         })
         container.addView(SheetUiHelper.sheetAction(ctx, "COS目录") {
@@ -245,7 +245,7 @@ class ProfileFragment : Fragment() {
         val dialog = BottomSheetDialog(requireContext())
         val ctx = requireContext()
         val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "扫描目录"))
+        container.addView(SheetUiHelper.sheetTitle(ctx, "常规目录"))
 
         val sources = cachedScanSources
         if (sources.isEmpty()) {
@@ -452,7 +452,7 @@ class ProfileFragment : Fragment() {
     private fun renderScanToast(status: ScanStatus) {
         val message = when (status) {
             ScanStatus.Idle -> return
-            ScanStatus.Running -> "正在扫描目录..."
+            ScanStatus.Running -> "正在扫描常规目录..."
             is ScanStatus.Success -> "扫描完成：${status.directoryCount} 个目录，共 ${status.count} 个文件"
             is ScanStatus.Error -> "扫描失败：${status.message}"
         }

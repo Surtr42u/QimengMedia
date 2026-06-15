@@ -18,7 +18,7 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
-    val localMediaRepository: LocalMediaRepository by lazy { DefaultLocalMediaRepository(database) }
+    val localMediaRepository: LocalMediaRepository by lazy { DefaultLocalMediaRepository(database, appContext as Application) }
     val mediaScanner: SafMediaScanner by lazy { SafMediaScanner(appContext) }
     val mediaStoreScanner: MediaStoreScanner by lazy { MediaStoreScanner(appContext) }
     val backupManager: BackupManager by lazy { BackupManager(appContext) }

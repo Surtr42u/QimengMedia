@@ -96,7 +96,7 @@ class AuthorListFragment : Fragment() {
         val defaultCount = cachedAuthors.count { !it.authorId.startsWith("cos_") }
         val cosCount = cachedAuthors.count { it.authorId.startsWith("cos_") }
         binding.authorChipAll.text = "全部（$allCount）"
-        binding.authorChipDefault.text = "默认（$defaultCount）"
+        binding.authorChipDefault.text = "常规（$defaultCount）"
         binding.authorChipCos.text = "COS（$cosCount）"
     }
 
@@ -284,7 +284,7 @@ class AuthorListFragment : Fragment() {
         // 更新三个胶囊的选中样式
         listOf(
             Triple(binding.authorChipAll, FILTER_ALL, "全部"),
-            Triple(binding.authorChipDefault, FILTER_DEFAULT, "默认"),
+            Triple(binding.authorChipDefault, FILTER_DEFAULT, "常规"),
             Triple(binding.authorChipCos, FILTER_COS, "COS")
         ).forEach { (chip, m, _) ->
             val isActive = mode == m

@@ -22,4 +22,7 @@ interface ViewHistoryDao {
 
     @Query("DELETE FROM view_history")
     suspend fun clearAll()
+
+    @Query("DELETE FROM view_history WHERE recordKey IN (:recordKeys)")
+    suspend fun deleteByRecordKeys(recordKeys: List<String>)
 }

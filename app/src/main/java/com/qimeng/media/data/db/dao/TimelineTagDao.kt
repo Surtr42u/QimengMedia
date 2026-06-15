@@ -20,6 +20,9 @@ interface TimelineTagDao {
     @Query("DELETE FROM timeline_tags")
     suspend fun clearAll()
 
+    @Query("DELETE FROM timeline_tags WHERE recordKey IN (:recordKeys)")
+    suspend fun deleteByRecordKeys(recordKeys: List<String>)
+
     @Query("SELECT * FROM timeline_tags ORDER BY recordKey, timeMillis ASC")
     suspend fun getAll(): List<TimelineTagEntity>
 }

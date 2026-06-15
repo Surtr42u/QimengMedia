@@ -46,6 +46,7 @@ interface LocalMediaRepository {
     suspend fun getNonCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri>
     suspend fun getCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri>
     suspend fun getNonCosKeysAndFileNames(): List<MediaFileDao.NonCosKeyFileName>
+    suspend fun getAllRecordKeys(): List<String>
     suspend fun recordView(recordKey: String, fileName: String)
     suspend fun recordHistory(history: ViewHistoryEntity)
     suspend fun upsertStats(stats: ViewStatsEntity)

@@ -31,4 +31,7 @@ interface ViewStatsDao {
 
     @Query("DELETE FROM view_stats")
     suspend fun clearAll()
+
+    @Query("DELETE FROM view_stats WHERE recordKey IN (:recordKeys)")
+    suspend fun deleteByRecordKeys(recordKeys: List<String>)
 }

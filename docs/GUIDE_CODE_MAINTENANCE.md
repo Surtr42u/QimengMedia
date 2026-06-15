@@ -256,6 +256,24 @@
 - **递归筛选**：选了作品后角色只显示该作品下的角色（作品→角色联动）
 - **药丸默认收起**：所有页面的药丸区域默认折叠，点击芯片展开，再次点击已选中芯片切换展开/折叠
 
+### mergeGroups() 分组合并模式
+
+当分区模式为「全部」时，需要将常规和 COS 两组分组结果合并为一个 Map。相同 key（尤其是"其他"）的文件列表必须拼接，不能覆盖。
+
+**方法签名**：
+```kotlin
+private fun mergeGroups(regular: Map<String, List<MediaFileEntity>>, cos: Map<String, List<MediaFileEntity>>): Map<String, List<MediaFileEntity>>
+```
+
+**用途**：在「全部」分区模式下，出处分组和角色分组都需要合并常规与 COS 的结果。
+
+**使用位置**：AllFilesFragment、FavoriteFragment、BrowseHistoryFragment（各 Fragment 内部私有方法，逻辑一致）。
+
+**合并逻辑**：
+1. 遍历 regular 的每个 key，将文件列表加入结果
+2. 遍历 cos 的每个 key，若 key 已存在则拼接文件列表（`existing + cosFiles`），否则新建条目
+3. 确保"其他"等重复 key 的文件不会丢失
+
 ### 新增共享组件的判断标准
 
 当以下任一条件满足时，必须提取共享组件：

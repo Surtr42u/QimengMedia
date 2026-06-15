@@ -6,6 +6,7 @@
 
 ## 当前基准
 
+- 版本：v1.5
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
@@ -60,7 +61,7 @@
 - 已实现浏览历史页、标签增删、作者 TXT 导入、种子相册规则、浏览时长记录。
 - 已实现收藏功能（SharedPreferences 持久化），我的页新增收藏入口，收藏页缩略图网格点击进详情。
 - 详情页上方 tab 已精简为返回（胶囊图标）+ 序号 + 信息（胶囊图标），点击信息图标弹出文件详情 BottomSheet；下方 tab 精简为点赞/收藏/标签/快速转跳，快速转跳点击弹出关联作者列表 BottomSheet，点击作者名跳转作者文件浏览页。
-- 已调整"我的/数据管理"：移除独立扫描、重置统计、种子规则和 TXT 导入行，统一放入项目主题底部弹层；弹层提供扫描目录、COS目录、备份保存位置、TXT 导入作者、缓存与同步；扫描支持多目录合并索引图片和视频。缓存与同步从独立行移入数据管理弹窗。
+- 已调整"我的/数据管理"：移除独立扫描、重置统计、种子规则和 TXT 导入行，统一放入项目主题底部弹层；弹层提供常规目录、COS目录、备份保存位置、TXT 导入作者、缓存与同步；扫描支持多目录合并索引图片和视频。缓存与同步从独立行移入数据管理弹窗。
 - UI 已精简：搜索栏与标题同排、芯片缩至 30dp、纯矢量图标无文字、底部无边距色条。
 - 缩略图加载参数（Coil 3.4 `size(480,270) crossfade(false) allowHardware(false)`），`itemViewCacheSize=20`，`RecycledViewPool(max=20)`。
 - 缩略图加载使用 `ThumbnailLoader` 三级策略：`ContentResolver.loadThumbnail`（MediaStore URI，30-100ms）→ `getEmbeddedPicture`（视频内嵌封面）→ 首帧截取+黑帧检测（`loadFirstFrame()` 固定时间 0ms→1s→2s→3s→5s，自动跳过纯黑帧，采样100像素点亮度<15判定纯黑）。
@@ -88,6 +89,9 @@
 - 已替换应用图标为木纹 XB 雕刻图标：Adaptive Icon 前景 PNG（drawable 各密度）+ 背景色 `#DDBC98` + mipmap 完整图标回退（5 密度 PNG）；启动画面已隐藏图标仅显示纯色背景。
 - 已将 `MediaLibraryViewModel` 按职责拆分为 4 个 UseCase（`ScanUseCase`、`ThumbnailUseCase`、`AuthorImportUseCase`、`AutoSyncUseCase`），ViewModel 保留数据观察、统计记录、设置管理、标签管理、作者管理和 ScanStatus 状态，公共 API 不变。
 - `AutoSyncUseCase` 支持四种触发时机：扫描后（只写app数据/）、退出详情页（只写app数据/）、App后台（全量同步）、手动同步（全量同步，无视防抖）；数据备份弹窗新增"立即同步"按钮。
+- `deleteMediaAndRefs` 扩展：事务内删除6张表（新增 view_stats/view_history/timeline_tags），事务外清理 SharedPreferences（点赞/收藏）和缓存（Coil 内存缓存 + ThumbnailCache）；启动时 `cleanupStaleRefs()` 清理历史残留数据。
+- `authors.json` schemaVersion 升至 2：导出时 files 数组填入关联 recordKey，导入时恢复 AuthorMediaCrossRef。
+- 个人偏好 TXT 报告 COS 排行按作品（文件夹）聚合显示，常规文件不变。
 
 ## 核心原则
 
@@ -120,7 +124,7 @@
 - 相册
 - 我的
 
-作者管理不放到底部 Tab，入口位于“我的”页面的独立功能行。扫描目录入口也放在“我的”页面，首页只承担浏览和推荐展示职责。
+作者管理不放到底部 Tab，入口位于“我的”页面的独立功能行。常规目录入口也放在“我的”页面，首页只承担浏览和推荐展示职责。
 
 ## 项目目录目标
 
@@ -156,7 +160,9 @@ QimengMedia/
 │           │   ├── LargeImageDecoder.kt
 │           │   ├── SpngDecoder.kt
 │           │   ├── AppLog.kt
-│           │   └── CompatChecker.kt
+│           │   ├── CompatChecker.kt
+│           │   ├── MediaCacheCleaner.kt
+│           │   └── MediaDetailPrefsCleaner.kt
 │           ├── data/
 │           │   ├── db/
 │           │   │   ├── AppDatabase.kt

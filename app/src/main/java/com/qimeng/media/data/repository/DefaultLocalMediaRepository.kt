@@ -1,6 +1,9 @@
 package com.qimeng.media.data.repository
 
+import android.app.Application
 import androidx.room.withTransaction
+import com.qimeng.media.core.MediaCacheCleaner
+import com.qimeng.media.core.MediaDetailPrefsCleaner
 import com.qimeng.media.data.db.AppDatabase
 import com.qimeng.media.data.db.dao.MediaFileDao
 import com.qimeng.media.data.db.entity.AuthorEntity
@@ -19,7 +22,8 @@ import com.qimeng.media.data.db.model.MediaTagName
 import kotlinx.coroutines.flow.Flow
 
 class DefaultLocalMediaRepository(
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val application: Application
 ) : LocalMediaRepository {
     private val mediaFileDao = database.mediaFileDao()
     private val viewHistoryDao = database.viewHistoryDao()
@@ -100,6 +104,9 @@ class DefaultLocalMediaRepository(
     override suspend fun getNonCosKeysAndFileNames(): List<MediaFileDao.NonCosKeyFileName> =
         mediaFileDao.getNonCosKeysAndFileNames()
 
+    override suspend fun getAllRecordKeys(): List<String> =
+        mediaFileDao.getAllRecordKeys()
+
     override suspend fun recordView(recordKey: String, fileName: String) {
         database.withTransaction {
             val now = System.currentTimeMillis()
@@ -175,11 +182,19 @@ class DefaultLocalMediaRepository(
 
     override suspend fun deleteMediaAndRefs(recordKeys: List<String>) {
         if (recordKeys.isEmpty()) return
+        // 1. 事务中删除数据库关联数据
         database.withTransaction {
             authorDao.deleteCrossRefsByRecordKeys(recordKeys)
             database.tagDao().deleteCrossRefsByRecordKeys(recordKeys)
+            viewStatsDao.deleteByRecordKeys(recordKeys)
+            viewHistoryDao.deleteByRecordKeys(recordKeys)
+            database.timelineTagDao().deleteByRecordKeys(recordKeys)
             mediaFileDao.deleteByRecordKeys(recordKeys)
         }
+        // 2. 清理 SharedPreferences（点赞、收藏）
+        MediaDetailPrefsCleaner.cleanByRecordKeys(application, recordKeys)
+        // 3. 清理 Coil 内存缓存 + 本地缩略图文件缓存
+        MediaCacheCleaner.cleanByRecordKeys(application, recordKeys)
     }
 
     override suspend fun deleteOrphanAuthors() {
@@ -268,6 +283,7 @@ class DefaultLocalMediaRepository(
     }
 
     override suspend fun deleteCosScanSource(uriString: String) {
+        val allOrphanKeys = mutableListOf<String>()
         database.withTransaction {
             scanSourceDao.deleteByUri(uriString)
             val remainingCosSources = scanSourceDao.getCosSources()
@@ -287,14 +303,23 @@ class DefaultLocalMediaRepository(
                 val prefix = if (work.folderUri.endsWith("/")) work.folderUri else "${work.folderUri}/"
                 val orphanKeys = mediaFileDao.getCosRecordKeysByUriPrefixLight(prefix)
                 if (orphanKeys.isNotEmpty()) {
+                    allOrphanKeys.addAll(orphanKeys)
                     authorDao.deleteCrossRefsByRecordKeys(orphanKeys)
                     database.tagDao().deleteCrossRefsByRecordKeys(orphanKeys)
+                    viewStatsDao.deleteByRecordKeys(orphanKeys)
+                    viewHistoryDao.deleteByRecordKeys(orphanKeys)
+                    database.timelineTagDao().deleteByRecordKeys(orphanKeys)
                     mediaFileDao.deleteByRecordKeys(orphanKeys)
                 }
             }
             val activeUris = activeCosUris.map { it.trimEnd('/') }
             database.cosWorkDao().deleteByInactiveUris(activeUris)
             authorDao.deleteOrphanCosAuthors()
+        }
+        // 事务外清理 SharedPreferences（点赞、收藏）
+        if (allOrphanKeys.isNotEmpty()) {
+            MediaDetailPrefsCleaner.cleanByRecordKeys(application, allOrphanKeys)
+            MediaCacheCleaner.cleanByRecordKeys(application, allOrphanKeys)
         }
     }
 
