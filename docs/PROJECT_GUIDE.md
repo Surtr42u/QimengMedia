@@ -90,7 +90,8 @@
 - 已将 `MediaLibraryViewModel` 按职责拆分为 4 个 UseCase（`ScanUseCase`、`ThumbnailUseCase`、`AuthorImportUseCase`、`AutoSyncUseCase`），ViewModel 保留数据观察、统计记录、设置管理、标签管理、作者管理和 ScanStatus 状态，公共 API 不变。
 - 已对 `BackupManager` 报告生成进行重构（密封类 `RankEntry` 消除 `!!`、`PersonalPrefsReportData` 数据类封装 24 参数、`buildReportText` 按章节提取 10 个子方法），导出 JSON 格式和 TXT 报告内容零变化。
 - 已删除死代码 `DetailSheetHelper.kt`（从未被调用，详情页 BottomSheet 逻辑在 `MediaDetailFragment` 内部实现）。
-- 已基于 detekt 实证数据重构高圈复杂度方法：`MediaDetailFragment.showMediaAt`（CC 29→5，提取 showImage/showVideo/setupVideoTouchOverlay/isTapGesture/needsMetadataDecode）、`MediaBrowserLogic.recommend`（CC 31→6，提取 resolveWeights/computeNormDenominators/shuffleBuckets）、清理 6 处死代码（seekRelative/extractInt/resolver/formatSeconds/showRootFragment/THUMB_SIZE）。4 个 Fragment.render（CC 36-48）和 MediaFilterSheet.show（CC 35）待独立重构任务。
+- 已基于 detekt 实证数据重构高圈复杂度方法：`MediaDetailFragment.showMediaAt`（CC 29→5，提取 showImage/showVideo/setupVideoTouchOverlay/isTapGesture/needsMetadataDecode）、`MediaBrowserLogic.recommend`（CC 31→6，提取 resolveWeights/computeNormDenominators/shuffleBuckets）、清理 6 处死代码（seekRelative/extractInt/resolver/formatSeconds/showRootFragment/THUMB_SIZE）。
+- 已完成 5 个 Fragment.render 重构（CC 22-48→<20）：新增 `MediaRenderHelper` 纯计算型 object（封装 applyTypeFilter/computeDisplayed/buildFingerprint），5 个 Fragment 共享；每个 Fragment 拆分为 render()编排 + computeXxxGroupsAsync()协程计算 + updateXxxUI()UI更新；`MediaFilterSheet.show`（CC 35→<20）拆分为 show()编排 + appendTimeRangeSection/appendTagsSection/buildFooter + FilterStateHolder。
 - `AutoSyncUseCase` 支持四种触发时机：扫描后（只写app数据/）、退出详情页（只写app数据/）、App后台（全量同步）、手动同步（全量同步，无视防抖）；数据备份弹窗新增"立即同步"按钮。
 - `deleteMediaAndRefs` 扩展：事务内删除6张表（新增 view_stats/view_history/timeline_tags），事务外清理 SharedPreferences（点赞/收藏）和缓存（Coil 内存缓存 + ThumbnailCache）；启动时 `cleanupStaleRefs()` 清理历史残留数据。
 - `authors.json` schemaVersion 升至 2：导出时 files 数组填入关联 recordKey，导入时恢复 AuthorMediaCrossRef。
@@ -201,7 +202,8 @@ QimengMedia/
 │               │   ├── MediaBrowserLogic.kt
 │               │   ├── MediaFilterSheet.kt
 │               │   ├── MediaGroupHelper.kt
-│               │   └── MediaPillsHelper.kt
+│               │   ├── MediaPillsHelper.kt
+│               │   └── MediaRenderHelper.kt
 │               ├── main/HomeFragment.kt
 │               ├── all/AllFilesFragment.kt
 │               ├── album/

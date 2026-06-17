@@ -35,6 +35,7 @@ import com.qimeng.media.ui.browser.MediaFilterSheet
 import com.qimeng.media.ui.browser.MediaFilterState
 import com.qimeng.media.ui.browser.MediaGroupHelper
 import com.qimeng.media.ui.browser.MediaPillsHelper
+import com.qimeng.media.ui.browser.MediaRenderHelper
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
@@ -247,141 +248,128 @@ class AllFilesFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             val computeStart = System.currentTimeMillis()
-            val computeResult = withContext(Dispatchers.Default) {
-                val stats = cachedStats.associateBy { it.recordKey }
-                val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
-                val typed = when (filterType) {
-                    MediaType.IMAGE -> workingMedia.filter { it.mediaType == MediaType.IMAGE }
-                    MediaType.VIDEO -> workingMedia.filter { it.mediaType == MediaType.VIDEO }
-                    MediaType.ANIMATED_IMAGE -> workingMedia.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-                    else -> workingMedia
-                }
-
-                // 缓存键：只在数据/filterType/partition/selectedSources变化时重算分组
-                val partitionKey = selectedPartitions.sorted().joinToString("+")
-                val newSourceKey = "$partitionKey|$filterType|$dataVersion"
-                val newCharKey = "$partitionKey|$filterType|${selectedSources.sorted()}|$dataVersion"
-
-                if (newSourceKey != sourceGroupsKey) {
-                    cachedSourceGroups = when {
-                        isCosPartition -> MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
-                        isAllPartition -> {
-                            val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
-                            val cos = MediaGroupHelper.groupByCosAuthor(typed.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors)
-                            mergeGroups(regular, cos)
-                        }
-                        else -> MediaGroupHelper.groupBySource(typed)
-                    }
-                    sourceGroupsKey = newSourceKey
-                }
-
-                val needCharGroups = viewMode == VIEW_MODE_CHARACTER || selectedChars.isNotEmpty()
-                if (needCharGroups && newCharKey != charGroupsKey) {
-                    val baseForChars = if (selectedSources.isNotEmpty()) {
-                        val sourceMediaSet = cachedSourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                        typed.filter { it in sourceMediaSet }
-                    } else typed
-                    cachedCharGroups = when {
-                        isCosPartition -> MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                        isAllPartition -> {
-                            val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
-                            val cos = MediaGroupHelper.groupByCosWork(baseForChars.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                            mergeGroups(regular, cos)
-                        }
-                        else -> MediaGroupHelper.groupByCharacter(baseForChars)
-                    }
-                    charGroupsKey = newCharKey
-                }
-
-                val srcGroups = cachedSourceGroups
-                val chrGroups = cachedCharGroups
-
-                var displayed = typed
-                if (selectedSources.isNotEmpty()) {
-                    val sourceMediaSet = srcGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                    displayed = displayed.filter { it in sourceMediaSet }
-                }
-                if (selectedChars.isNotEmpty()) {
-                    val charMediaSet = chrGroups.filterKeys { it in selectedChars }.values.flatten().toSet()
-                    displayed = displayed.filter { it in charMediaSet }
-                }
-
-                val result = MediaBrowserLogic.applyFilter(displayed, query = "", filterState, stats, tagMap, cachedHistory)
-                val size = result.sumOf { it.sizeBytes }
-                ComputeResult(srcGroups, chrGroups, result, size)
-            }
+            val computeResult = computeAllGroupsAsync(workingMedia, isCosPartition, isAllPartition)
 
             AppLog.d("AllFiles", "render: compute=${System.currentTimeMillis() - computeStart}ms, mode=$viewMode, workSize=${workingMedia.size}")
 
             if (_binding == null) return@launch
-
-            val compute = computeResult
-            val sourceGroups = compute.sourceGroups
-            val charGroups = compute.charGroups
-            val filtered = compute.filtered
-            val totalSize = compute.totalSize
-
-            cachedSourceGroups = sourceGroups
-            cachedCharGroups = charGroups
-
-            when (viewMode) {
-                VIEW_MODE_PARTITION -> renderPartitionPills()
-                VIEW_MODE_SOURCE -> renderSourcePills(sourceGroups)
-                VIEW_MODE_CHARACTER -> {
-                    if (isCosPartition) renderCosWorkPills(charGroups) else renderCharPills(charGroups)
-                    selectedChars.retainAll(charGroups.keys)
-                }
-                VIEW_MODE_TYPE -> renderTypePills()
-                else -> binding.allPillsScroller.visibility = View.GONE
-            }
-
-            val fingerprint = buildString {
-                append(viewMode)
-                append("|partitions=")
-                append(selectedPartitions.sorted().joinToString(","))
-                append("|")
-                append(filtered.size)
-                append("|")
-                append(filtered.firstOrNull()?.recordKey.orEmpty())
-                append("|src=")
-                append(selectedSources.sorted().joinToString(","))
-                append("|chr=")
-                append(selectedChars.sorted().joinToString(","))
-                append("|ft=")
-                append(filterType.orEmpty())
-                append("|typeExp=")
-                append(typePillsExpanded)
-                if (viewMode == VIEW_MODE_SOURCE) {
-                    append("|")
-                    sourceGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    append("|")
-                    charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-            }
-            val label = when {
-                isCosPartition -> "COS"
-                isAllPartition -> "文件"
-                else -> "常规"
-            }
-            binding.allFilesSummaryText.text = "${filtered.size} $label · ${MediaBrowserLogic.formatSize(totalSize)}"
-            if (fingerprint != lastRenderedFingerprint) {
-                lastRenderedFingerprint = fingerprint
-                when (viewMode) {
-                    VIEW_MODE_CHARACTER -> if (selectedChars.isEmpty()) adapter.submitMediaWithGroups(filtered, charGroups) else adapter.submitMedia(filtered)
-                    VIEW_MODE_SOURCE -> if (selectedSources.isEmpty()) adapter.submitMediaWithGroups(filtered, sourceGroups) else adapter.submitMedia(filtered)
-                    else -> adapter.submitMedia(filtered)
-                }
-            }
-
-            updateChipStyles()
-            AppLog.d("AllFiles", "render: total=${System.currentTimeMillis() - renderStart}ms, filtered=${filtered.size}, fp=$fingerprint")
+            cachedSourceGroups = computeResult.sourceGroups
+            cachedCharGroups = computeResult.charGroups
+            updateAllUI(computeResult, isCosPartition, isAllPartition, renderStart)
         }
+    }
+
+    /** 协程内计算：类型筛选 + 缓存键判定 + 出处/角色分组 + applyFilter */
+    private suspend fun computeAllGroupsAsync(
+        workingMedia: List<MediaFileEntity>,
+        isCosPartition: Boolean,
+        isAllPartition: Boolean
+    ): ComputeResult = withContext(Dispatchers.Default) {
+        val stats = cachedStats.associateBy { it.recordKey }
+        val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
+        val typed = MediaRenderHelper.applyTypeFilter(workingMedia, filterType)
+
+        // 缓存键：只在数据/filterType/partition/selectedSources变化时重算分组
+        val partitionKey = selectedPartitions.sorted().joinToString("+")
+        val newSourceKey = "$partitionKey|$filterType|$dataVersion"
+        val newCharKey = "$partitionKey|$filterType|${selectedSources.sorted()}|$dataVersion"
+
+        if (newSourceKey != sourceGroupsKey) {
+            cachedSourceGroups = when {
+                isCosPartition -> MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
+                isAllPartition -> {
+                    val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
+                    val cos = MediaGroupHelper.groupByCosAuthor(typed.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors)
+                    mergeGroups(regular, cos)
+                }
+                else -> MediaGroupHelper.groupBySource(typed)
+            }
+            sourceGroupsKey = newSourceKey
+        }
+
+        val needCharGroups = viewMode == VIEW_MODE_CHARACTER || selectedChars.isNotEmpty()
+        if (needCharGroups && newCharKey != charGroupsKey) {
+            val baseForChars = if (selectedSources.isNotEmpty()) {
+                val sourceMediaSet = cachedSourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
+                typed.filter { it in sourceMediaSet }
+            } else typed
+            cachedCharGroups = when {
+                isCosPartition -> MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                isAllPartition -> {
+                    val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
+                    val cos = MediaGroupHelper.groupByCosWork(baseForChars.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                    mergeGroups(regular, cos)
+                }
+                else -> MediaGroupHelper.groupByCharacter(baseForChars)
+            }
+            charGroupsKey = newCharKey
+        }
+
+        val srcGroups = cachedSourceGroups
+        val chrGroups = cachedCharGroups
+
+        val displayed = MediaRenderHelper.computeDisplayed(
+            typed, srcGroups, chrGroups, selectedSources, selectedChars
+        )
+
+        val result = MediaBrowserLogic.applyFilter(displayed, query = "", filterState, stats, tagMap, cachedHistory)
+        val size = result.sumOf { it.sizeBytes }
+        ComputeResult(srcGroups, chrGroups, result, size)
+    }
+
+    /** 协程外 UI 更新：药丸渲染 + fingerprint + adapter 提交 + 计时 */
+    private fun updateAllUI(
+        compute: ComputeResult,
+        isCosPartition: Boolean,
+        isAllPartition: Boolean,
+        renderStart: Long
+    ) {
+        val sourceGroups = compute.sourceGroups
+        val charGroups = compute.charGroups
+        val filtered = compute.filtered
+        val totalSize = compute.totalSize
+
+        when (viewMode) {
+            VIEW_MODE_PARTITION -> renderPartitionPills()
+            VIEW_MODE_SOURCE -> renderSourcePills(sourceGroups)
+            VIEW_MODE_CHARACTER -> {
+                if (isCosPartition) renderCosWorkPills(charGroups) else renderCharPills(charGroups)
+                selectedChars.retainAll(charGroups.keys)
+            }
+            VIEW_MODE_TYPE -> renderTypePills()
+            else -> binding.allPillsScroller.visibility = View.GONE
+        }
+
+        val fingerprint = MediaRenderHelper.buildFingerprint(
+            MediaRenderHelper.FingerprintParams(
+                viewMode = viewMode,
+                partitions = selectedPartitions.toSet(),
+                displayed = filtered,
+                selectedSources = selectedSources.toSet(),
+                selectedChars = selectedChars.toSet(),
+                filterType = filterType,
+                typePillsExpanded = typePillsExpanded,
+                sourceGroups = sourceGroups,
+                charGroups = charGroups
+            )
+        )
+        val label = when {
+            isCosPartition -> "COS"
+            isAllPartition -> "文件"
+            else -> "常规"
+        }
+        binding.allFilesSummaryText.text = "${filtered.size} $label · ${MediaBrowserLogic.formatSize(totalSize)}"
+        if (fingerprint != lastRenderedFingerprint) {
+            lastRenderedFingerprint = fingerprint
+            when (viewMode) {
+                VIEW_MODE_CHARACTER -> if (selectedChars.isEmpty()) adapter.submitMediaWithGroups(filtered, charGroups) else adapter.submitMedia(filtered)
+                VIEW_MODE_SOURCE -> if (selectedSources.isEmpty()) adapter.submitMediaWithGroups(filtered, sourceGroups) else adapter.submitMedia(filtered)
+                else -> adapter.submitMedia(filtered)
+            }
+        }
+
+        updateChipStyles()
+        AppLog.d("AllFiles", "render: total=${System.currentTimeMillis() - renderStart}ms, filtered=${filtered.size}, fp=$fingerprint")
     }
 
     fun scrollToTop() {

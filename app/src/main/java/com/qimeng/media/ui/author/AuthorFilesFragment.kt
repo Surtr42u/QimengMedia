@@ -31,6 +31,7 @@ import com.qimeng.media.databinding.FragmentAuthorFilesBinding
 import com.qimeng.media.ui.adapter.GroupedMediaAdapter
 import com.qimeng.media.ui.browser.FilterConfig
 import com.qimeng.media.ui.browser.MediaBrowserLogic
+import com.qimeng.media.ui.browser.MediaRenderHelper
 import com.qimeng.media.ui.browser.MediaFilterSheet
 import com.qimeng.media.ui.browser.MediaFilterState
 import com.qimeng.media.ui.browser.MediaGroupHelper
@@ -236,118 +237,116 @@ class AuthorFilesFragment : Fragment() {
             cachedMedia.filter { it.recordKey in cachedAuthorMediaKeys }
         }
 
-        // 类型筛选
-        val typed = when (filterType) {
-            MediaType.IMAGE -> authorMedia.filter { it.mediaType == MediaType.IMAGE }
-            MediaType.VIDEO -> authorMedia.filter { it.mediaType == MediaType.VIDEO }
-            MediaType.ANIMATED_IMAGE -> authorMedia.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-            else -> authorMedia
-        }
-
-        // 筛选面板过滤
+        // 类型筛选 + 筛选面板过滤
+        val typed = MediaRenderHelper.applyTypeFilter(authorMedia, filterType)
         val stats = cachedStats.associateBy { it.recordKey }
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
         val filtered = MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
 
         // 作品/角色分组（异步计算）
         lifecycleScope.launch {
-            val sourceGroups = withContext(Dispatchers.Default) {
-                if (isCosAuthor) emptyMap() // COS 作者不需要作品分组（出处=作者）
-                else MediaGroupHelper.groupBySource(filtered)
-            }
-            cachedSourceGroups = sourceGroups
-
-            val charGroups = withContext(Dispatchers.Default) {
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    val baseForChars = if (selectedSources.isNotEmpty() && !isCosAuthor) {
-                        val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                        filtered.filter { it in sourceMediaSet }
-                    } else filtered
-                    if (isCosAuthor) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                    else MediaGroupHelper.groupByCharacter(baseForChars)
-                } else emptyMap()
-            }
+            val (sourceGroups, charGroups) = computeAuthorGroupsAsync(filtered)
             if (_binding == null) return@launch
+            cachedSourceGroups = sourceGroups
             cachedCharGroups = charGroups
-
-            // 渲染药丸区域
-            when (viewMode) {
-                VIEW_MODE_SOURCE -> {
-                    renderSourcePills(sourceGroups)
-                    selectedSources.retainAll(sourceGroups.keys)
-                }
-                VIEW_MODE_CHARACTER -> {
-                    renderCharPills(charGroups)
-                    selectedChars.retainAll(charGroups.keys)
-                }
-                VIEW_MODE_TYPE -> renderTypePills(filtered)
-                else -> binding.authorFilesPillsScroller.visibility = View.GONE
-            }
-            if (viewMode != VIEW_MODE_SOURCE) selectedSources.clear()
-            if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
-
-            // 计算最终显示列表
-            val displayed = when (viewMode) {
-                VIEW_MODE_SOURCE -> {
-                    if (selectedSources.isNotEmpty()) {
-                        sourceGroups.filterKeys { it in selectedSources }.values.flatten()
-                    } else filtered
-                }
-                VIEW_MODE_CHARACTER -> {
-                    if (selectedChars.isNotEmpty()) {
-                        charGroups.filterKeys { it in selectedChars }.values.flatten()
-                    } else filtered
-                }
-                else -> filtered
-            }
-
-            binding.authorFilesSummaryText.text = "${displayed.size} 文件 · ${MediaBrowserLogic.formatSize(displayed.sumOf { it.sizeBytes })}"
-
-            val renderHash = buildString {
-                append(viewMode)
-                append("|cos=")
-                append(isCosAuthor)
-                append("|")
-                append(displayed.size)
-                append("|")
-                append(displayed.firstOrNull()?.recordKey.orEmpty())
-                append("|src=")
-                append(selectedSources.sorted().joinToString(","))
-                append("|chr=")
-                append(selectedChars.sorted().joinToString(","))
-                append("|ft=")
-                append(filterType.orEmpty())
-                append("|typeExp=")
-                append(typePillsExpanded)
-                if (viewMode == VIEW_MODE_SOURCE) {
-                    append("|")
-                    sourceGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    append("|")
-                    charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-            }
-            if (renderHash != lastRenderHash) {
-                lastRenderHash = renderHash
-                when {
-                    viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
-                        adapter.submitMediaWithGroups(displayed, charGroups)
-                    viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
-                        adapter.submitMediaWithGroups(displayed, sourceGroups)
-                    else ->
-                        adapter.submitMedia(displayed)
-                }
-            }
-
-            binding.authorFilesEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
-            binding.authorFilesRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
-            updateChipStyles()
+            updateAuthorUI(filtered, sourceGroups, charGroups)
         }
+    }
+
+    /** 协程内计算：作品分组 + 角色分组（含 baseForChars 计算） */
+    private suspend fun computeAuthorGroupsAsync(
+        filtered: List<MediaFileEntity>
+    ): Pair<Map<String, List<MediaFileEntity>>, Map<String, List<MediaFileEntity>>> {
+        val sourceGroups = withContext(Dispatchers.Default) {
+            if (isCosAuthor) emptyMap() // COS 作者不需要作品分组（出处=作者）
+            else MediaGroupHelper.groupBySource(filtered)
+        }
+        val charGroups = withContext(Dispatchers.Default) {
+            if (viewMode == VIEW_MODE_CHARACTER) {
+                val baseForChars = if (selectedSources.isNotEmpty() && !isCosAuthor) {
+                    val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
+                    filtered.filter { it in sourceMediaSet }
+                } else filtered
+                if (isCosAuthor) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                else MediaGroupHelper.groupByCharacter(baseForChars)
+            } else emptyMap()
+        }
+        return Pair(sourceGroups, charGroups)
+    }
+
+    /** 协程外 UI 更新：药丸渲染 + displayed 计算 + fingerprint + adapter 提交 + 空状态 */
+    private fun updateAuthorUI(
+        filtered: List<MediaFileEntity>,
+        sourceGroups: Map<String, List<MediaFileEntity>>,
+        charGroups: Map<String, List<MediaFileEntity>>
+    ) {
+        // 渲染药丸区域
+        when (viewMode) {
+            VIEW_MODE_SOURCE -> {
+                renderSourcePills(sourceGroups)
+                selectedSources.retainAll(sourceGroups.keys)
+            }
+            VIEW_MODE_CHARACTER -> {
+                renderCharPills(charGroups)
+                selectedChars.retainAll(charGroups.keys)
+            }
+            VIEW_MODE_TYPE -> renderTypePills(filtered)
+            else -> binding.authorFilesPillsScroller.visibility = View.GONE
+        }
+        if (viewMode != VIEW_MODE_SOURCE) selectedSources.clear()
+        if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
+
+        // 计算最终显示列表
+        val displayed = MediaRenderHelper.computeDisplayed(
+            filtered, sourceGroups, charGroups, selectedSources, selectedChars
+        )
+
+        binding.authorFilesSummaryText.text = "${displayed.size} 文件 · ${MediaBrowserLogic.formatSize(displayed.sumOf { it.sizeBytes })}"
+
+        val renderHash = buildString {
+            append(viewMode)
+            append("|cos=")
+            append(isCosAuthor)
+            append("|")
+            append(displayed.size)
+            append("|")
+            append(displayed.firstOrNull()?.recordKey.orEmpty())
+            append("|src=")
+            append(selectedSources.sorted().joinToString(","))
+            append("|chr=")
+            append(selectedChars.sorted().joinToString(","))
+            append("|ft=")
+            append(filterType.orEmpty())
+            append("|typeExp=")
+            append(typePillsExpanded)
+            if (viewMode == VIEW_MODE_SOURCE) {
+                append("|")
+                sourceGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
+                    append("$k:${v.size},")
+                }
+            }
+            if (viewMode == VIEW_MODE_CHARACTER) {
+                append("|")
+                charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
+                    append("$k:${v.size},")
+                }
+            }
+        }
+        if (renderHash != lastRenderHash) {
+            lastRenderHash = renderHash
+            when {
+                viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
+                    adapter.submitMediaWithGroups(displayed, charGroups)
+                viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
+                    adapter.submitMediaWithGroups(displayed, sourceGroups)
+                else ->
+                    adapter.submitMedia(displayed)
+            }
+        }
+
+        binding.authorFilesEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
+        binding.authorFilesRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
+        updateChipStyles()
     }
 
     private fun renderSourcePills(sourceGroups: Map<String, List<MediaFileEntity>>) {

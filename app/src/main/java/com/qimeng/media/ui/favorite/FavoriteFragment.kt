@@ -30,6 +30,7 @@ import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.databinding.FragmentFavoriteBinding
 import com.qimeng.media.ui.adapter.GroupedMediaAdapter
 import com.qimeng.media.ui.browser.MediaGroupHelper
+import com.qimeng.media.ui.browser.MediaRenderHelper
 import com.qimeng.media.ui.browser.MediaPillsHelper
 import com.qimeng.media.ui.widget.PinchZoomHelper
 import com.qimeng.media.ui.widget.ColumnsRef
@@ -187,130 +188,118 @@ class FavoriteFragment : Fragment() {
         val isCosPartition = selectedPartitions == setOf("COS")
         val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
 
-        val typed = when (filterType) {
-            MediaType.IMAGE -> cachedFavoriteMedia.filter { it.mediaType == MediaType.IMAGE }
-            MediaType.VIDEO -> cachedFavoriteMedia.filter { it.mediaType == MediaType.VIDEO }
-            MediaType.ANIMATED_IMAGE -> cachedFavoriteMedia.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-            else -> cachedFavoriteMedia
-        }
+        val typed = MediaRenderHelper.applyTypeFilter(cachedFavoriteMedia, filterType)
 
         // 分区→类型→出处→角色 逐层联动：出处和角色分组都基于类型筛选后的文件
         lifecycleScope.launch {
-            val sourceGroups = withContext(Dispatchers.Default) {
-                if (isCosPartition) MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
-                else if (isAllPartition) {
-                    val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
-                    val cos = MediaGroupHelper.groupByCosAuthor(typed.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors)
-                    mergeGroups(regular, cos)
-                } else MediaGroupHelper.groupBySource(typed)
-            }
-            cachedSourceGroups = sourceGroups
-
-            val charGroups = if (viewMode == VIEW_MODE_CHARACTER) {
-                withContext(Dispatchers.Default) {
-                    val baseForChars = if (selectedSources.isNotEmpty()) {
-                        val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                        typed.filter { it in sourceMediaSet }
-                    } else typed
-                    if (isCosPartition) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                    else if (isAllPartition) {
-                        val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
-                        val cos = MediaGroupHelper.groupByCosWork(baseForChars.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                        mergeGroups(regular, cos)
-                    } else MediaGroupHelper.groupByCharacter(baseForChars)
-                }
-            } else emptyMap()
-            cachedCharGroups = charGroups
-
+            val (sourceGroups, charGroups) = computeFavoriteGroupsAsync(typed, isCosPartition, isAllPartition)
             if (_binding == null) return@launch
+            cachedSourceGroups = sourceGroups
+            cachedCharGroups = charGroups
+            updateFavoriteUI(typed, sourceGroups, charGroups, isCosPartition, isAllPartition)
+        }
+    }
 
-            when (viewMode) {
-                VIEW_MODE_PARTITION -> renderPartitionPills()
-                VIEW_MODE_SOURCE -> renderSourcePills(sourceGroups)
-                VIEW_MODE_CHARACTER -> {
-                    if (isCosPartition) renderCosWorkPills(typed) else renderCharPills(charGroups)
-                    selectedChars.retainAll(charGroups.keys)
-                }
-                VIEW_MODE_TYPE -> renderTypePills()
-                else -> binding.favoritePillsScroller.visibility = View.GONE
+    /** 协程内计算：出处分组 + 角色分组（含 baseForChars + mergeGroups） */
+    private suspend fun computeFavoriteGroupsAsync(
+        typed: List<MediaFileEntity>,
+        isCosPartition: Boolean,
+        isAllPartition: Boolean
+    ): Pair<Map<String, List<MediaFileEntity>>, Map<String, List<MediaFileEntity>>> {
+        val sourceGroups = withContext(Dispatchers.Default) {
+            if (isCosPartition) MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
+            else if (isAllPartition) {
+                val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
+                val cos = MediaGroupHelper.groupByCosAuthor(typed.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors)
+                mergeGroups(regular, cos)
+            } else MediaGroupHelper.groupBySource(typed)
+        }
+        val charGroups = if (viewMode == VIEW_MODE_CHARACTER) {
+            withContext(Dispatchers.Default) {
+                val baseForChars = if (selectedSources.isNotEmpty()) {
+                    val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
+                    typed.filter { it in sourceMediaSet }
+                } else typed
+                if (isCosPartition) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                else if (isAllPartition) {
+                    val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
+                    val cos = MediaGroupHelper.groupByCosWork(baseForChars.filter { it.isCosFile }, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                    mergeGroups(regular, cos)
+                } else MediaGroupHelper.groupByCharacter(baseForChars)
             }
-            if (viewMode != VIEW_MODE_SOURCE) selectedSources.clear()
-            if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
+        } else emptyMap()
+        return Pair(sourceGroups, charGroups)
+    }
 
-            val displayed = when (viewMode) {
-                VIEW_MODE_SOURCE -> {
-                    if (selectedSources.isNotEmpty()) {
-                        sourceGroups.filterKeys { it in selectedSources }.values.flatten()
-                    } else {
-                        typed
-                    }
-                }
-                VIEW_MODE_CHARACTER -> {
-                    if (selectedChars.isNotEmpty()) {
-                        charGroups.filterKeys { it in selectedChars }.values.flatten()
-                    } else {
-                        typed
-                    }
-                }
-                else -> typed
+    /** 协程外 UI 更新：药丸渲染 + displayed 计算 + fingerprint + adapter 提交 + 空状态 */
+    private fun updateFavoriteUI(
+        typed: List<MediaFileEntity>,
+        sourceGroups: Map<String, List<MediaFileEntity>>,
+        charGroups: Map<String, List<MediaFileEntity>>,
+        isCosPartition: Boolean,
+        isAllPartition: Boolean
+    ) {
+        when (viewMode) {
+            VIEW_MODE_PARTITION -> renderPartitionPills()
+            VIEW_MODE_SOURCE -> renderSourcePills(sourceGroups)
+            VIEW_MODE_CHARACTER -> {
+                // 注意：COS 分区下 renderCosWorkPills 传 typed（而非 charGroups），这是现有行为
+                if (isCosPartition) renderCosWorkPills(typed) else renderCharPills(charGroups)
+                selectedChars.retainAll(charGroups.keys)
             }
+            VIEW_MODE_TYPE -> renderTypePills()
+            else -> binding.favoritePillsScroller.visibility = View.GONE
+        }
+        if (viewMode != VIEW_MODE_SOURCE) selectedSources.clear()
+        if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
 
-            val label = when {
-                isCosPartition -> "COS"
-                isAllPartition -> "文件"
-                else -> "常规"
-            }
-            binding.favoriteCount.text = "${displayed.size} $label"
+        val displayed = MediaRenderHelper.computeDisplayed(
+            typed, sourceGroups, charGroups, selectedSources, selectedChars
+        )
 
-            val renderHash = buildString {
-                append(viewMode)
-                append("|partitions=")
-                append(selectedPartitions.sorted().joinToString(","))
-                append("|")
-                append(displayed.size)
-                append("|")
-                append(displayed.firstOrNull()?.recordKey.orEmpty())
-                append("|src=")
-                append(selectedSources.sorted().joinToString(","))
-                append("|chr=")
-                append(selectedChars.sorted().joinToString(","))
-                append("|ft=")
-                append(filterType.orEmpty())
-                append("|typeExp=")
-                append(typePillsExpanded)
-                if (viewMode == VIEW_MODE_SOURCE) {
-                    append("|")
-                    sourceGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    append("|")
-                    charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-            }
-            if (renderHash != lastRenderHash) {
-                lastRenderHash = renderHash
-                when {
-                    viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
-                        adapter.submitMediaWithGroups(displayed, charGroups)
-                    viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
-                        adapter.submitMediaWithGroups(displayed, sourceGroups)
-                    else ->
-                        adapter.submitMedia(displayed)
-                }
-            }
+        val label = when {
+            isCosPartition -> "COS"
+            isAllPartition -> "文件"
+            else -> "常规"
+        }
+        binding.favoriteCount.text = "${displayed.size} $label"
 
-            binding.favoriteEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
-            binding.favoriteRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
-            if (displayed.isEmpty() && isCosPartition) {
-                binding.favoriteEmptyText.text = "没有COS收藏"
-            } else if (displayed.isEmpty()) {
-                binding.favoriteEmptyText.text = "还没有收藏\n在详情页点击收藏按钮添加"
+        val renderHash = MediaRenderHelper.buildFingerprint(
+            MediaRenderHelper.FingerprintParams(
+                viewMode = viewMode,
+                partitions = selectedPartitions.toSet(),
+                displayed = displayed,
+                selectedSources = selectedSources.toSet(),
+                selectedChars = selectedChars.toSet(),
+                filterType = filterType,
+                typePillsExpanded = typePillsExpanded,
+                sourceGroups = sourceGroups,
+                charGroups = charGroups
+            )
+        )
+        if (renderHash != lastRenderHash) {
+            lastRenderHash = renderHash
+            when {
+                viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
+                    adapter.submitMediaWithGroups(displayed, charGroups)
+                viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
+                    adapter.submitMediaWithGroups(displayed, sourceGroups)
+                else ->
+                    adapter.submitMedia(displayed)
             }
-            updateChipStyles()
+        }
+
+        updateFavoriteEmptyState(displayed, isCosPartition)
+        updateChipStyles()
+    }
+
+    private fun updateFavoriteEmptyState(displayed: List<MediaFileEntity>, isCosPartition: Boolean) {
+        binding.favoriteEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
+        binding.favoriteRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
+        if (displayed.isEmpty() && isCosPartition) {
+            binding.favoriteEmptyText.text = "没有COS收藏"
+        } else if (displayed.isEmpty()) {
+            binding.favoriteEmptyText.text = "还没有收藏\n在详情页点击收藏按钮添加"
         }
     }
 

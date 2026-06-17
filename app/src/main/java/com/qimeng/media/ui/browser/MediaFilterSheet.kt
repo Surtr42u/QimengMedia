@@ -43,6 +43,9 @@ object MediaFilterSheet {
     private val CURRENT_YEAR = Calendar.getInstance().get(Calendar.YEAR)
     private const val YEAR_MIN = 2010
 
+    /** 筛选状态持有者，解决子方法间传递 var state 的闭包问题 */
+    private class FilterStateHolder(var value: MediaFilterState)
+
     fun show(
         context: Context,
         current: MediaFilterState,
@@ -53,9 +56,7 @@ object MediaFilterSheet {
         onDeleteTag: (Long) -> Unit = {}
     ) {
         val dialog = BottomSheetDialog(context)
-        var state = current
-        var startPicker: NumberPicker? = null
-        var endPicker: NumberPicker? = null
+        val holder = FilterStateHolder(current)
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ContextCompat.getColor(context, R.color.qm_surface))
@@ -74,136 +75,165 @@ object MediaFilterSheet {
 
         if (config.showSort) {
             content.addView(section(context, "排序方式"))
-            content.addView(singleGroup(context, sortOptions(), state.sortKey) { state = state.copy(sortKey = it) })
+            content.addView(singleGroup(context, sortOptions(), holder.value.sortKey) { holder.value = holder.value.copy(sortKey = it) })
         }
         if (config.showDirection) {
             content.addView(section(context, "顺位"))
-            content.addView(singleGroup(context, directionOptions(), state.sortDirection) { state = state.copy(sortDirection = it) })
+            content.addView(singleGroup(context, directionOptions(), holder.value.sortDirection) { holder.value = holder.value.copy(sortDirection = it) })
         }
         if (config.showViews) {
             content.addView(section(context, "观看次数"))
-            content.addView(singleGroup(context, viewRangeOptions(), state.viewRange) { state = state.copy(viewRange = it) })
+            content.addView(singleGroup(context, viewRangeOptions(), holder.value.viewRange) { holder.value = holder.value.copy(viewRange = it) })
         }
         if (config.showPlays) {
             content.addView(section(context, "点击次数"))
-            content.addView(singleGroup(context, playRangeOptions(), state.playRange) { state = state.copy(playRange = it) })
+            content.addView(singleGroup(context, playRangeOptions(), holder.value.playRange) { holder.value = holder.value.copy(playRange = it) })
         }
         if (config.showSize) {
             content.addView(section(context, "文件大小"))
-            content.addView(singleGroup(context, sizeRangeOptions(), state.sizeRange) { state = state.copy(sizeRange = it) })
+            content.addView(singleGroup(context, sizeRangeOptions(), holder.value.sizeRange) { holder.value = holder.value.copy(sizeRange = it) })
         }
-        if (config.showTimeRange) {
-            content.addView(section(context, "时间范围"))
-            val yearRangeRow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                visibility = if (state.dateRange == MediaDateRange.YEAR_RANGE) View.VISIBLE else View.GONE
-            }
-            startPicker = NumberPicker(context).apply {
-                minValue = YEAR_MIN
-                maxValue = CURRENT_YEAR
-                value = state.yearStart.coerceIn(YEAR_MIN, CURRENT_YEAR)
-                wrapSelectorWheel = false
-                descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-            }
-            endPicker = NumberPicker(context).apply {
-                minValue = YEAR_MIN
-                maxValue = CURRENT_YEAR
-                value = state.yearEnd.coerceIn(YEAR_MIN, CURRENT_YEAR)
-                wrapSelectorWheel = false
-                descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-            }
-            val dashLabel = TextView(context).apply {
-                text = "—"
-                textSize = 16f
-                gravity = Gravity.CENTER
-                setTextColor(ContextCompat.getColor(context, R.color.qm_text_primary))
-                setPadding(8.dp(context), 0, 8.dp(context), 0)
-            }
-            startPicker?.let { yearRangeRow.addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
-            yearRangeRow.addView(dashLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            endPicker?.let { yearRangeRow.addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
-            content.addView(singleGroup(context, dateRangeOptions(), state.dateRange) { newRange ->
-                state = state.copy(dateRange = newRange)
-                yearRangeRow.visibility = if (newRange == MediaDateRange.YEAR_RANGE) View.VISIBLE else View.GONE
-            })
-            content.addView(yearRangeRow)
+        val (startPicker, endPicker) = if (config.showTimeRange) {
+            appendTimeRangeSection(content, context, holder)
+        } else {
+            Pair(null, null)
         }
         if (config.showTagMode) {
             content.addView(section(context, "标签模式"))
-            content.addView(singleGroup(context, tagModeOptions(), state.tagMode) { state = state.copy(tagMode = it) })
+            content.addView(singleGroup(context, tagModeOptions(), holder.value.tagMode) { holder.value = holder.value.copy(tagMode = it) })
+        }
+        if (config.showTags) {
+            appendTagsSection(content, context, holder, tags, onAddTag, onDeleteTag)
         }
 
-        if (config.showTags) {
-            content.addView(section(context, "标签"))
-            val tagGroup = ChipGroup(context).apply { isSingleLine = false }
-            tags.forEach { tag ->
-                tagGroup.addView(Chip(context).apply {
-                    text = tag.name
-                    isCheckable = true
-                    isChecked = tag.name in state.selectedTags
-                    setOnClickListener {
-                        val next = state.selectedTags.toMutableSet()
-                        if (isChecked) next.add(tag.name) else next.remove(tag.name)
-                        state = state.copy(selectedTags = next)
-                    }
-                    setOnLongClickListener {
-                        AlertDialog.Builder(context)
-                            .setTitle("删除标签")
-                            .setMessage("确定删除标签「${tag.name}」？删除后所有文件的该标签关联将一并移除。")
-                            .setPositiveButton("删除") { _, _ ->
-                                onDeleteTag(tag.tagId)
-                                (parent as? ViewGroup)?.removeView(this)
-                                val next = state.selectedTags.toMutableSet()
-                                next.remove(tag.name)
-                                state = state.copy(selectedTags = next)
-                            }
-                            .setNegativeButton("取消", null)
-                            .show()
-                        true
-                    }
-                })
-            }
-            val addTagBtn = TextView(context).apply {
-                text = "+ 添加标签"
-                textSize = 13f
-                setTextColor(ContextCompat.getColor(context, R.color.qm_primary))
-                setPadding(0, 8.dp(context), 0, 8.dp(context))
+        root.addView(buildFooter(context, holder, startPicker, endPicker, onApply, dialog))
+        dialog.setContentView(root)
+        dialog.behavior.isDraggable = true
+        dialog.show()
+    }
+
+    /** 时间范围块：含 NumberPicker 年份选择，返回 (startPicker, endPicker) 供 footer 读取 */
+    private fun appendTimeRangeSection(
+        content: LinearLayout, context: Context, holder: FilterStateHolder
+    ): Pair<NumberPicker?, NumberPicker?> {
+        content.addView(section(context, "时间范围"))
+        val yearRangeRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = if (holder.value.dateRange == MediaDateRange.YEAR_RANGE) View.VISIBLE else View.GONE
+        }
+        val startPicker = NumberPicker(context).apply {
+            minValue = YEAR_MIN
+            maxValue = CURRENT_YEAR
+            value = holder.value.yearStart.coerceIn(YEAR_MIN, CURRENT_YEAR)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val endPicker = NumberPicker(context).apply {
+            minValue = YEAR_MIN
+            maxValue = CURRENT_YEAR
+            value = holder.value.yearEnd.coerceIn(YEAR_MIN, CURRENT_YEAR)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val dashLabel = TextView(context).apply {
+            text = "—"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(ContextCompat.getColor(context, R.color.qm_text_primary))
+            setPadding(8.dp(context), 0, 8.dp(context), 0)
+        }
+        yearRangeRow.addView(startPicker, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        yearRangeRow.addView(dashLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        yearRangeRow.addView(endPicker, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        content.addView(singleGroup(context, dateRangeOptions(), holder.value.dateRange) { newRange ->
+            holder.value = holder.value.copy(dateRange = newRange)
+            yearRangeRow.visibility = if (newRange == MediaDateRange.YEAR_RANGE) View.VISIBLE else View.GONE
+        })
+        content.addView(yearRangeRow)
+        return Pair(startPicker, endPicker)
+    }
+
+    /** 标签块：Chip 选择/长按删除/添加标签对话框 */
+    private fun appendTagsSection(
+        content: LinearLayout, context: Context, holder: FilterStateHolder,
+        tags: List<TagEntity>, onAddTag: (String) -> Unit, onDeleteTag: (Long) -> Unit
+    ) {
+        content.addView(section(context, "标签"))
+        val tagGroup = ChipGroup(context).apply { isSingleLine = false }
+        tags.forEach { tag ->
+            tagGroup.addView(Chip(context).apply {
+                text = tag.name
+                isCheckable = true
+                isChecked = tag.name in holder.value.selectedTags
                 setOnClickListener {
-                    val input = EditText(context).apply {
-                        hint = "标签名称"
-                        inputType = InputType.TYPE_CLASS_TEXT
-                        setSingleLine(true)
-                    }
+                    val next = holder.value.selectedTags.toMutableSet()
+                    if (isChecked) next.add(tag.name) else next.remove(tag.name)
+                    holder.value = holder.value.copy(selectedTags = next)
+                }
+                setOnLongClickListener {
                     AlertDialog.Builder(context)
-                        .setTitle("添加标签")
-                        .setView(input)
-                        .setPositiveButton("添加") { _, _ ->
-                            val name = input.text.toString().trim()
-                            if (name.isNotEmpty()) {
-                                onAddTag(name)
-                                // 立即在 ChipGroup 中添加新标签，消除延迟感
-                                val newChip = Chip(context).apply {
-                                    text = name
-                                    isCheckable = true
-                                    isChecked = false
-                                    setOnClickListener {
-                                        val next = state.selectedTags.toMutableSet()
-                                        if (isChecked) next.add(name) else next.remove(name)
-                                        state = state.copy(selectedTags = next)
-                                    }
-                                }
-                                tagGroup.addView(newChip)
-                            }
+                        .setTitle("删除标签")
+                        .setMessage("确定删除标签「${tag.name}」？删除后所有文件的该标签关联将一并移除。")
+                        .setPositiveButton("删除") { _, _ ->
+                            onDeleteTag(tag.tagId)
+                            (parent as? ViewGroup)?.removeView(this)
+                            val next = holder.value.selectedTags.toMutableSet()
+                            next.remove(tag.name)
+                            holder.value = holder.value.copy(selectedTags = next)
                         }
                         .setNegativeButton("取消", null)
                         .show()
+                    true
                 }
-            }
-            content.addView(tagGroup)
-            content.addView(addTagBtn)
+            })
         }
+        val addTagBtn = TextView(context).apply {
+            text = "+ 添加标签"
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(context, R.color.qm_primary))
+            setPadding(0, 8.dp(context), 0, 8.dp(context))
+            setOnClickListener {
+                val input = EditText(context).apply {
+                    hint = "标签名称"
+                    inputType = InputType.TYPE_CLASS_TEXT
+                    setSingleLine(true)
+                }
+                AlertDialog.Builder(context)
+                    .setTitle("添加标签")
+                    .setView(input)
+                    .setPositiveButton("添加") { _, _ ->
+                        val name = input.text.toString().trim()
+                        if (name.isNotEmpty()) {
+                            onAddTag(name)
+                            // 立即在 ChipGroup 中添加新标签，消除延迟感
+                            val newChip = Chip(context).apply {
+                                text = name
+                                isCheckable = true
+                                isChecked = false
+                                setOnClickListener {
+                                    val next = holder.value.selectedTags.toMutableSet()
+                                    if (isChecked) next.add(name) else next.remove(name)
+                                    holder.value = holder.value.copy(selectedTags = next)
+                                }
+                            }
+                            tagGroup.addView(newChip)
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+        }
+        content.addView(tagGroup)
+        content.addView(addTagBtn)
+    }
 
+    /** 底部按钮栏：重置 + 应用筛选（含年份范围交叉校验） */
+    private fun buildFooter(
+        context: Context, holder: FilterStateHolder,
+        startPicker: NumberPicker?, endPicker: NumberPicker?,
+        onApply: (MediaFilterState) -> Unit, dialog: BottomSheetDialog
+    ): LinearLayout {
         val footer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(20.dp(context), 12.dp(context), 20.dp(context), 24.dp(context))
@@ -214,21 +244,18 @@ object MediaFilterSheet {
         }, LinearLayout.LayoutParams(0, 48.dp(context), 1f).apply { marginEnd = 8.dp(context) })
         footer.addView(actionButton(context, "应用筛选", primary = true) {
             dialog.dismiss()
-            if (state.dateRange == MediaDateRange.YEAR_RANGE) {
+            if (holder.value.dateRange == MediaDateRange.YEAR_RANGE) {
                 val sp = startPicker
                 val ep = endPicker
                 if (sp != null && ep != null) {
                     val start = sp.value.coerceAtMost(ep.value)
                     val end = ep.value.coerceAtLeast(sp.value)
-                    state = state.copy(yearStart = start, yearEnd = end)
+                    holder.value = holder.value.copy(yearStart = start, yearEnd = end)
                 }
             }
-            onApply(state)
+            onApply(holder.value)
         }, LinearLayout.LayoutParams(0, 48.dp(context), 1f).apply { marginStart = 8.dp(context) })
-        root.addView(footer)
-        dialog.setContentView(root)
-        dialog.behavior.isDraggable = true
-        dialog.show()
+        return footer
     }
 
     private fun <T> singleGroup(

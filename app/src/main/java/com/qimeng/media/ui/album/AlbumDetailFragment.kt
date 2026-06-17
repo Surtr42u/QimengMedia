@@ -29,6 +29,7 @@ import com.qimeng.media.databinding.FragmentAlbumDetailBinding
 import com.qimeng.media.ui.adapter.GroupedMediaAdapter
 import com.qimeng.media.ui.browser.FilterConfig
 import com.qimeng.media.ui.browser.MediaBrowserLogic
+import com.qimeng.media.ui.browser.MediaRenderHelper
 import com.qimeng.media.ui.browser.MediaFilterSheet
 import com.qimeng.media.ui.browser.MediaFilterState
 import com.qimeng.media.ui.browser.MediaGroupHelper
@@ -204,74 +205,85 @@ class AlbumDetailFragment : Fragment() {
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { e -> e.value.map { it.name }.toSet() }
 
         lifecycleScope.launch {
-            val filtered = withContext(Dispatchers.Default) {
-                val typed = when (filterType) {
-                    MediaType.IMAGE -> cachedAlbumMedia.filter { it.mediaType == MediaType.IMAGE }
-                    MediaType.VIDEO -> cachedAlbumMedia.filter { it.mediaType == MediaType.VIDEO }
-                    MediaType.ANIMATED_IMAGE -> cachedAlbumMedia.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-                    else -> cachedAlbumMedia
-                }
-                MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
-            }
-            val charGroups = withContext(Dispatchers.Default) {
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    if (isCosAlbum) MediaGroupHelper.groupByCosWork(filtered, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                    else MediaGroupHelper.groupByCharacter(filtered)
-                } else emptyMap()
-            }
+            val (filtered, charGroups) = computeAlbumGroupsAsync(stats, tagMap)
             if (_binding == null) return@launch
             cachedCharGroups = charGroups
-
-            // 渲染药丸区域
-            when (viewMode) {
-                VIEW_MODE_CHARACTER -> {
-                    renderCharPills(charGroups)
-                    selectedChars.retainAll(charGroups.keys)
-                }
-                VIEW_MODE_TYPE -> renderTypePills(filtered)
-                else -> binding.albumDetailPillsScroller.visibility = View.GONE
-            }
-            if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
-
-            val displayed = if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isNotEmpty()) {
-                charGroups.filterKeys { it in selectedChars }.values.flatten()
-            } else filtered
-
-            binding.albumDetailCount.text = "${displayed.size} 文件 · ${MediaBrowserLogic.formatSize(displayed.sumOf { it.sizeBytes })}"
-
-            val renderHash = buildString {
-                append(viewMode)
-                append("|cos=")
-                append(isCosAlbum)
-                append("|")
-                append(displayed.size)
-                append("|")
-                append(displayed.firstOrNull()?.recordKey.orEmpty())
-                append("|sel=")
-                append(selectedChars.sorted().joinToString(","))
-                append("|ft=")
-                append(filterType.orEmpty())
-                append("|typeExp=")
-                append(typePillsExpanded)
-                if (viewMode == VIEW_MODE_CHARACTER) {
-                    append("|")
-                    charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                        append("$k:${v.size},")
-                    }
-                }
-            }
-            if (renderHash != lastRenderedFingerprint) {
-                lastRenderedFingerprint = renderHash
-                if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty()) {
-                    adapter.submitMediaWithGroups(filtered, charGroups)
-                } else {
-                    adapter.submitMedia(displayed)
-                }
-            }
-            binding.albumDetailEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
-            binding.albumDetailRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
-            updateChipStyles()
+            updateAlbumUI(filtered, charGroups)
         }
+    }
+
+    /** 协程内计算：类型筛选 + applyFilter + 角色分组 */
+    private suspend fun computeAlbumGroupsAsync(
+        stats: Map<String, ViewStatsEntity>,
+        tagMap: Map<String, Set<String>>
+    ): Pair<List<MediaFileEntity>, Map<String, List<MediaFileEntity>>> {
+        val filtered = withContext(Dispatchers.Default) {
+            val typed = MediaRenderHelper.applyTypeFilter(cachedAlbumMedia, filterType)
+            MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
+        }
+        val charGroups = withContext(Dispatchers.Default) {
+            if (viewMode == VIEW_MODE_CHARACTER) {
+                if (isCosAlbum) MediaGroupHelper.groupByCosWork(filtered, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                else MediaGroupHelper.groupByCharacter(filtered)
+            } else emptyMap()
+        }
+        return Pair(filtered, charGroups)
+    }
+
+    /** 协程外 UI 更新：药丸渲染 + displayed 计算 + fingerprint + adapter 提交 + 空状态 */
+    private fun updateAlbumUI(
+        filtered: List<MediaFileEntity>,
+        charGroups: Map<String, List<MediaFileEntity>>
+    ) {
+        // 渲染药丸区域
+        when (viewMode) {
+            VIEW_MODE_CHARACTER -> {
+                renderCharPills(charGroups)
+                selectedChars.retainAll(charGroups.keys)
+            }
+            VIEW_MODE_TYPE -> renderTypePills(filtered)
+            else -> binding.albumDetailPillsScroller.visibility = View.GONE
+        }
+        if (viewMode != VIEW_MODE_CHARACTER) selectedChars.clear()
+
+        val displayed = MediaRenderHelper.computeDisplayed(
+            filtered, emptyMap(), charGroups, emptySet(), selectedChars
+        )
+
+        binding.albumDetailCount.text = "${displayed.size} 文件 · ${MediaBrowserLogic.formatSize(displayed.sumOf { it.sizeBytes })}"
+
+        val renderHash = buildString {
+            append(viewMode)
+            append("|cos=")
+            append(isCosAlbum)
+            append("|")
+            append(displayed.size)
+            append("|")
+            append(displayed.firstOrNull()?.recordKey.orEmpty())
+            append("|sel=")
+            append(selectedChars.sorted().joinToString(","))
+            append("|ft=")
+            append(filterType.orEmpty())
+            append("|typeExp=")
+            append(typePillsExpanded)
+            if (viewMode == VIEW_MODE_CHARACTER) {
+                append("|")
+                charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
+                    append("$k:${v.size},")
+                }
+            }
+        }
+        if (renderHash != lastRenderedFingerprint) {
+            lastRenderedFingerprint = renderHash
+            if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty()) {
+                adapter.submitMediaWithGroups(filtered, charGroups)
+            } else {
+                adapter.submitMedia(displayed)
+            }
+        }
+        binding.albumDetailEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
+        binding.albumDetailRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE
+        updateChipStyles()
     }
 
     private fun renderCharPills(charGroups: Map<String, List<MediaFileEntity>>) {
