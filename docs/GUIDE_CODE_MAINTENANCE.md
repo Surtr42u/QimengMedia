@@ -272,7 +272,7 @@
 
 | 类型 | 适用场景 | 示例 |
 |------|----------|------|
-| **计算型 object** | 纯数据计算，无 Android 依赖 | `MediaGroupHelper`、`MediaBrowserLogic` |
+| **计算型 object** | 纯数据计算，无 Android 依赖 | `MediaGroupHelper`、`MediaBrowserLogic`、`MediaRenderHelper` |
 | **渲染型 object** | UI 组件构建，依赖 Context | `MediaPillsHelper` |
 
 ### 已有共享组件
@@ -281,6 +281,7 @@
 |------|------|------|--------|
 | `MediaGroupHelper` | `ui/browser/MediaGroupHelper.kt` | 出处/角色/COS 分组计算 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
 | `MediaPillsHelper` | `ui/browser/MediaPillsHelper.kt` | 出处/角色/分区/类型药丸渲染 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
+| `MediaRenderHelper` | `ui/browser/MediaRenderHelper.kt` | 渲染共享计算（applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建） | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AuthorFilesFragment（AlbumDetailFragment 仅用 applyTypeFilter/computeDisplayed，不用 buildFingerprint） |
 | `TimelineTagHelper` | `ui/detail/TimelineTagHelper.kt` | 视频时间轴标签弹窗交互 | MediaDetailFragment |
 | `SheetUiHelper` | `ui/profile/SheetUiHelper.kt` | 弹窗 UI 组件构建（标题/行/按钮） | ProfileFragment |
 | `DimenExt` | `ui/widget/DimenExt.kt` | dp/dpFloat 尺寸转换扩展函数（Int.dp(Context)/Float.dp(Context)/Int.dpFloat(Context)） | MediaDetailFragment, BiliPlayerView, HomeFragment, AlbumFragment, ZoomImageView, AuthorListFragment, MediaFilterSheet, GroupedMediaAdapter, TimelineTagHelper, SheetUiHelper |
@@ -289,9 +290,9 @@
 
 ### 共享胶囊筛选体系
 
-所有带芯片栏+药丸筛选的页面统一调度于全部页（`AllFilesFragment`）的算法，通过 `MediaGroupHelper`（分组计算）和 `MediaPillsHelper`（药丸渲染）两个共享组件实现。各页面差异仅在于**芯片栏配置不同**（根据页面上下文省略某些维度），算法逻辑完全一致。
+所有带芯片栏+药丸筛选的页面统一调度于全部页（`AllFilesFragment`）的算法，通过三个共享组件实现：`MediaGroupHelper`（分组计算）、`MediaPillsHelper`（药丸渲染）、`MediaRenderHelper`（渲染共享计算：类型筛选/选中状态过滤/渲染指纹构建）。各页面差异仅在于**芯片栏配置不同**（根据页面上下文省略某些维度），算法逻辑完全一致。
 
-**核心原则**：全部页是"完整版"，其他页面是"按上下文裁剪版"。新增页面如需胶囊筛选，必须复用这两个共享组件，禁止自行实现分组或药丸渲染逻辑。
+**核心原则**：全部页是"完整版"，其他页面是"按上下文裁剪版"。新增页面如需胶囊筛选，必须复用这三个共享组件，禁止自行实现分组、药丸渲染或渲染指纹构建逻辑。
 
 **芯片栏配置（按页面）**：
 

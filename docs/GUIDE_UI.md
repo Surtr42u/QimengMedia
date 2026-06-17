@@ -20,6 +20,7 @@
 | `app/src/main/java/com/qimeng/media/core/SpngDecoder.kt` | libspng JNI 桥接（PNG 解码加速，ARM NEON 优化） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaGroupHelper.kt` | 出处/角色/COS 分组计算（AllFiles/Favorite/BrowseHistory/AlbumDetail/AuthorFiles 共用） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaPillsHelper.kt` | 出处/角色/分区/类型药丸渲染（AllFiles/Favorite/BrowseHistory/AlbumDetail/AuthorFiles 共用） |
+| `app/src/main/java/com/qimeng/media/ui/browser/MediaRenderHelper.kt` | 渲染共享计算工具（applyTypeFilter/computeDisplayed/buildFingerprint，5 个 Fragment 共用） |
 | `app/src/main/res/layout/fragment_media_detail.xml` | 详情页布局：`BiliPlayerView` + ZoomImageView + 透明覆盖层 + chrome |
 | `app/src/main/java/com/qimeng/media/ui/favorite/FavoriteFragment.kt` | 收藏页（分区/作品/角色/类型筛选+药丸+COS芯片） |
 | `app/src/main/res/layout/fragment_favorite.xml` | 收藏页布局 |
@@ -134,11 +135,11 @@
 - **筛选联动规则**：分区→类型→作品→角色 逐层联动。作品和角色药丸的计数和显示都基于类型筛选后的文件，选类型后作品药丸只显示该类型下有文件的作品，角色药丸只显示该作品+该类型下有文件的角色
 - 每个作品/角色独立显示药丸，不合并单文件作品到"其他"；"其他"药丸始终排在列表最下面（不参与数量排序），位于"收起 ▲"之前
 - 日期分组 RecyclerView（`GroupedMediaAdapter` + `GridLayoutManager` + `SpanSizeLookup`）
-- **异步渲染**：`render()` 中所有耗时计算（`associateBy`、`groupBySource`/`groupByCharacter`/`groupByCosAuthor`/`groupByCosWork`、`applyFilter`）统一在 `Dispatchers.Default` 执行，主线程只做 UI 更新；收起胶囊时在协程外立即隐藏 scroller 避免旧UI残留
+- **异步渲染**：`render()` 只做编排（立即隐藏药丸栏 + 启动协程），耗时计算在 `computeAllGroupsAsync()` 的 `Dispatchers.Default` 中执行（类型筛选 `MediaRenderHelper.applyTypeFilter` + 缓存键判定 + 出处/角色分组 `MediaGroupHelper.groupBySource/groupByCharacter/groupByCosAuthor/groupByCosWork` + `MediaBrowserLogic.applyFilter`），协程外 `updateAllUI()` 只做 UI 更新（药丸渲染 + `MediaRenderHelper.buildFingerprint` 指纹判定 + adapter 提交）；收起胶囊时在协程外立即隐藏 scroller 避免旧UI残留
 - **分组缓存**：`cachedSourceGroups`/`cachedCharGroups` 通过缓存键（`sourceGroupsKey`/`charGroupsKey`，由 partition+filterType+dataVersion+selectedSources 组成）判断是否需要重算。点击胶囊项只更新选中状态+filter，不重新 groupBy；仅数据变化（`dataVersion++`）、filterType 变化、selectedSources 变化时才重算分组。COS 5518 文件场景下首次 groupBy 约 600-800ms，缓存命中后 render 降至 <50ms
 - 双指缩放列数 2-5 列（`ScaleGestureDetector`）
 - 筛选面板（`MediaFilterSheet`）：标签区域支持选择/取消选择标签、长按删除标签（从数据库删除标签选项及所有关联）、"+ 添加标签"按钮创建新标签
-- `renderHash` 机制：viewMode + displayed.size + selectedPartitions + selectedSource + selectedChar + filterType + 分组摘要
+- `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：viewMode + partitions + displayed.size + displayed.firstRecordKey + selectedSources + selectedChars + filterType + typePillsExpanded + 分组摘要（SOURCE 模式含 sourceGroups entries，CHARACTER 模式含 charGroups entries）
 - 空状态：无数据时不显示任何提示文本，保持空白
 
 ## 详情页
@@ -296,7 +297,7 @@
 ### 相册刷新机制
 
 - **AlbumFragment**：每次 Flow emit 都重新执行 `computeGroups`（含 SourceMatcher 匹配），用 `renderHash`（所有分区名+文件数拼接）判断是否需要重新渲染 UI，避免无变化时重复绘制
-- **AlbumDetailFragment**：每次 Flow emit 都重新过滤当前出处文件并执行 `render`，用 `renderHash`（含 viewMode + 文件数 + 角色分组摘要）判断是否需要重新渲染
+- **AlbumDetailFragment**：每次 Flow emit 都重新过滤当前出处文件并执行 `render`（拆分为 `render()` 编排 + `computeAlbumGroupsAsync()` 协程计算 + `updateAlbumUI()` UI 更新，接入 `MediaRenderHelper.applyTypeFilter/computeDisplayed`），用 `renderHash`（含 viewMode + isCosAlbum + 文件数 + 角色分组摘要，保留独立 buildString 不接入 buildFingerprint）判断是否需要重新渲染
 - **关键**：两个页面的缓存 hash 都包含分组结果摘要，所以 SourceMatcher 规则变化（如新增检索表条目）导致分组结果不同时，会自动触发 UI 刷新
 
 ### 缩略图加载策略
@@ -323,9 +324,9 @@
 - 适配器：`GroupedMediaAdapter`（支持分组标题头），3列网格
 - 双指缩放列数 2-5 列（`ScaleGestureDetector`）
 - 滑动暂停缩略图加载
-- `renderHash` 机制：viewMode + isCosMode + displayed.size + selectedSources.joinToString + selectedChars.joinToString + filterType + 分组摘要
+- `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：viewMode + partitions + displayed.size + displayed.firstRecordKey + selectedSources + selectedChars + filterType + typePillsExpanded + 分组摘要
 - 数据观察：combine 7 个 Flow（allMedia, cosMedia, cosWorks, allStats, allMediaTags, allTags, history）
-- COS 模式空状态文本："没有COS浏览记录"；常规/全部模式空状态文本："没有浏览记录"
+- COS 模式空状态文本："没有COS浏览记录"；常规/全部模式空状态文本："没有浏览记录"（`updateHistoryEmptyState`）
 
 ## 收藏页
 
@@ -339,7 +340,7 @@
 - 适配器：`GroupedMediaAdapter`（支持分组标题头），3列网格
 - 收藏存储机制详见 `GUIDE_DATA.md`「收藏」章节
 - 滑动暂停缩略图加载
-- `renderHash` 机制：与浏览历史一致，fingerprint 中 `selectedSources.sorted().joinToString(",")` 和 `selectedChars.sorted().joinToString(",")`
+- `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：与浏览历史一致，fingerprint 中 `selectedSources.sorted().joinToString(",")` 和 `selectedChars.sorted().joinToString(",")`；空状态由 `updateFavoriteEmptyState` 处理（COS 模式"没有COS收藏"，常规模式"还没有收藏"）
 
 ## COS 模式（集成到现有页面）
 
