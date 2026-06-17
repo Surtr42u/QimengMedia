@@ -87,6 +87,19 @@
 
 ## 版本更新记录
 
+### v1.6
+
+- **代码规范重构（基于 detekt 实证）**：
+  - 新增 `MediaRenderHelper` 纯计算型 object（封装 applyTypeFilter/computeDisplayed/buildFingerprint），5 个 Fragment 共享渲染计算逻辑
+  - 5 个 Fragment.render 重构（CC 22-48→<20）：拆分为 render()编排 + computeXxxGroupsAsync()协程计算 + updateXxxUI()UI更新
+  - `MediaFilterSheet.show` 重构（CC 35→<20）：拆分为 show()编排 + appendTimeRangeSection/appendTagsSection/buildFooter + FilterStateHolder
+  - `MediaDetailFragment.showMediaAt` 重构（CC 29→5）：提取 showImage/showVideo/setupVideoTouchOverlay/isTapGesture/needsMetadataDecode
+  - `MediaBrowserLogic.recommend` 重构（CC 31→6）：提取 resolveWeights/computeNormDenominators/shuffleBuckets + RecommendWeights/NormDenominators 数据类
+  - `BackupManager` 报告生成重构：密封类 RankEntry 消除 !!、PersonalPrefsReportData 数据类封装 24 参数、buildReportText 按章节提取 10 个子方法
+  - 清理 8 处死代码（seekRelative/extractInt/resolver/formatSeconds/showRootFragment/THUMB_SIZE/MediaStoreObserver.trigger参数/SafMediaScanner.extractInt）
+  - 删除死代码 DetailSheetHelper.kt
+- **代码规范文档弹性化**：GUIDE_CODE_MAINTENANCE.md 改为三档警戒线弹性规范（绿色/黄色/红色），基于 detekt 实证数据备案
+
 ### v1.5
 
 - **分区药丸默认改为「全部」**：全部页/收藏页/浏览历史的分区药丸默认选中"全部"（非"默认/常规"），"全部"显示常规+COS合并后的所有文件，"常规"只显示非COS文件

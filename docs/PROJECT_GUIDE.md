@@ -6,7 +6,7 @@
 
 ## 当前基准
 
-- 版本：v1.5
+- 版本：v1.6
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
