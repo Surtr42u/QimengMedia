@@ -42,14 +42,14 @@ class MediaStoreObserver(
     private val imageObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
             super.onChange(selfChange)
-            scheduleRefresh("image")
+            scheduleRefresh()
         }
     }
 
     private val videoObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
             super.onChange(selfChange)
-            scheduleRefresh("video")
+            scheduleRefresh()
         }
     }
 
@@ -90,7 +90,7 @@ class MediaStoreObserver(
         registeredSources = sources
     }
 
-    private fun scheduleRefresh(trigger: String) {
+    private fun scheduleRefresh() {
         debounceJob?.cancel()
         debounceJob = scope.launch(Dispatchers.IO) {
             delay(2000L) // 2 秒防抖

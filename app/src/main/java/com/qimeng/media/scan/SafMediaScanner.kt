@@ -72,9 +72,6 @@ class SafMediaScanner(private val context: Context) {
         }
     }
 
-    private fun MediaMetadataRetriever.extractInt(keyCode: Int): Int? =
-        extractMetadata(keyCode)?.toIntOrNull()?.takeIf { it > 0 }
-
     private fun MediaMetadataRetriever.extractLong(keyCode: Int): Long? =
         extractMetadata(keyCode)?.toLongOrNull()?.takeIf { it > 0L }
 
