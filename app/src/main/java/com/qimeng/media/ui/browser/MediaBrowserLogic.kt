@@ -58,7 +58,74 @@ object MediaBrowserLogic {
         val hasLikes = likeCounts.values.any { it > 0 }
         val hasHistory = stats.values.any { it.viewCount > 0 }
 
-        // --- 权重初始化（自定义偏好优先，否则使用默认值） ---
+        // --- 权重初始化 + 自适应回收 ---
+        val weights = resolveWeights(customPrefs, hasTags, hasLikes, hasHistory)
+        AppLog.d("Algo", "weights: tagRel=${weights.tagRelevance} tagCol=${weights.tagCollection} eng=${weights.engagement} " +
+            "rec=${weights.recency} like=${weights.likeScore} disc=${weights.discovery} fresh=${weights.freshness} " +
+            "depth=${weights.browseDepth} rand=${weights.maxRandom} " +
+            "hasTags=$hasTags hasLikes=$hasLikes hasHistory=$hasHistory")
+
+        val tagRelevanceMap = buildTagRelevanceMap(media, stats, tagMap)
+        val topTags = tagRelevanceMap.entries
+            .sortedByDescending { it.value }
+            .take(20)
+            .map { it.key }
+            .toSet()
+        val norms = computeNormDenominators(stats, likeCounts)
+
+        val scored = media.map { item ->
+            val itemStats = stats[item.recordKey]
+            val viewCount = itemStats?.viewCount ?: 0
+            val tags = tagsFor(item, tagMap)
+            val likeCount = likeCounts[item.recordKey] ?: 0
+
+            // 每日推荐去重：已展示过的文件强惩罚
+            val dailyPenalty = when (dailyShownCountMap[item.recordKey] ?: 0) {
+                0 -> 0f       // 首次出现，不惩罚
+                else -> -0.8f // 已展示过，强惩罚，让新文件排到前面
+            }
+
+            val tagRelevance = tagRelevanceScore(tags, tagRelevanceMap) * weights.tagRelevance
+            val tagCollection = tagCollectionScore(tags, topTags) * weights.tagCollection
+            val engagement = min(
+                (viewCount + (itemStats?.playCount ?: 0)).toFloat() / norms.maxEngagement, 1f
+            ) * weights.engagement
+            val recency = recencyScore(itemStats?.lastOpenedAtMillis, now) * weights.recency
+            val likeScore = min(likeCount.toFloat() / norms.maxLikes, 1f) * weights.likeScore
+            val discovery = (1f - min(viewCount / 5f, 1f)) * weights.discovery
+            val freshness = freshnessScore(item.indexedAtMillis, now) * weights.freshness
+            val browseDepth = min(
+                (itemStats?.totalBrowseSeconds ?: 0L).toFloat() / norms.maxBrowseSeconds, 1f
+            ) * weights.browseDepth
+            val randomFactor = ((item.recordKey.hashCode() xor seed).and(0xFFFF).toFloat() / 65535f) * weights.maxRandom
+
+            item to (tagRelevance + tagCollection + engagement + recency + likeScore +
+                discovery + freshness + browseDepth + randomFactor + dailyPenalty)
+        }.sortedByDescending { it.second }
+
+        // seed > 0 时对近分区间做随机打散（±0.05 内视为同分桶）
+        val result = if (seed > 0) shuffleBuckets(scored, seed) else scored.map { it.first }
+
+        // 视频图片自然混合：按比例随机取，不做连续分组
+        return@withContext balanceVideoImage(result).take(limit)
+    }
+
+    /** 推荐权重（9 维），由 resolveWeights 计算得出 */
+    private data class RecommendWeights(
+        val tagRelevance: Float, val tagCollection: Float, val engagement: Float,
+        val recency: Float, val likeScore: Float, val discovery: Float,
+        val freshness: Float, val browseDepth: Float, val maxRandom: Float
+    )
+
+    /** 归一化分母（3 维），由 computeNormDenominators 计算得出 */
+    private data class NormDenominators(
+        val maxEngagement: Float, val maxBrowseSeconds: Float, val maxLikes: Float
+    )
+
+    /** 权重初始化（自定义偏好优先）+ 自适应回收（标签/点赞/历史为空时重新分配权重） */
+    private fun resolveWeights(
+        customPrefs: RecommendationPrefs?, hasTags: Boolean, hasLikes: Boolean, hasHistory: Boolean
+    ): RecommendWeights {
         var wTagRelevance = customPrefs?.tagRelevance ?: 0.22f
         var wTagCollection = customPrefs?.tagCollection ?: 0.15f
         var wEngagement = customPrefs?.engagement ?: 0.10f
@@ -77,32 +144,25 @@ object MediaBrowserLogic {
             wDiscovery += reclaimed * 0.5f    // discovery: 0.15 + 0.185 = 0.335
             maxRandom += reclaimed * 0.5f     // randomFactor: 0.30 + 0.185 = 0.485
         }
-
         // 点赞为空时：将 likeScore 的权重分配给 freshness
         if (!hasLikes) {
             val reclaimed = wLikeScore  // 0.05
             wLikeScore = 0f
             wFreshness += reclaimed     // freshness: 0.05 + 0.05 = 0.10
         }
-
         // 无浏览历史时：engagement 无意义，分配给 discovery
         if (!hasHistory) {
             val reclaimed = wEngagement  // 0.10
             wEngagement = 0f
             wDiscovery += reclaimed      // discovery: 0.335 + 0.10 = 0.435（无标签无历史时）
         }
+        return RecommendWeights(wTagRelevance, wTagCollection, wEngagement, wRecency, wLikeScore, wDiscovery, wFreshness, wBrowseDepth, maxRandom)
+    }
 
-        AppLog.d("Algo", "weights: tagRel=$wTagRelevance tagCol=$wTagCollection eng=$wEngagement " +
-            "rec=$wRecency like=$wLikeScore disc=$wDiscovery fresh=$wFreshness " +
-            "depth=$wBrowseDepth rand=$maxRandom " +
-            "hasTags=$hasTags hasLikes=$hasLikes hasHistory=$hasHistory")
-
-        val tagRelevanceMap = buildTagRelevanceMap(media, stats, tagMap)
-        val topTags = tagRelevanceMap.entries
-            .sortedByDescending { it.value }
-            .take(20)
-            .map { it.key }
-            .toSet()
+    /** 计算归一化分母（engagement/browseSeconds/likes 的最大值，至少为 1） */
+    private fun computeNormDenominators(
+        stats: Map<String, ViewStatsEntity>, likeCounts: Map<String, Int>
+    ): NormDenominators {
         val maxEngagement = stats.values
             .maxOfOrNull { (it.viewCount + it.playCount).toFloat() }
             ?.coerceAtLeast(1f) ?: 1f
@@ -112,61 +172,27 @@ object MediaBrowserLogic {
         val maxLikes = likeCounts.values
             .maxOfOrNull { it.toFloat() }
             ?.coerceAtLeast(1f) ?: 1f
+        return NormDenominators(maxEngagement, maxBrowseSeconds, maxLikes)
+    }
 
-        val scored = media.map { item ->
-            val itemStats = stats[item.recordKey]
-            val viewCount = itemStats?.viewCount ?: 0
-            val tags = tagsFor(item, tagMap)
-            val likeCount = likeCounts[item.recordKey] ?: 0
-
-            // 每日推荐去重：已展示过的文件强惩罚
-            val dailyPenalty = when (dailyShownCountMap[item.recordKey] ?: 0) {
-                0 -> 0f       // 首次出现，不惩罚
-                else -> -0.8f // 已展示过，强惩罚，让新文件排到前面
+    /** seed > 0 时对近分区间做随机打散（±0.05 内视为同分桶），确保同分项随机排序 */
+    private fun shuffleBuckets(scored: List<Pair<MediaFileEntity, Float>>, seed: Int): List<MediaFileEntity> {
+        val rng = java.util.Random(seed.toLong())
+        val buckets = mutableListOf<MutableList<MediaFileEntity>>()
+        var currentBucket = mutableListOf<MediaFileEntity>()
+        var lastScore = Float.MAX_VALUE
+        for ((item, score) in scored) {
+            if (currentBucket.isNotEmpty() && score < lastScore - 0.05f) {
+                buckets.add(currentBucket)
+                currentBucket = mutableListOf()
             }
-
-            val tagRelevance = tagRelevanceScore(tags, tagRelevanceMap) * wTagRelevance
-            val tagCollection = tagCollectionScore(tags, topTags) * wTagCollection
-            val engagement = min(
-                (viewCount + (itemStats?.playCount ?: 0)).toFloat() / maxEngagement, 1f
-            ) * wEngagement
-            val recency = recencyScore(itemStats?.lastOpenedAtMillis, now) * wRecency
-            val likeScore = min(likeCount.toFloat() / maxLikes, 1f) * wLikeScore
-            val discovery = (1f - min(viewCount / 5f, 1f)) * wDiscovery
-            val freshness = freshnessScore(item.indexedAtMillis, now) * wFreshness
-            val browseDepth = min(
-                (itemStats?.totalBrowseSeconds ?: 0L).toFloat() / maxBrowseSeconds, 1f
-            ) * wBrowseDepth
-            val randomFactor = ((item.recordKey.hashCode() xor seed).and(0xFFFF).toFloat() / 65535f) * maxRandom
-
-            item to (tagRelevance + tagCollection + engagement + recency + likeScore +
-                discovery + freshness + browseDepth + randomFactor + dailyPenalty)
-        }.sortedByDescending { it.second }
-
-        // seed > 0 时对近分区间做随机打散（±0.05 内视为同分桶）
-        val result = if (seed > 0) {
-            val rng = java.util.Random(seed.toLong())
-            val buckets = mutableListOf<MutableList<MediaFileEntity>>()
-            var currentBucket = mutableListOf<MediaFileEntity>()
-            var lastScore = Float.MAX_VALUE
-            for ((item, score) in scored) {
-                if (currentBucket.isNotEmpty() && score < lastScore - 0.05f) {
-                    buckets.add(currentBucket)
-                    currentBucket = mutableListOf()
-                }
-                currentBucket.add(item)
-                lastScore = if (currentBucket.size == 1) score else minOf(lastScore, score)
-            }
-            if (currentBucket.isNotEmpty()) buckets.add(currentBucket)
-            buckets.flatMap { bucket ->
-                if (bucket.size > 1) bucket.shuffled(rng) else bucket
-            }
-        } else {
-            scored.map { it.first }
+            currentBucket.add(item)
+            lastScore = if (currentBucket.size == 1) score else minOf(lastScore, score)
         }
-
-        // 视频图片自然混合：按比例随机取，不做连续分组
-        return@withContext balanceVideoImage(result).take(limit)
+        if (currentBucket.isNotEmpty()) buckets.add(currentBucket)
+        return buckets.flatMap { bucket ->
+            if (bucket.size > 1) bucket.shuffled(rng) else bucket
+        }
     }
 
     fun applyFilter(

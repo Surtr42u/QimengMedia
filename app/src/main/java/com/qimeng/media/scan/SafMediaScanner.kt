@@ -11,7 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SafMediaScanner(private val context: Context) {
-    private val resolver = context.contentResolver
 
     /**
      * 快速扫描目录树，跳过图片尺寸和视频元数据解码（仅读取视频时长）。

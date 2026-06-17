@@ -1081,12 +1081,6 @@ class BackupManager(private val context: Context) {
         success1 && success2
     }
 
-    private fun formatSeconds(seconds: Long): String {
-        val hours = seconds / 3600
-        val minutes = (seconds % 3600) / 60
-        return if (hours > 0) "${hours}小时${minutes}分钟" else "${minutes}分钟"
-    }
-
     companion object {
         private const val PREFS_MEDIA_DETAIL = "media_detail_prefs"
         private const val KEY_FAVORITES = "favorite_record_keys"

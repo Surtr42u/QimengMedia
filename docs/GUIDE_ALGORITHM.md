@@ -26,6 +26,20 @@
 
 推荐引擎位于 `MediaBrowserLogic.kt` 的 `recommend()` 方法，采用 **自适应加权评分模型**，完全本地运行，不访问网络，不上传用户数据。
 
+### 内部结构（2026-06-17 重构后）
+
+`recommend()` 主体只做编排，具体逻辑拆分到 3 个私有子方法 + 2 个数据类：
+
+| 子方法/数据类 | 职责 |
+|---|---|
+| `resolveWeights()` | 权重初始化（自定义偏好优先）+ 自适应回收（标签/点赞/历史为空时重新分配） |
+| `computeNormDenominators()` | 计算归一化分母（engagement/browseSeconds/likes 最大值，至少为 1） |
+| `shuffleBuckets()` | seed>0 时对 ±0.05 同分桶做确定性随机打散 |
+| `RecommendWeights` | 9 维权重数据类 |
+| `NormDenominators` | 3 维归一化分母数据类 |
+
+10 维评分公式（tagRelevance/tagCollection/engagement/recency/likeScore/discovery/freshness/browseDepth/randomFactor/dailyPenalty）保留在 `recommend()` 主体的 `media.map {}` lambda 中，计算表达式逐字不变。
+
 ### 基本原则
 
 - 推荐完全本地运行，不依赖网络。

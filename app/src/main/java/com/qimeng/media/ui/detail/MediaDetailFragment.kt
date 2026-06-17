@@ -257,91 +257,117 @@ class MediaDetailFragment : Fragment() {
         observeTimelineTags(media.recordKey)
         viewModel.loadAndRecordView(media.recordKey) { }
 
-        if (media.mediaType == MediaType.IMAGE || media.mediaType == MediaType.ANIMATED_IMAGE) {
-            stopVideoPlayback()
-            videoPreviewJob?.cancel()
-            binding.detailVideoPlayer.isVisible = false
-            binding.videoTouchOverlay.isVisible = false
-            binding.videoPlayButton.isVisible = false
-            binding.detailBottomDock.isVisible = chromeVisible
-            binding.detailImageView.isVisible = true
-            binding.detailImageView.setImageDrawable(null)
-            binding.detailImageView.setBackgroundColor(0)
-            val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
-            val isPng = media.fileName.substringAfterLast('.', "").equals("png", ignoreCase = true)
-            // 优先用 LargeImageDecoder 直接解码（PNG 用 libspng，其他用 decodeFileDescriptor），
-            // 失败时回退到 Coil 标准流程
-            viewLifecycleOwner.lifecycleScope.launch {
-                val bitmap = LargeImageDecoder.decodeCurrentImage(
-                    requireContext(), media.uriString.toUri(), media.recordKey, isGif, isPng
-                )
-                if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
-                    binding.detailImageView.setImageBitmap(bitmap)
-                } else if (currentRecordKey == media.recordKey) {
-                    // 回退到 Coil 标准流程
-                    binding.detailImageView.load(media.uriString.toUri()) {
-                        crossfade(false)
-                        size(Size.ORIGINAL)
-                        allowHardware(false)
-                        memoryCacheKey(media.recordKey)
-                        if (isGif) {
-                            bitmapConfig(Bitmap.Config.ARGB_8888)
-                            decoderFactory(AnimatedImageDecoder.Factory())
-                        }
-                    }
-                }
+        when (media.mediaType) {
+            MediaType.IMAGE, MediaType.ANIMATED_IMAGE -> showImage(media)
+            else -> {
+                showVideo(media)
+                setupVideoTouchOverlay()
             }
-            preloadAround(index)
-        } else {
-            isVideoPlaying = false
-            binding.detailVideoPlayer.isVisible = false
-            binding.detailBottomDock.isVisible = chromeVisible
-            binding.detailImageView.isVisible = true
-            binding.detailImageView.setBackgroundColor(Color.BLACK)
-            videoPreviewJob?.cancel()
-            videoPreviewJob = viewLifecycleOwner.lifecycleScope.launch {
-                val bitmap = loadVideoFrame(media.uriString)
-                if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
-                    binding.detailImageView.setImageBitmap(bitmap)
-                } else if (currentRecordKey == media.recordKey) {
-                    binding.detailImageView.load(media.uriString.toUri()) {
-                        crossfade(false)
-                        allowHardware(false)
-                        decoderFactory(VideoFrameDecoder.Factory())
-                        videoFrameMillis(3_000)
-                    }
-                }
-            }
-            binding.videoTouchOverlay.isVisible = true
-            updateVideoPlayButtonVisibility()
-            var sx = 0f; var sy = 0f; var sms = 0L; var si = false
-            binding.videoTouchOverlay.setOnTouchListener { view, event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        sx = event.x; sy = event.y
-                        sms = System.currentTimeMillis()
-                        si = true
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (si && (abs(event.x - sx) > 12.dp(requireContext()) || abs(event.y - sy) > 12.dp(requireContext()))) si = false
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (si && abs(event.x - sx) < 12.dp(requireContext()) && abs(event.y - sy) < 12.dp(requireContext()) && System.currentTimeMillis() - sms < 400) {
-                            view.performClick()
-                            startVideoPlayback(binding.detailVideoPlayer)
-                        } else if (!si) {
-                            val dx = event.x - sx; val dy = event.y - sy
-                            if (abs(dx) > abs(dy)) moveBy(if (dx < 0f) 1 else -1)
-                        }
-                        si = false; true
-                    }
-                    else -> true
-                }
-            }
-            preloadAround(index)
         }
+        preloadAround(index)
+    }
+
+    /** 显示图片（IMAGE/ANIMATED_IMAGE），LargeImageDecoder 优先 + Coil 回退 */
+    private fun showImage(media: MediaFileEntity) {
+        stopVideoPlayback()
+        videoPreviewJob?.cancel()
+        binding.detailVideoPlayer.isVisible = false
+        binding.videoTouchOverlay.isVisible = false
+        binding.videoPlayButton.isVisible = false
+        binding.detailBottomDock.isVisible = chromeVisible
+        binding.detailImageView.isVisible = true
+        binding.detailImageView.setImageDrawable(null)
+        binding.detailImageView.setBackgroundColor(0)
+        val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
+        val isPng = media.fileName.substringAfterLast('.', "").equals("png", ignoreCase = true)
+        // 优先用 LargeImageDecoder 直接解码（PNG 用 libspng，其他用 decodeFileDescriptor），
+        // 失败时回退到 Coil 标准流程
+        viewLifecycleOwner.lifecycleScope.launch {
+            val bitmap = LargeImageDecoder.decodeCurrentImage(
+                requireContext(), media.uriString.toUri(), media.recordKey, isGif, isPng
+            )
+            if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
+                binding.detailImageView.setImageBitmap(bitmap)
+            } else if (currentRecordKey == media.recordKey) {
+                // 回退到 Coil 标准流程
+                binding.detailImageView.load(media.uriString.toUri()) {
+                    crossfade(false)
+                    size(Size.ORIGINAL)
+                    allowHardware(false)
+                    memoryCacheKey(media.recordKey)
+                    if (isGif) {
+                        bitmapConfig(Bitmap.Config.ARGB_8888)
+                        decoderFactory(AnimatedImageDecoder.Factory())
+                    }
+                }
+            }
+        }
+    }
+
+    /** 显示视频预览帧，loadVideoFrame 优先 + Coil VideoFrameDecoder 回退 */
+    private fun showVideo(media: MediaFileEntity) {
+        isVideoPlaying = false
+        binding.detailVideoPlayer.isVisible = false
+        binding.detailBottomDock.isVisible = chromeVisible
+        binding.detailImageView.isVisible = true
+        binding.detailImageView.setBackgroundColor(Color.BLACK)
+        videoPreviewJob?.cancel()
+        videoPreviewJob = viewLifecycleOwner.lifecycleScope.launch {
+            val bitmap = loadVideoFrame(media.uriString)
+            if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
+                binding.detailImageView.setImageBitmap(bitmap)
+            } else if (currentRecordKey == media.recordKey) {
+                binding.detailImageView.load(media.uriString.toUri()) {
+                    crossfade(false)
+                    allowHardware(false)
+                    decoderFactory(VideoFrameDecoder.Factory())
+                    videoFrameMillis(3_000)
+                }
+            }
+        }
+        binding.videoTouchOverlay.isVisible = true
+        updateVideoPlayButtonVisibility()
+    }
+
+    /** 设置视频触摸覆盖层：单击播放、横滑切换 */
+    private fun setupVideoTouchOverlay() {
+        var sx = 0f; var sy = 0f; var sms = 0L; var si = false
+        binding.videoTouchOverlay.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    sx = event.x; sy = event.y
+                    sms = System.currentTimeMillis()
+                    si = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (si && (abs(event.x - sx) > 12.dp(requireContext()) || abs(event.y - sy) > 12.dp(requireContext()))) si = false
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isTapGesture(event, sx, sy, sms, si)) {
+                        view.performClick()
+                        startVideoPlayback(binding.detailVideoPlayer)
+                    } else if (!si) {
+                        val dx = event.x - sx; val dy = event.y - sy
+                        if (abs(dx) > abs(dy)) moveBy(if (dx < 0f) 1 else -1)
+                    }
+                    si = false; true
+                }
+                else -> true
+            }
+        }
+    }
+
+    /** 判定是否为单击手势（未滑动 + 位移阈值 + 时间阈值） */
+    private fun isTapGesture(event: MotionEvent, sx: Float, sy: Float, sms: Long, si: Boolean): Boolean {
+        val threshold = 12.dp(requireContext())
+        return si && abs(event.x - sx) < threshold && abs(event.y - sy) < threshold && System.currentTimeMillis() - sms < 400
+    }
+
+    /** 判定是否需要按需解码元数据（宽高任一为 null，或视频时长为 null） */
+    private fun needsMetadataDecode(media: MediaFileEntity): Boolean {
+        return media.width == null || media.height == null || (media.mediaType == MediaType.VIDEO && media.durationMillis == null)
     }
 
     private fun startVideoPlayback(player: BiliPlayerView) {
@@ -797,7 +823,7 @@ class MediaDetailFragment : Fragment() {
         addInfoRow(container, "类型", "${media.mediaType}/${media.extension.ifBlank { "unknown" }}")
 
         // 如果 width/height/durationMillis 为 null，按需解码
-        if (media.width == null || media.height == null || (media.mediaType == MediaType.VIDEO && media.durationMillis == null)) {
+        if (needsMetadataDecode(media)) {
             lifecycleScope.launch {
                 val updated = decodeMediaMetadata(media)
                 addInfoRow(container, "尺寸", formatDimensions(updated))

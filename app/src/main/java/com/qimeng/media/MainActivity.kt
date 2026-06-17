@@ -189,14 +189,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showRootFragment(fragment: Fragment): Boolean {
-        supportFragmentManager.popBackStack(null, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.fragmentContainer, fragment)
-            .commit()
-        return true
-    }
-
     fun showDetailFragment(recordKey: String, sourceRecordKeys: List<String> = emptyList()) {
         detailSourceRecordKeys = sourceRecordKeys
         binding.bottomNavigation.visibility = View.GONE

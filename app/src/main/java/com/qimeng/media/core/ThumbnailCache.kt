@@ -27,7 +27,6 @@ import java.io.FileOutputStream
  */
 object ThumbnailCache {
     private const val DIR_NAME = "thumbnails"
-    private const val THUMB_SIZE = 480
     private const val COMPRESS_QUALITY = 80
 
     /**

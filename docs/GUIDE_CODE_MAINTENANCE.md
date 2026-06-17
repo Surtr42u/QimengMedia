@@ -217,16 +217,35 @@
 | Lint 警告 | 0 个 Error | 命令行卡死，改用 AS | Android Studio Inspect Code |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
-### 当前已备案的黄色区项
+### 当前已备案的黄色区项（基于 detekt 实证数据 2026-06-17）
 
-| 文件/方法 | 行数/方法数 | 区位 | 备案理由 |
+| 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
-| `MediaDetailFragment` | ~1075 行 | 黄色（类总行数） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，单 Fragment 承载合理，已提取 `TimelineTagHelper` |
-| `ProfileFragment` | ~666 行 | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
-| `MediaLibraryViewModel` | ~32 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
-| `BackupManager.exportPersonalPrefs` | ~280 行 | 黄色（方法行数） | 报告生成汇总 23 个数据源，天然复杂，已封装 `PersonalPrefsReportData` + 章节子方法 |
-| `BiliPlayerView.onTouchEvent` | ~108 行 | 黄色（方法行数） | 手势事件分发天然多分支 |
+| `AllFilesFragment.render` | 48 | 红色（待重构） | 分区/作品/角色/类型四维筛选+异步分组+指纹构建，需提取 MediaRenderHelper 共享计算 |
+| `FavoriteFragment.render` | 44 | 红色（待重构） | 同 AllFilesFragment，需 MediaRenderHelper 重构 |
+| `BrowseHistoryFragment.render` | 40 | 红色（待重构） | 同 AllFilesFragment，需 MediaRenderHelper 重构 |
+| `AuthorFilesFragment.render` | 36 | 红色（待重构） | 同 AllFilesFragment，需 MediaRenderHelper 重构 |
+| `MediaFilterSheet.show` | 35 | 红色（待重构） | 8 个筛选项 + NumberPicker + Chip 交互，需按筛选项拆分子方法 |
+| `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
+| `MediaDetailFragment` | LargeClass | 黄色（类总行数） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay |
+| `ProfileFragment` | LargeClass | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
+| `MediaLibraryViewModel` | 32 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
+| `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
+| `ScanUseCase.scanCosMedia` | 22 | 黄色（合理复杂度） | COS 扫描编排，同上 |
+| `AlbumDetailFragment.render` | 22 | 红色（待重构） | 含在 MediaRenderHelper 重构方案内 |
+| `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
+| `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
+| `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
+| `BackupManager.exportPersonalPrefs` | ~280 行 | 黄色（方法行数） | 报告生成汇总 23 个数据源，天然复杂，已封装 PersonalPrefsReportData + 章节子方法 |
 | `SourceGroupsData` | ~1664 行 | 绿色（纯数据声明） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑 |
+
+### 已完成重构项（本次 2026-06-17）
+
+| 文件/方法 | 重构前 CC | 重构后 CC | 重构方式 |
+|---|---|---|---|
+| `MediaDetailFragment.showMediaAt` | 29 | ~5 | 提取 showImage/showVideo/setupVideoTouchOverlay/isTapGesture/needsMetadataDecode |
+| `MediaBrowserLogic.recommend` | 31 | ~6 | 提取 resolveWeights/computeNormDenominators/shuffleBuckets + RecommendWeights/NormDenominators 数据类 |
+| `MediaDetailFragment` ComplexCondition ×2 | 4 | 1 | 提取 isTapGesture/needsMetadataDecode 辅助函数 |
 
 ### Detekt 配置
 

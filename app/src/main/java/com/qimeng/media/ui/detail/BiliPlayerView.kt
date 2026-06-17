@@ -579,13 +579,6 @@ class BiliPlayerView @JvmOverloads constructor(
         }
     }
 
-    private fun seekRelative(deltaMs: Long) {
-        val player = playerView.player ?: return
-        val newPos = max(0L, min(player.currentPosition + deltaMs, duration))
-        player.seekTo(newPos)
-        showController(true)
-    }
-
     private fun showTopIndicator(text: String) {
         topIndicatorText.text = text
         topIndicator.isVisible = true
