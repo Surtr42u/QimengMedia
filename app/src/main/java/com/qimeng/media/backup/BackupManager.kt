@@ -8,7 +8,10 @@ import com.qimeng.media.data.db.AppDatabase
 import com.qimeng.media.data.db.entity.AlbumRuleEntity
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
+import com.qimeng.media.data.db.entity.CosWorkEntity
+import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ScanSourceEntity
+import com.qimeng.media.data.db.entity.TagEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.data.prefs.AppPrefsManager
@@ -17,6 +20,91 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+
+/**
+ * 个人偏好报告生成所需的全量上下文数据。
+ * 由 [BackupManager.exportPersonalPrefs] 在汇总完各数据源后一次性构造，
+ * 传递给 [BackupManager.buildReportText] 生成 TXT 报告。
+ * 封装为数据类以避免 24 个参数的长参数列表。
+ */
+private data class PersonalPrefsReportData(
+    val favSet: Set<String>,
+    val likeMap: Map<String, Pair<Int, String?>>,
+    val statsList: List<ViewStatsEntity>,
+    val statsMap: Map<String, ViewStatsEntity>,
+    val mediaFileMap: Map<String, MediaFileEntity>,
+    val tagFreq: Map<String, Int>,
+    val authorScoreMap: Map<String, Int>,
+    val followedIds: Set<String>,
+    val authorIdToName: Map<String, String>,
+    val authorFilesMap: Map<String, List<String>>,
+    val authorTagsMap: Map<String, Map<String, Int>>,
+    val tagList: List<TagEntity>,
+    val authorList: List<AuthorEntity>,
+    val totalBrowseSeconds: Long,
+    val totalViews: Long,
+    val totalPlays: Long,
+    val normalFileCount: Int,
+    val cosFileCount: Int,
+    val normalFavCount: Int,
+    val cosFavCount: Int,
+    val cosRecordKeys: Set<String>,
+    val cosWorks: List<CosWorkEntity>,
+    val cosWorkFilesMap: Map<String, List<String>>,
+    val now: Long
+)
+
+/** 常规文件热度条目（用于报告排行展示） */
+private data class HotEntry(
+    val recordKey: String,
+    val hotScore: Int,
+    val mediaType: String,
+    val viewCount: Int,
+    val playCount: Int,
+    val totalBrowseSeconds: Long,
+    val likeCount: Int,
+    val isFavorite: Boolean
+) {
+    /** 渲染为报告中的一行文本 */
+    fun formatLine(): String {
+        val favMark = if (isFavorite) " / ★收藏" else ""
+        return if (mediaType == "video") {
+            val mins = totalBrowseSeconds / 60
+            "$recordKey [视频] — 播放 $playCount 次 / 浏览 $mins 分钟 / 点赞 $likeCount$favMark"
+        } else {
+            "$recordKey [图片] — 查看 $viewCount 次 / 点赞 $likeCount$favMark"
+        }
+    }
+}
+
+/** COS 作品聚合条目（按作品汇总统计后用于报告排行展示） */
+private data class CosWorkEntry(
+    val authorName: String,
+    val workName: String,
+    val hotScore: Int,
+    val fileCount: Int,
+    val viewCount: Int,
+    val likeCount: Int,
+    val hasFavorite: Boolean
+) {
+    /** 渲染为报告中的一行文本 */
+    fun formatLine(): String {
+        val favMark = if (hasFavorite) " / ★收藏" else ""
+        return "$authorName - $workName [COS作品] — $fileCount 个文件 / 查看 $viewCount 次 / 点赞 $likeCount$favMark"
+    }
+}
+
+/**
+ * 统一排行条目（密封类），用于常规文件与 COS 作品的混合排序。
+ * 用密封类替代 isCosWork + 双可空字段，保证 when 分支穷尽，消除 `!!` 强制解包。
+ */
+private sealed class RankEntry {
+    abstract val score: Int
+    /** 常规文件条目 */
+    internal data class Normal(override val score: Int, val entry: HotEntry) : RankEntry()
+    /** COS 作品条目 */
+    internal data class CosWork(override val score: Int, val entry: CosWorkEntry) : RankEntry()
+}
 
 class BackupManager(private val context: Context) {
 
@@ -712,30 +800,32 @@ class BackupManager(private val context: Context) {
         val cosFileCount = allMediaFiles.count { it.isCosFile }
 
         val reportText = buildReportText(
-            favSet = filteredFavSet,
-            likeMap = likeMap,
-            statsList = filteredStatsList,
-            statsMap = statsMap,
-            mediaFileMap = mediaFileMap,
-            tagFreq = tagFreq,
-            authorScoreMap = authorScoreMap,
-            followedIds = followedIds,
-            authorIdToName = authorIdToName,
-            authorFilesMap = authorFilesMap,
-            authorTagsMap = authorTagsMap,
-            tagList = tagList,
-            authorList = authorList,
-            totalBrowseSeconds = totalBrowseSeconds,
-            totalViews = totalViews,
-            totalPlays = totalPlays,
-            normalFileCount = normalFileCount,
-            cosFileCount = cosFileCount,
-            normalFavCount = normalFavCount,
-            cosFavCount = cosFavCount,
-            cosRecordKeys = cosRecordKeys,
-            cosWorks = cosWorks,
-            cosWorkFilesMap = cosWorkFilesMap,
-            now = now
+            PersonalPrefsReportData(
+                favSet = filteredFavSet,
+                likeMap = likeMap,
+                statsList = filteredStatsList,
+                statsMap = statsMap,
+                mediaFileMap = mediaFileMap,
+                tagFreq = tagFreq,
+                authorScoreMap = authorScoreMap,
+                followedIds = followedIds,
+                authorIdToName = authorIdToName,
+                authorFilesMap = authorFilesMap,
+                authorTagsMap = authorTagsMap,
+                tagList = tagList,
+                authorList = authorList,
+                totalBrowseSeconds = totalBrowseSeconds,
+                totalViews = totalViews,
+                totalPlays = totalPlays,
+                normalFileCount = normalFileCount,
+                cosFileCount = cosFileCount,
+                normalFavCount = normalFavCount,
+                cosFavCount = cosFavCount,
+                cosRecordKeys = cosRecordKeys,
+                cosWorks = cosWorks,
+                cosWorkFilesMap = cosWorkFilesMap,
+                now = now
+            )
         )
 
         JSONObject().apply {
@@ -755,34 +845,14 @@ class BackupManager(private val context: Context) {
         } to reportText
     }
 
-    private fun buildReportText(
-        favSet: Set<String>,
-        likeMap: Map<String, Pair<Int, String?>>,
-        statsList: List<ViewStatsEntity>,
-        statsMap: Map<String, ViewStatsEntity>,
-        mediaFileMap: Map<String, com.qimeng.media.data.db.entity.MediaFileEntity>,
-        tagFreq: Map<String, Int>,
-        authorScoreMap: Map<String, Int>,
-        followedIds: Set<String>,
-        authorIdToName: Map<String, String>,
-        authorFilesMap: Map<String, List<String>>,
-        authorTagsMap: Map<String, Map<String, Int>>,
-        tagList: List<com.qimeng.media.data.db.entity.TagEntity>,
-        authorList: List<com.qimeng.media.data.db.entity.AuthorEntity>,
-        totalBrowseSeconds: Long,
-        totalViews: Long,
-        totalPlays: Long,
-        normalFileCount: Int,
-        cosFileCount: Int,
-        normalFavCount: Int,
-        cosFavCount: Int,
-        cosRecordKeys: Set<String>,
-        cosWorks: List<com.qimeng.media.data.db.entity.CosWorkEntity>,
-        cosWorkFilesMap: Map<String, List<String>>,
-        now: Long
-    ): String {
+    /**
+     * 生成个人偏好 TXT 报告。负责汇总 [data] 中的全量上下文并按章节输出。
+     * 章节 2-10 各自委托给独立的私有方法，主体仅做编排，便于维护。
+     * 输出文本格式为既有约定，修改时须保持逐字节一致（详见 docs/GUIDE_BACKUP.md）。
+     */
+    private fun buildReportText(data: PersonalPrefsReportData): String {
         val sb = StringBuilder()
-        val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(now))
+        val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(data.now))
 
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine("  绮梦影库 · 个人偏好报告")
@@ -790,58 +860,49 @@ class BackupManager(private val context: Context) {
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine()
 
-        // 1. 【总览】
+        appendOverviewSection(sb, data)
+
+        val normalEntries = buildNormalEntries(data)
+        val cosWorkEntries = buildCosWorkEntries(data)
+
+        appendMixedTopSection(sb, normalEntries, cosWorkEntries)
+        appendNormalTopSection(sb, normalEntries)
+        appendCosWorkTopSection(sb, cosWorkEntries)
+        appendAuthorTopSection(sb, data)
+        appendFollowedAuthorsSection(sb, data)
+        appendTagTopSection(sb, data.tagFreq)
+        appendAllTagsSection(sb, data.tagList, data.tagFreq)
+        appendFavoritesSection(sb, data.favSet)
+        appendRankingNotes(sb)
+
+        return sb.toString()
+    }
+
+    /** 1.【总览】汇总统计 */
+    private fun appendOverviewSection(sb: StringBuilder, data: PersonalPrefsReportData) {
         sb.appendLine("【总览】")
-        sb.appendLine("  文件总数：常规 $normalFileCount / COS $cosFileCount")
-        sb.appendLine("  收藏文件数：常规 $normalFavCount / COS $cosFavCount")
-        sb.appendLine("  有点赞的文件数：${likeMap.size}")
-        sb.appendLine("  标签总数：${tagList.size}")
-        sb.appendLine("  作者总数：${authorList.size}")
-        sb.appendLine("  关注作者数：${followedIds.size}")
-        sb.appendLine("  总查看次数：$totalViews")
-        sb.appendLine("  总播放次数：$totalPlays")
-        val hours = String.format("%.1f", totalBrowseSeconds / 3600.0)
+        sb.appendLine("  文件总数：常规 ${data.normalFileCount} / COS ${data.cosFileCount}")
+        sb.appendLine("  收藏文件数：常规 ${data.normalFavCount} / COS ${data.cosFavCount}")
+        sb.appendLine("  有点赞的文件数：${data.likeMap.size}")
+        sb.appendLine("  标签总数：${data.tagList.size}")
+        sb.appendLine("  作者总数：${data.authorList.size}")
+        sb.appendLine("  关注作者数：${data.followedIds.size}")
+        sb.appendLine("  总查看次数：${data.totalViews}")
+        sb.appendLine("  总播放次数：${data.totalPlays}")
+        val hours = String.format("%.1f", data.totalBrowseSeconds / 3600.0)
         sb.appendLine("  总浏览时长：$hours 小时")
         sb.appendLine()
+    }
 
-        // 常规文件热度条目
-        data class HotEntry(
-            val recordKey: String,
-            val hotScore: Int,
-            val mediaType: String,
-            val viewCount: Int,
-            val playCount: Int,
-            val totalBrowseSeconds: Long,
-            val likeCount: Int,
-            val isFavorite: Boolean
-        )
-
-        // COS 作品聚合条目
-        data class CosWorkEntry(
-            val authorName: String,
-            val workName: String,
-            val hotScore: Int,
-            val fileCount: Int,
-            val viewCount: Int,
-            val likeCount: Int,
-            val hasFavorite: Boolean
-        )
-
-        // 统一排行条目（用于混合排序）
-        data class RankEntry(
-            val score: Int,
-            val isCosWork: Boolean,
-            val hotEntry: HotEntry? = null,
-            val cosEntry: CosWorkEntry? = null
-        )
-
-        val normalEntries = statsList.mapNotNull { stats ->
-            val mf = mediaFileMap[stats.recordKey]
-            val isCos = mf?.isCosFile ?: (stats.recordKey in cosRecordKeys)
+    /** 计算常规文件热度条目（COS 文件跳过，走作品聚合） */
+    private fun buildNormalEntries(data: PersonalPrefsReportData): List<HotEntry> =
+        data.statsList.mapNotNull { stats ->
+            val mf = data.mediaFileMap[stats.recordKey]
+            val isCos = mf?.isCosFile ?: (stats.recordKey in data.cosRecordKeys)
             if (isCos) return@mapNotNull null // COS 文件走作品聚合
             val mType = mf?.mediaType ?: "image"
-            val likeCount = likeMap[stats.recordKey]?.first ?: 0
-            val isFav = stats.recordKey in favSet
+            val likeCount = data.likeMap[stats.recordKey]?.first ?: 0
+            val isFav = stats.recordKey in data.favSet
             val hotScore = if (mType == "video") {
                 stats.viewCount + stats.playCount + (stats.totalBrowseSeconds / 60).toInt() + likeCount + (if (isFav) 5 else 0)
             } else {
@@ -850,108 +911,110 @@ class BackupManager(private val context: Context) {
             HotEntry(stats.recordKey, hotScore, mType, stats.viewCount, stats.playCount, stats.totalBrowseSeconds, likeCount, isFav)
         }
 
-        // COS 作品聚合：按 folderUri 汇总所有文件的统计
-        val cosWorkEntries = cosWorks.map { work ->
-            val workFiles = cosWorkFilesMap[work.folderUri].orEmpty()
+    /** COS 作品聚合：按 folderUri 汇总所有文件的统计 */
+    private fun buildCosWorkEntries(data: PersonalPrefsReportData): List<CosWorkEntry> =
+        data.cosWorks.map { work ->
+            val workFiles = data.cosWorkFilesMap[work.folderUri].orEmpty()
             var viewCountSum = 0
             var playCountSum = 0
             var browseSecondsSum = 0L
             var likeCountSum = 0
             var favFileCount = 0
             workFiles.forEach { rk ->
-                val s = statsMap[rk]
+                val s = data.statsMap[rk]
                 viewCountSum += s?.viewCount ?: 0
                 playCountSum += s?.playCount ?: 0
                 browseSecondsSum += s?.totalBrowseSeconds ?: 0L
-                likeCountSum += likeMap[rk]?.first ?: 0
-                if (rk in favSet) favFileCount++
+                likeCountSum += data.likeMap[rk]?.first ?: 0
+                if (rk in data.favSet) favFileCount++
             }
             val hotScore = viewCountSum + playCountSum + (browseSecondsSum / 60).toInt() + likeCountSum + favFileCount * 5
             CosWorkEntry(work.authorName, work.workName, hotScore, workFiles.size, viewCountSum, likeCountSum, favFileCount > 0)
         }
 
-        fun HotEntry.formatLine(): String {
-            val favMark = if (isFavorite) " / ★收藏" else ""
-            return if (mediaType == "video") {
-                val mins = totalBrowseSeconds / 60
-                "$recordKey [视频] — 播放 $playCount 次 / 浏览 $mins 分钟 / 点赞 $likeCount$favMark"
-            } else {
-                "$recordKey [图片] — 查看 $viewCount 次 / 点赞 $likeCount$favMark"
-            }
-        }
-
-        fun CosWorkEntry.formatLine(): String {
-            val favMark = if (hasFavorite) " / ★收藏" else ""
-            return "$authorName - $workName [COS作品] — $fileCount 个文件 / 查看 $viewCount 次 / 点赞 $likeCount$favMark"
-        }
-
-        // 2. 【总 Top 30】（COS 作品 + 常规文件混合排序）
-        val mixedItems = normalEntries.map { RankEntry(it.hotScore, false, hotEntry = it) } +
-            cosWorkEntries.map { RankEntry(it.hotScore, true, cosEntry = it) }
+    /** 2.【总 Top 30】（COS 作品 + 常规文件混合排序） */
+    private fun appendMixedTopSection(sb: StringBuilder, normalEntries: List<HotEntry>, cosWorkEntries: List<CosWorkEntry>) {
+        val mixedItems: List<RankEntry> = normalEntries.map { RankEntry.Normal(it.hotScore, it) } +
+            cosWorkEntries.map { RankEntry.CosWork(it.hotScore, it) }
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【总 Top 30】（COS作品+常规混合，按热度分降序）")
         mixedItems.sortedByDescending { it.score }.take(30).forEachIndexed { i, item ->
-            val line = if (item.isCosWork) item.cosEntry!!.formatLine() else item.hotEntry!!.formatLine()
+            val line = when (item) {
+                is RankEntry.Normal -> item.entry.formatLine()
+                is RankEntry.CosWork -> item.entry.formatLine()
+            }
             sb.appendLine("  ${i + 1}. $line")
         }
         sb.appendLine()
+    }
 
-        // 3. 【常规 Top 20】
+    /** 3.【常规 Top 20】 */
+    private fun appendNormalTopSection(sb: StringBuilder, normalEntries: List<HotEntry>) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【常规 Top 20】（只显示非 COS 文件）")
         normalEntries.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
             sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
+    }
 
-        // 4. 【COS Top 20】（按作品聚合）
+    /** 4.【COS Top 20】（按作品聚合） */
+    private fun appendCosWorkTopSection(sb: StringBuilder, cosWorkEntries: List<CosWorkEntry>) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【COS Top 20】（按作品聚合，按热度分降序）")
         cosWorkEntries.sortedByDescending { it.hotScore }.take(20).forEachIndexed { i, entry ->
             sb.appendLine("  ${i + 1}. ${entry.formatLine()}")
         }
         sb.appendLine()
+    }
 
-        // 5. 【作者 Top 20】
+    /** 5.【作者 Top 20】 */
+    private fun appendAuthorTopSection(sb: StringBuilder, data: PersonalPrefsReportData) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【作者 Top 20】（按偏好度降序）")
-        authorScoreMap.entries.sortedByDescending { it.value }.take(20).forEachIndexed { i, (authorId, score) ->
-            val name = authorIdToName[authorId] ?: authorId
-            val fileCount = authorFilesMap[authorId]?.size ?: 0
-            val followedMark = if (authorId in followedIds) " ★" else ""
-            val tags = authorTagsMap[authorId]
+        data.authorScoreMap.entries.sortedByDescending { it.value }.take(20).forEachIndexed { i, (authorId, score) ->
+            val name = data.authorIdToName[authorId] ?: authorId
+            val fileCount = data.authorFilesMap[authorId]?.size ?: 0
+            val followedMark = if (authorId in data.followedIds) " ★" else ""
+            val tags = data.authorTagsMap[authorId]
             val tagPart = if (tags != null && tags.isNotEmpty()) {
                 " / 标签：" + tags.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.key}(${it.value})" }
             } else ""
             sb.appendLine("  ${i + 1}. $name$followedMark — ${fileCount} 个文件 / 偏好度 $score$tagPart")
         }
         sb.appendLine()
+    }
 
-        // 6. 【关注的作者】
+    /** 6.【关注的作者】 */
+    private fun appendFollowedAuthorsSection(sb: StringBuilder, data: PersonalPrefsReportData) {
         sb.appendLine("───────────────────────────────────────")
-        sb.appendLine("【关注的作者】（共 ${followedIds.size} 个）")
-        if (followedIds.isEmpty()) {
+        sb.appendLine("【关注的作者】（共 ${data.followedIds.size} 个）")
+        if (data.followedIds.isEmpty()) {
             sb.appendLine("  暂无关注作者")
         } else {
-            followedIds.mapNotNull { id -> authorIdToName[id]?.let { id to it } }
-                .sortedByDescending { (id, _) -> authorScoreMap[id] ?: 0 }
+            data.followedIds.mapNotNull { id -> data.authorIdToName[id]?.let { id to it } }
+                .sortedByDescending { (id, _) -> data.authorScoreMap[id] ?: 0 }
                 .forEachIndexed { i, (id, name) ->
-                    val fileCount = authorFilesMap[id]?.size ?: 0
-                    val score = authorScoreMap[id] ?: 0
+                    val fileCount = data.authorFilesMap[id]?.size ?: 0
+                    val score = data.authorScoreMap[id] ?: 0
                     sb.appendLine("  ${i + 1}. $name — ${fileCount} 个文件 / 偏好度 $score")
                 }
         }
         sb.appendLine()
+    }
 
-        // 7. 【标签 Top 10】
+    /** 7.【标签 Top 10】 */
+    private fun appendTagTopSection(sb: StringBuilder, tagFreq: Map<String, Int>) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【标签 Top 10】（按关联文件数降序）")
         tagFreq.entries.sortedByDescending { it.value }.take(10).forEachIndexed { i, (name, count) ->
             sb.appendLine("  ${i + 1}. $name — ${count} 个文件")
         }
         sb.appendLine()
+    }
 
-        // 8. 【所有标签】
+    /** 8.【所有标签】 */
+    private fun appendAllTagsSection(sb: StringBuilder, tagList: List<TagEntity>, tagFreq: Map<String, Int>) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【所有标签】（共 ${tagList.size} 个）")
         tagList.sortedByDescending { tagFreq[it.name] ?: 0 }.forEach { tag ->
@@ -959,14 +1022,18 @@ class BackupManager(private val context: Context) {
             sb.appendLine("  · ${tag.name} ($count 个文件)")
         }
         sb.appendLine()
+    }
 
-        // 9. 【收藏的文件】
+    /** 9.【收藏的文件】 */
+    private fun appendFavoritesSection(sb: StringBuilder, favSet: Set<String>) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【收藏的文件】（共 ${favSet.size} 个）")
         favSet.sorted().forEach { sb.appendLine("  · $it") }
         sb.appendLine()
+    }
 
-        // 10. 排行说明 + 报告结束
+    /** 10. 排行说明 + 报告结束 */
+    private fun appendRankingNotes(sb: StringBuilder) {
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【排行说明】")
         sb.appendLine("  热度分计算规则：")
@@ -978,8 +1045,6 @@ class BackupManager(private val context: Context) {
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine("  报告结束")
         sb.appendLine("═══════════════════════════════════════")
-
-        return sb.toString()
     }
 
     suspend fun exportPersonalPrefsToFile(dirUri: Uri, database: AppDatabase): Boolean = withContext(Dispatchers.IO) {

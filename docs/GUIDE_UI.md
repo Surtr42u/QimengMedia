@@ -16,7 +16,6 @@
 | `app/src/main/java/com/qimeng/media/core/CompatChecker.kt` | 兼容性检查工具（6项检查） |
 | `app/src/main/java/com/qimeng/media/ui/detail/ZoomImageView.kt` | 自定义缩放 ImageView（统一 `LAYER_TYPE_SOFTWARE` 纯软件渲染，仅 GIF AnimatedImageDrawable 时切换 `LAYER_TYPE_HARDWARE`；手势期间（双指缩放/放大拖拽）动态切换 `LAYER_TYPE_HARDWARE` 利用 GPU 加速矩阵变换，手势结束后 100ms 延迟切回 `LAYER_TYPE_SOFTWARE`；`lastDrawableWidth/Height` 记录实际尺寸防止Coil降采样导致matrix错乱；缩放范围 0.5x~5x，双击放大1.8x，近1.0的scale factor跳过减少无效重绘） |
 | `app/src/main/java/com/qimeng/media/ui/detail/BiliPlayerView.kt` | B站风格视频播放器（手势控制/倍速/静音/进度拖拽） |
-| `app/src/main/java/com/qimeng/media/ui/detail/DetailSheetHelper.kt` | 详情页 BottomSheet 弹窗构建（标签管理/快速转跳/文件信息） |
 | `app/src/main/java/com/qimeng/media/core/LargeImageDecoder.kt` | 大图软解优化（libspng PNG 加速/decodeFileDescriptor 直接解码/并发限制/预加载请求构建） |
 | `app/src/main/java/com/qimeng/media/core/SpngDecoder.kt` | libspng JNI 桥接（PNG 解码加速，ARM NEON 优化） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaGroupHelper.kt` | 出处/角色/COS 分组计算（AllFiles/Favorite/BrowseHistory/AlbumDetail/AuthorFiles 共用） |

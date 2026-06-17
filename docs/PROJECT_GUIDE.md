@@ -78,7 +78,7 @@
 - `AuthorDao` 新增 `deleteAuthorsByIds` 批量删除。
 - `ViewStatsDao` 新增 `getByRecordKeys` 批量查询。
 - `MediaFileDao` 新增 `observeNonCosMedia`（非COS Flow）、`getByType`（按类型查询）。
-- `MediaBrowserLogic.formatSize/formatDate/formatDuration/dateLabel/groupByDate` 等共享工具方法（formatDate/formatDuration 统一供 DetailSheetHelper、MediaDetailFragment、MediaThumbnailAdapter 调用）。
+- `MediaBrowserLogic.formatSize/formatDate/formatDuration/dateLabel/groupByDate` 等共享工具方法（formatDate/formatDuration 统一供 MediaDetailFragment、MediaThumbnailAdapter 调用）。
 - 当前所有核心功能已完成。
 - 已实现推荐偏好设置（"我的→推荐偏好"），用户可调整推荐算法 9 个权重维度（标签相关性/标签合集/互动热度/浏览时效/点赞偏好/新发现/新鲜度/浏览深度/随机性），`MediaBrowserLogic.recommend()` 接受可选 `customPrefs` 参数覆盖默认权重。偏好弹窗提供 4 个预设方案（均衡推荐/高记忆流行/深度探索/新鲜优先），预设定义位于 `ProfileFragment.recPrefPresets`。
 - 已实现视频时间轴标签（BiliPlayerView 时间轴标签图标按钮 + 标签芯片），用户可在视频播放时添加/删除时间点标记，点击标签跳转到标记位置，长按弹出操作菜单（跳转/删除）。
@@ -88,6 +88,8 @@
 - 已将 `DetailVideoPlayer` 替换为 `BiliPlayerView`（B站风格自定义控制器），基于 Media3 ExoPlayer + PlayerView，支持手势控制（竖屏单击暂停/横屏单击显隐UI）、长按2x倍速（竖屏拖动锁定/退出）、倍速PopupWindow选择、时间轴标签、全屏切换（500ms防抖）。
 - 已替换应用图标为木纹 XB 雕刻图标：Adaptive Icon 前景 PNG（drawable 各密度）+ 背景色 `#DDBC98` + mipmap 完整图标回退（5 密度 PNG）；启动画面已隐藏图标仅显示纯色背景。
 - 已将 `MediaLibraryViewModel` 按职责拆分为 4 个 UseCase（`ScanUseCase`、`ThumbnailUseCase`、`AuthorImportUseCase`、`AutoSyncUseCase`），ViewModel 保留数据观察、统计记录、设置管理、标签管理、作者管理和 ScanStatus 状态，公共 API 不变。
+- 已对 `BackupManager` 报告生成进行重构（密封类 `RankEntry` 消除 `!!`、`PersonalPrefsReportData` 数据类封装 24 参数、`buildReportText` 按章节提取 10 个子方法），导出 JSON 格式和 TXT 报告内容零变化。
+- 已删除死代码 `DetailSheetHelper.kt`（从未被调用，详情页 BottomSheet 逻辑在 `MediaDetailFragment` 内部实现）。
 - `AutoSyncUseCase` 支持四种触发时机：扫描后（只写app数据/）、退出详情页（只写app数据/）、App后台（全量同步）、手动同步（全量同步，无视防抖）；数据备份弹窗新增"立即同步"按钮。
 - `deleteMediaAndRefs` 扩展：事务内删除6张表（新增 view_stats/view_history/timeline_tags），事务外清理 SharedPreferences（点赞/收藏）和缓存（Coil 内存缓存 + ThumbnailCache）；启动时 `cleanupStaleRefs()` 清理历史残留数据。
 - `authors.json` schemaVersion 升至 2：导出时 files 数组填入关联 recordKey，导入时恢复 AuthorMediaCrossRef。
@@ -211,7 +213,6 @@ QimengMedia/
 │               │   └── SheetUiHelper.kt
 │               ├── detail/
 │               │   ├── MediaDetailFragment.kt
-│               │   ├── DetailSheetHelper.kt
 │               │   ├── TimelineTagHelper.kt
 │               │   ├── ZoomImageView.kt
 │               │   └── BiliPlayerView.kt
@@ -274,4 +275,4 @@ QimengMedia/
 
 换 AI、换开发工具或交接项目时，必须传完整源码目录，不只传 APK。
 
-> 最后更新：2026-06-10
+> 最后更新：2026-06-17

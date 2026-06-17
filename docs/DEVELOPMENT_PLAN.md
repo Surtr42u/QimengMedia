@@ -21,7 +21,7 @@
 
 ## 阶段 2：数据层与备份层
 
-- Room 实体和 DAO（11 个实体、9 个 DAO、AppDatabase、LocalMediaRepository）。
+- Room 实体和 DAO（11 个实体、10 个 DAO、AppDatabase、LocalMediaRepository）。
 - Repository 接口与默认实现（DefaultLocalMediaRepository）。
 - JSON 导入导出模型（BackupModels、BackupFileNames、BackupRepository 接口）。
 - 记录键工厂（RecordKeyFactory）。
@@ -103,4 +103,4 @@
 - 新增功能如果产生了新的待办，在本文件新增对应阶段或追加到已有阶段"当前状态"的后续项中。
 - 每次修改 `DEVELOPMENT_PLAN.md` 后更新底部时间戳。
 
-> 最后更新：2026-06-12
+> 最后更新：2026-06-17
