@@ -230,6 +230,29 @@ class AuthorImportUseCase(
         AppLog.d("AuthorImport", "rebuild: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
     }
 
+    /** 启动时一次性重建作者关联，修复升级前遗留的历史脏数据。
+     *
+     *  背景：v2 修复（统一全量重建）之前的版本，单 TXT 导入会覆盖跨 TXT 同名作者关联，
+     *  导致部分作者关联被清空为 0。升级到新版后，这些已存在的错误关联不会自动修复
+     *  （[rebuildAssociationsFromBlocks] 只在导入/扫描/删除时触发），用户需卸载重装才正常。
+     *  本方法在 App 启动时调用，用 settings flag 保证**仅首次启动执行一次**，
+     *  把历史脏数据按新逻辑重建，之后不再执行，避免每次启动都跑全量重建影响性能。
+     *  重建失败不标记 flag，下次启动自动重试。 */
+    suspend fun rebuildAssociationsOnceIfNeeded(scanUseCase: ScanUseCase) {
+        if (repository.getSetting(KEY_AUTHOR_REBUILD_V2_DONE)?.value == "1") return
+        AppLog.d("AuthorImport", "rebuildOnce: first run after upgrade, rebuilding author associations")
+        try {
+            rebuildAssociationsFromBlocks(scanUseCase)
+        } catch (e: Exception) {
+            AppLog.d("AuthorImport", "rebuildOnce failed, will retry next launch: ${e.message}")
+            return
+        }
+        repository.upsertSetting(
+            SettingEntity(key = KEY_AUTHOR_REBUILD_V2_DONE, value = "1", updatedAtMillis = System.currentTimeMillis())
+        )
+        AppLog.d("AuthorImport", "rebuildOnce: done and flagged")
+    }
+
     /** 获取所有已导入的TXT文件名列表 */
     private suspend fun getImportedTxtFileNames(): List<String> {
         val current = repository.getSetting(KEY_IMPORTED_TXT_FILES)?.value ?: "[]"
@@ -341,5 +364,6 @@ class AuthorImportUseCase(
         const val KEY_IMPORTED_TXT_FILES = "imported_txt_files"
         const val KEY_IMPORTED_TXT_BLOCKS_PREFIX = "imported_txt_blocks_"
         const val KEY_IMPORTED_TXT_URI_PREFIX = "imported_txt_uri_"
+        const val KEY_AUTHOR_REBUILD_V2_DONE = "author_rebuild_v2_done"
     }
 }

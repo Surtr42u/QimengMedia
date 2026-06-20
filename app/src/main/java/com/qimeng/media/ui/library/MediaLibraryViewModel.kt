@@ -73,6 +73,10 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             scanUseCase.cleanupOrphanFiles()
         }
+        // 启动时一次性重建作者关联（修复升级前遗留的跨TXT同名作者关联被覆盖的脏数据，仅首次启动执行）
+        viewModelScope.launch(Dispatchers.IO) {
+            authorImportUseCase.rebuildAssociationsOnceIfNeeded(scanUseCase)
+        }
         // 启动时从数据库预加载已有文件的缩略图到本地缓存
         viewModelScope.launch(Dispatchers.IO) {
             // 版本升级时清除视频缩略图缓存（黑帧检测需要重新生成）
