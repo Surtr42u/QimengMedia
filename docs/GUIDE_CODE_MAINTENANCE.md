@@ -213,7 +213,7 @@
 | 方法长度 | 绿色区 | 阈值 120（detekt.yml），黄色区已备案 | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
-| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有3个测试类 | ./gradlew test |
+| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 5 个核心测试类 | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行卡死，改用 AS | Android Studio Inspect Code |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
@@ -263,6 +263,16 @@
 | `RecordKeyFactoryTest` | 主键生成逻辑（12 个测试） |
 | `MediaBrowserLogicTest` | formatSize/dateLabel/groupByDate（14 个测试） |
 | `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处/txt作品（18 个测试） |
+| `MediaGroupHelperTest` | 分组算法（partition/source/character 模式） |
+| `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（18 个测试） |
+
+### detekt CI 集成
+
+- **GitHub Actions**：`.github/workflows/detekt.yml`，push/PR 到 main 时自动运行 detekt + 单元测试
+- **本地 pre-commit hook**：`.githooks/pre-commit`，提交前自动运行 detekt
+  - 启用方式：`git config core.hooksPath .githooks`
+  - 跳过方式：`git commit --no-verify`（不推荐）
+- detekt 配置 `ignoreFailures=true`，仅警告不阻断构建
 
 ## 共享逻辑与组合组件模式
 
@@ -287,6 +297,14 @@
 | `DimenExt` | `ui/widget/DimenExt.kt` | dp/dpFloat 尺寸转换扩展函数（Int.dp(Context)/Float.dp(Context)/Int.dpFloat(Context)） | MediaDetailFragment, BiliPlayerView, HomeFragment, AlbumFragment, ZoomImageView, AuthorListFragment, MediaFilterSheet, GroupedMediaAdapter, TimelineTagHelper, SheetUiHelper |
 | `MediaBrowserLogic` | `ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组/格式化工具 | HomeFragment, AllFilesFragment, AlbumDetailFragment, MediaDetailFragment, MediaThumbnailAdapter |
 | `PinchZoomHelper` | `ui/widget/PinchZoomHelper.kt` | 双指缩放列数共享组件（ScaleGestureDetector 缩放逻辑 + GridLayoutManager 创建含 SpanSizeLookup）；ColumnsRef 类包装列数状态 | AllFilesFragment, AlbumDetailFragment, BrowseHistoryFragment, AuthorFilesFragment, FavoriteFragment |
+| `BrowseStatsChartView` | `ui/widget/BrowseStatsChartView.kt` | 浏览统计柱状图（自绘 Canvas，水平柱条 + 主题色 + 空状态提示，Top N 文件热度展示） | DataStatsFragment |
+| `LineChartView` | `ui/widget/LineChartView.kt` | 折线/面积趋势图（自绘 Canvas，渐变面积 + 折线 + 数据点 + 入场动画 + 点击数据点高亮并显示数值气泡，48dp 命中阈值，气泡位置自适应上下） | DataStatsFragment, StatsDetailFragment |
+| `BarChartView` | `ui/widget/BarChartView.kt` | 竖向柱状图（自绘 Canvas，渐变填充 + 点击高亮 + 入场动画） | DataStatsFragment |
+| `PieChartView` | `ui/widget/PieChartView.kt` | 环形图（自绘 Canvas，多色调色板 + 中心总览 + 纵向图例 + 入场动画，纯展示不消费触摸事件，0值在图例显示但不绘制扇区） | DataStatsFragment |
+| `RankListAdapter` | `ui/stats/RankListAdapter.kt` | 通用排行榜列表 Adapter（点击跳转，前三名高亮，副标题可选，进度条相对第一名百分比，DiffUtil 局部更新） | DataStatsFragment, StatsDetailFragment |
+| `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+辅助图表+Top 20 排行榜/分布对比卡片，四种模式，文件模式支持热度/时长排序切换，分布模式显示类型/来源两张对比卡片，浏览趋势图支持点击数据点显示数值气泡） | DataStatsFragment |
+| `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
+| `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置）, ZoomImageView（智能分层渲染判断） |
 
 ### 共享胶囊筛选体系
 

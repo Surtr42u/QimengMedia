@@ -68,10 +68,10 @@
 - **本地缩略图缓存**（`ThumbnailCache`）：缩略图和视频详情帧保存为本地 WebP 文件（`filesDir/thumbnails/`），加载时先查本地缓存，没有再走解码流程并缓存。Coil 加载缓存文件时 `allowHardware(true)` GPU 渲染更快。`MediaThumbnailAdapter` 后台解码用信号量限制并发（最多 2 个），且解码前检查缓存文件是否已被预生成创建，避免与预生成争抢 IO/内存导致 OOM 卡死。
 - 扫描完成后后台预生成缩略图到本地缓存（`pregenerateThumbnails`），已缓存的文件自动跳过。**统一并发池**：根据设备 CPU 核数和运存自动调整（`getConcurrency`），并发=CPU核数×1.5（上限16），图片视频共用并发池，图片优先排列，设备总内存<4GB时减半。ViewModel `init` 块启动时即从数据库读取已有文件，按常规/COS分组分别通过 `ThumbnailUseCase` 预生成，进度 Flow 正确更新到 UI。
 - `cache_version` 机制：版本升级时自动清除视频缩略图缓存重新生成（黑帧检测逻辑变更后需要重新缓存）。
-- 详情页预加载基础 1 前 2 后（内存充裕时 2 前 3 后），视频详情帧也使用 `ThumbnailCache` 缓存。详情页图片始终加载完整原图（不降采样），这是设计决策：用户点击查看的就是原始分辨率。
+- 详情页预加载基础 1 前 2 后（内存充裕时 2 前 3 后），视频详情帧也使用 `ThumbnailCache` 缓存。详情页图片始终加载完整原图（不降采样），这是设计决策：用户点击查看的就是原始分辨率。**注意**：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样，已在 `QimengApplication` ImageLoader 配置放开到 GPU 纹理上限（`GpuInfo` 探测，详见下方"大图智能分层渲染"条目）才真正实现不降采样。
 - **大图软解优化**（`LargeImageDecoder`，绕过 Coil Decoder 链的自定义解码器）：内部解码逐级回退——Coil 内存缓存命中（仅检查是否存在，不取出 Bitmap 对象——避免缓存驱逐时 recycle 导致 ImageView 绘制已回收 bitmap 崩溃；命中时返回 null 让 Fragment 走 Coil load 路径，Coil 命中内存缓存零延迟且正确管理 bitmap 生命周期）→ PNG 用 libspng（ARM NEON 优化，比系统 libpng 快 2-3 倍）→ `BitmapFactory.decodeFileDescriptor`（跳过 InputStream 中间层，比 Coil 的 decodeStream 快 ~10-20%）→ `BitmapFactory.decodeStream`（异常回退）；`LargeImageDecoder` 全部失败则由 Fragment 回退到 Coil 标准流程；解码成功后写入 Coil 内存缓存供后续访问零延迟；并发解码信号量限制（大图同时解码不超过 2 张，防止内存峰值）；预加载使用 Coil 标准流程自动利用缓存。
 - **libspng 集成**（`SpngDecoder` + `app/src/main/cpp/spng/`）：v0.7.4（MIT 协议），CMake + JNI 桥接，使用 NDK 自带 zlib，ARM NEON 优化在 arm64-v8a/armeabi-v7a 自动启用；仅详情页当前 PNG 图片使用，解码失败静默回退到 BitmapFactory，不影响其他流程。
-- **详情页预渲染策略**：双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过，不会重复解码）；退出详情页时统一取消预加载；**视频帧取首帧**：详情页预览和预加载统一 `videoFrameMillis(0)` 取首帧，消除 3 秒帧 seek 开销。
+- **详情页预渲染策略**：双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；**超大图收紧**（2026-06-20）：当前图长边 > 4096 时收紧到 1 前 1 后，防超大图原图（~150MB/张）预渲染过多 OOM；每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过，不会重复解码）；退出详情页时统一取消预加载；**视频帧取首帧**：详情页预览和预加载统一 `videoFrameMillis(0)` 取首帧，消除 3 秒帧 seek 开销。
 - **内存安全**：`QimengApplication.onTrimMemory` 三级回收——RUNNING_CRITICAL 移除 3/4 缓存条目（保留最近 1/4）、RUNNING_LOW 移除一半、UI_HIDDEN 保留最近 1 个条目移除其余预渲染；cache.keys 按 LRU 顺序迭代，take/dropLast 保留最近访问的条目。
 - **详情页分页加载**：详情页初始加载 40 个媒体（从点击项开始），滑动接近边界（距末尾 5 项）时自动加载 40 个；向前滑动接近开头时也自动加载 40 个并调整索引；显示 "实际位置/推荐总数"，不影响推荐机制。
 - 底部导航 `elevation=0dp + itemRippleColor透明 + activeIndicator隐藏`。
@@ -171,6 +171,7 @@ QimengMedia/
 │           │   ├── SpngDecoder.kt
 │           │   ├── AppLog.kt
 │           │   ├── AnrWatchdog.kt
+│           │   ├── GpuInfo.kt
 │           │   ├── CompatChecker.kt
 │           │   ├── MediaCacheCleaner.kt
 │           │   └── MediaDetailPrefsCleaner.kt
