@@ -201,19 +201,23 @@ class ZoomImageView @JvmOverloads constructor(
     private fun applyOptimalLayerType(drawable: Drawable?) {
         if (containsAnimatedDrawable(drawable)) {
             setLayerType(LAYER_TYPE_HARDWARE, null)
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: GIF→HARDWARE longside=${drawableLongSide(drawable)} gpuMax=${GpuInfo.maxTextureSize()}")
             return
         }
         val longside = drawableLongSide(drawable)
         if (longside <= 0) {
             // 无尺寸信息（图尚未解码），保守用 SOFTWARE
             setLayerType(LAYER_TYPE_SOFTWARE, null)
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: 无尺寸→SOFTWARE gpuMax=${GpuInfo.maxTextureSize()}")
             return
         }
         val maxSize = GpuInfo.maxTextureSize()
         if (longside <= maxSize) {
             setLayerType(LAYER_TYPE_HARDWARE, null)
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside ≤ gpuMax=$maxSize → HARDWARE")
         } else {
             setLayerType(LAYER_TYPE_SOFTWARE, null)
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside > gpuMax=$maxSize → SOFTWARE")
         }
     }
 
