@@ -159,11 +159,16 @@ class ZoomImageView @JvmOverloads constructor(
             applyOptimalLayerType(drawable)
         }
         super.setImageDrawable(drawable)
-        if (drawable == null || drawable.intrinsicWidth <= 0) return
+        if (drawable == null || drawable.intrinsicWidth <= 0) {
+            com.qimeng.media.core.AppLog.d("Detail", "setImageDrawable: drawable=null或尺寸无效 intrinsic=${drawable?.intrinsicWidth}x${drawable?.intrinsicHeight} override=$overrideDrawableSize")
+            return
+        }
+        val bmp = (drawable as? BitmapDrawable)?.bitmap
         if (!overrideDrawableSize) {
             lastDrawableWidth = drawable.intrinsicWidth
             lastDrawableHeight = drawable.intrinsicHeight
         }
+        com.qimeng.media.core.AppLog.d("Detail", "setImageDrawable: intrinsic=${drawable.intrinsicWidth}x${drawable.intrinsicHeight} bitmap=${bmp?.width}x${bmp?.height} lastDrawable=${lastDrawableWidth}x${lastDrawableHeight} override=$overrideDrawableSize view=${width}x${height}")
         if (width > 0 && height > 0) {
             resetZoom()
         } else {

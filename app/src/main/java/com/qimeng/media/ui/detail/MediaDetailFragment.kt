@@ -45,6 +45,8 @@ import coil3.request.allowHardware
 import coil3.request.bitmapConfig
 import coil3.request.crossfade
 import coil3.request.placeholder
+import coil3.request.ErrorResult
+import coil3.request.SuccessResult
 import coil3.size.Size
 import coil3.video.VideoFrameDecoder
 import coil3.video.videoFrameMillis
@@ -366,6 +368,7 @@ class MediaDetailFragment : Fragment() {
 
     /** 显示图片（IMAGE/ANIMATED_IMAGE），LargeImageDecoder 优先 + Coil 回退 */
     private fun showImage(media: MediaFileEntity) {
+        AppLog.d("Detail", "showImage: 进入 key=${media.recordKey} file=${media.fileName} type=${media.mediaType}")
         stopVideoPlayback()
         videoPreviewJob?.cancel()
         binding.detailVideoPlayer.isVisible = false
@@ -419,6 +422,7 @@ class MediaDetailFragment : Fragment() {
 
     /** 通过 Coil 加载原图（统一封装，placeholder 保留当前画面避免闪白） */
     private fun loadOriginalImageWithCoil(media: MediaFileEntity, isGif: Boolean) {
+        val tag = media.recordKey
         binding.detailImageView.load(media.uriString.toUri()) {
             placeholder(binding.detailImageView.drawable)
             crossfade(false)
@@ -429,6 +433,17 @@ class MediaDetailFragment : Fragment() {
                 bitmapConfig(Bitmap.Config.ARGB_8888)
                 decoderFactory(AnimatedImageDecoder.Factory())
             }
+            listener(
+                onSuccess = { _, result ->
+                    if (result is SuccessResult) {
+                        val img = result.image
+                        AppLog.d("Detail", "coilLoad: 成功 key=$tag image尺寸=${img.width}x${img.height}")
+                    }
+                },
+                onError = { _, result ->
+                    AppLog.e("Detail", "coilLoad: 失败 key=$tag error=${(result as? ErrorResult)?.throwable?.message}")
+                }
+            )
         }
     }
 
