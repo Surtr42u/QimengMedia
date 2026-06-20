@@ -172,9 +172,11 @@ class ZoomImageView @JvmOverloads constructor(
         if (width > 0 && height > 0) {
             resetZoom()
         } else {
+            com.qimeng.media.core.AppLog.d("Detail", "setImageDrawable: view未就绪,注册onPreDraw延迟resetZoom view=${width}x${height}")
             viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
                     viewTreeObserver.removeOnPreDrawListener(this)
+                    com.qimeng.media.core.AppLog.d("Detail", "onPreDraw触发: view=${width}x${height} drawable=${lastDrawableWidth}x${lastDrawableHeight}")
                     if (width > 0 && height > 0) resetZoom()
                     return true
                 }
@@ -264,7 +266,9 @@ class ZoomImageView @JvmOverloads constructor(
 
     fun resetZoom() {
         configureBaseMatrix()
+        val oldMatrix = android.graphics.Matrix(imageMatrix)
         imageMatrix = drawMatrix
+        com.qimeng.media.core.AppLog.d("Detail", "resetZoom: scaleType=$scaleType drawMatrix=$drawMatrix 旧imageMatrix=$oldMatrix 新imageMatrix=${imageMatrix} drawable=${lastDrawableWidth}x${lastDrawableHeight} view=${width}x${height}")
     }
 
     fun preserveCurrentScreenRect() {
