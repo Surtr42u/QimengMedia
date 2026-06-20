@@ -112,7 +112,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 val result = scanUseCase.scanDirectory(uri, displayName)
                 scannedMedia = result.mediaFiles
                 _scanStatus.value = when (result) {
-                    is ScanResult.Success -> ScanStatus.Success(result.count, result.directoryCount)
+                    is ScanResult.Success -> ScanStatus.Success(result.count, result.directoryCount, result.warning)
                     is ScanResult.Error -> ScanStatus.Error(result.message)
                 }
             } finally {
@@ -158,7 +158,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 val result = scanUseCase.scanCosDirectory(uri, displayName)
                 cosScanMedia = result.mediaFiles
                 _scanStatus.value = when (result) {
-                    is ScanResult.Success -> ScanStatus.Success(result.count, result.directoryCount)
+                    is ScanResult.Success -> ScanStatus.Success(result.count, result.directoryCount, result.warning)
                     is ScanResult.Error -> ScanStatus.Error(result.message)
                 }
             } finally {
@@ -283,6 +283,13 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             // 清理对应的blocks和URI数据
             authorImportUseCase.removeImportedTxtBlocks(fileName)
             authorImportUseCase.removeImportedTxtUri(fileName)
+            // 删除 TXT 后从剩余 TXT 重建关联，清理该 TXT 产生的残留 crossRef
+            try {
+                authorImportUseCase.rebuildAssociationsFromBlocks(scanUseCase)
+            } catch (e: Exception) {
+                AppLog.d("AuthorImport", "removeTxt rebuild failed: ${e.message}")
+            }
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -343,6 +350,14 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             )
             withContext(Dispatchers.Main) { onComplete() }
         }
+    }
+
+    /**
+     * 获取备份目录 URI（v1.7：自定义导出报告使用）。
+     * @return 备份目录 URI 字符串，未设置时返回 null
+     */
+    suspend fun getBackupDirectoryUri(): String? = withContext(Dispatchers.IO) {
+        repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
     }
 
     // ===== 标签管理（保留在 ViewModel）=====
@@ -482,6 +497,6 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 sealed class ScanStatus {
     data object Idle : ScanStatus()
     data object Running : ScanStatus()
-    data class Success(val count: Int, val directoryCount: Int = 1) : ScanStatus()
+    data class Success(val count: Int, val directoryCount: Int = 1, val warning: String? = null) : ScanStatus()
     data class Error(val message: String) : ScanStatus()
 }

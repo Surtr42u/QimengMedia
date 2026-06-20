@@ -126,10 +126,11 @@
 
 TXT 导入时，解析后的结构化数据（AuthorBlock 列表）会序列化为 JSON 保存到 settings 表（key 为 `imported_txt_blocks_<fileName>`），用于后续重新匹配；同时保存 TXT 文件的 URI（key 为 `imported_txt_uri_<fileName>`），用于刷新时重新读取文件：
 
-- **扫描新文件时自动匹配**：常规扫描（scanDirectory/refreshScanSource）完成后，自动调用 `rematchAllTxtImports()`，将所有已导入 TXT 的作品名与当前库中的非 COS 文件重新匹配，确保新扫描的文件也能被关联到已有作者。
-- **TXT 导入时更新关联**：重复导入同一 TXT 时，upsert 机制保证不会重复创建作者和关联；同时先删除旧 crossRef 再插入新的，避免匹配规则变更后旧数据残留。
-- **刷新按钮逻辑**：点击已导入 TXT 的刷新按钮时，先尝试从保存的 URI 重新读取文件内容（方案 A），成功则用新内容重新导入；若 URI 不可访问（权限丢失/文件移动），则降级为用已保存的 blocks 数据重新匹配当前库中文件（方案 B）。不再弹出文件选择器。
-- **删除 TXT 时清理数据**：`removeImportedTxtFile` 同时删除对应的 blocks 数据和 URI 数据。
+- **统一重建语义**：导入、刷新、删除、扫描四个入口的作者关联重建，全部委托 `AuthorImportUseCase.rebuildAssociationsFromBlocks()` 从**全部已导入 TXT** 统一重建关联（遍历全部 TXT 的 blocks → 匹配当前库非 COS 文件 → upsertAllAuthors + deleteCrossRefsByAuthorIds(全部相关作者) + upsertAllAuthorMedia）。因为先删全部相关作者旧关联再插全量新关联，跨 TXT 同名作者关联 = 所有 TXT 该作者匹配文件并集，不会被单 TXT 的"删旧插新"覆盖。这修复了"先扫描文件后导入多个 TXT 时某作者关联被清空为 0"的问题（根因：旧的单 TXT 导入只收集当前 TXT 关联却删该作者全部旧 crossRef，导致别的 TXT 给该作者建的关联被覆盖）。
+- **扫描新文件时自动匹配**：常规扫描（scanDirectory/refreshScanSource）完成后，自动调用 `rematchAllTxtImports()`（内部委托 `rebuildAssociationsFromBlocks`），将所有已导入 TXT 的作品名与当前库中的非 COS 文件重新匹配，确保新扫描的文件也能被关联到已有作者。
+- **TXT 导入时更新关联**：`importAuthorsFromText` 块格式分支先 `saveTxtBlocks` + `addImportedTxtFile`，再调用 `rebuildAssociationsFromBlocks` 从全部 TXT 重建关联。重复导入同一 TXT 时，upsert 机制保证不会重复创建作者和关联；同一名作者出现在多个 TXT 中关联取并集。格式 C（纯作者名列表）只创建作者不关联文件，不触发重建。
+- **刷新按钮逻辑**：点击已导入 TXT 的刷新按钮时，先尝试从保存的 URI 重新读取文件内容（方案 A），成功则用新内容重新导入（走 `importAuthorsFromText` 重建）；若 URI 不可访问（权限丢失/文件移动），则降级为 `rematchSingleTxtImport`（方案 B，内部委托 `rebuildAssociationsFromBlocks` 用已保存 blocks 重新匹配）。不再弹出文件选择器。
+- **删除 TXT 时清理关联**：`removeImportedTxtFile` 先从列表移除该 TXT 并清理对应的 blocks 和 URI 数据，再调用 `rebuildAssociationsFromBlocks` 从剩余 TXT 重建关联，自动清掉被删 TXT 产生的残留 crossRef（否则删 TXT 后该 TXT 的关联仍残留在库中导致显示偏多）。
 - **COS 扫描不触发 rematch**：COS 作者关联是扫描时直接创建的，不依赖 TXT 导入。
 - **自动刷新不触发 rematch**：`autoRefreshAllSources` 是静默操作，不触发重新匹配以避免性能开销。
 
@@ -436,4 +437,4 @@ COS根目录/
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_BACKUP.md`
 
-> 最后更新：2026-06-08
+> 最后更新：2026-06-20

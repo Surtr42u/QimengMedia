@@ -13,37 +13,25 @@ import com.qimeng.media.data.repository.LocalMediaRepository
 class AuthorImportUseCase(
     private val repository: LocalMediaRepository
 ) {
-    /** 从文本导入作者，支持块格式和简单行格式 */
+    /** 从文本导入作者，支持块格式和简单行格式。
+     *
+     * 块格式（A/B）：先保存当前 TXT 的 blocks 到 settings 表，再调用 [rebuildAssociationsFromBlocks]
+     * 从**全部已导入 TXT** 统一重建作者关联。这样跨 TXT 的同名作者关联不会被当前 TXT 的"删旧插新"覆盖，
+     * 避免先扫描文件后导入 TXT 时某作者关联被清空为 0 的问题。
+     * 简单行格式（C）：只创建作者，不关联文件，不触发重建。 */
     suspend fun importAuthorsFromText(text: String, fileName: String = "", scanUseCase: ScanUseCase) {
         cleanupFileNameAuthors()
         val now = System.currentTimeMillis()
-        val nonCosKeysAndNames = repository.getNonCosKeysAndFileNames()
         val blocks = parseAuthorBlocks(text)
-        AppLog.d("AuthorImport", "importFromText: fileName=$fileName, blocks=${blocks.size}, nonCosMedia=${nonCosKeysAndNames.size}")
+        AppLog.d("AuthorImport", "importFromText: fileName=$fileName, blocks=${blocks.size}")
         if (blocks.isNotEmpty()) {
-            val authorEntities = mutableListOf<AuthorEntity>()
-            val crossRefs = mutableListOf<AuthorMediaCrossRef>()
-            for (block in blocks) {
-                val validNames = block.authorNames.filter { !looksLikeFileName(it) }
-                if (validNames.isEmpty()) continue
-                val primaryName = validNames.first()
-                val displayName = validNames.joinToString(" / ")
-                val authorId = scanUseCase.generateAuthorId(primaryName)
-                authorEntities.add(AuthorEntity(authorId = authorId, displayName = displayName, createdAtMillis = now, updatedAtMillis = now))
-                AppLog.d("AuthorImport", "importFromText: author=[$displayName] authorId=$authorId works=${block.works.size}")
-                for (workName in block.works) {
-                    val matched = findMatchingMediaLight(workName, nonCosKeysAndNames)
-                    for (media in matched) {
-                        crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = media.recordKey, fileName = media.fileName, isMatched = true))
-                    }
-                }
-                AppLog.d("AuthorImport", "importFromText: author=[$displayName] totalCrossRefs=${crossRefs.size}")
+            // 先保存当前 TXT 的 blocks，使重建能读到它
+            if (fileName.isNotBlank()) {
+                saveTxtBlocks(fileName, blocks)
+                addImportedTxtFile(fileName)
             }
-            repository.upsertAllAuthors(authorEntities)
-            // 先删除这些作者的旧 crossRef，再插入新的
-            repository.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
-            repository.upsertAllAuthorMedia(crossRefs)
-            AppLog.d("AuthorImport", "importFromText: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
+            // 从全部已导入 TXT 重建关联（含当前 TXT），跨 TXT 同名作者关联取并集
+            rebuildAssociationsFromBlocks(scanUseCase)
         } else {
             val authorEntities = text.lines()
                 .map { it.trim() }
@@ -53,10 +41,10 @@ class AuthorImportUseCase(
                     AuthorEntity(authorId = authorId, displayName = line, createdAtMillis = now, updatedAtMillis = now)
                 }
             repository.upsertAllAuthors(authorEntities)
-        }
-        if (fileName.isNotBlank()) {
-            saveTxtBlocks(fileName, blocks)
-            addImportedTxtFile(fileName)
+            if (fileName.isNotBlank()) {
+                saveTxtBlocks(fileName, blocks)
+                addImportedTxtFile(fileName)
+            }
         }
     }
 
@@ -160,58 +148,24 @@ class AuthorImportUseCase(
     }
 
     /** 重新匹配单个已导入的TXT文件与当前库中的非COS文件
-     *  用于刷新时：URI 读取失败时的降级方案，用已保存的 blocks 重新匹配 */
+     *  用于刷新时：URI 读取失败时的降级方案，用已保存的 blocks 重新匹配。
+     *
+     *  实际委托 [rebuildAssociationsFromBlocks] 从全部已导入 TXT 重建关联，
+     *  避免单 TXT 删旧插新覆盖跨 TXT 同名作者关联。 */
     suspend fun rematchSingleTxtImport(fileName: String, scanUseCase: ScanUseCase) {
         val blocks = loadTxtBlocks(fileName)
         if (blocks.isEmpty()) return
-
-        val nonCosKeysAndNames = repository.getNonCosKeysAndFileNames()
-        if (nonCosKeysAndNames.isEmpty()) return
-
-        AppLog.d("AuthorImport", "rematchSingle: txt=$fileName blocks=${blocks.size} media=${nonCosKeysAndNames.size}")
-
-        val now = System.currentTimeMillis()
-        val authorEntities = mutableListOf<AuthorEntity>()
-        val crossRefs = mutableListOf<AuthorMediaCrossRef>()
-
-        for (block in blocks) {
-            val validNames = block.authorNames.filter { !looksLikeFileName(it) }
-            if (validNames.isEmpty()) continue
-            val primaryName = validNames.first()
-            val displayName = validNames.joinToString(" / ")
-            val authorId = scanUseCase.generateAuthorId(primaryName)
-            authorEntities.add(AuthorEntity(authorId = authorId, displayName = displayName, createdAtMillis = now, updatedAtMillis = now))
-            for (workName in block.works) {
-                val matched = findMatchingMediaLight(workName, nonCosKeysAndNames)
-                for (media in matched) {
-                    crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = media.recordKey, fileName = media.fileName, isMatched = true))
-                }
-            }
-        }
-
-        if (authorEntities.isNotEmpty()) {
-            repository.upsertAllAuthors(authorEntities)
-            repository.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
-        }
-        if (crossRefs.isNotEmpty()) {
-            repository.upsertAllAuthorMedia(crossRefs)
-        }
-
-        AppLog.d("AuthorImport", "rematchSingle: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
+        AppLog.d("AuthorImport", "rematchSingle: txt=$fileName blocks=${blocks.size}, delegate to rebuild")
+        rebuildAssociationsFromBlocks(scanUseCase)
     }
 
     /** 重新匹配所有已导入的TXT文件与当前库中的非COS文件
-     *  在扫描新文件后调用，确保新文件也能被关联到已有TXT导入的作者
-     */
+     *  在扫描新文件后调用，确保新文件也能被关联到已有TXT导入的作者。
+     *  实际委托 [rebuildAssociationsFromBlocks] 执行全量重建。 */
     suspend fun rematchAllTxtImports(scanUseCase: ScanUseCase) {
         val txtFileNames = getImportedTxtFileNames()
         if (txtFileNames.isEmpty()) return
-
-        val nonCosKeysAndNames = repository.getNonCosKeysAndFileNames()
-        if (nonCosKeysAndNames.isEmpty()) return
-
-        AppLog.d("AuthorImport", "rematchAllTxtImports: ${txtFileNames.size} txt files, ${nonCosKeysAndNames.size} media files")
-
+        AppLog.d("AuthorImport", "rematchAllTxtImports: ${txtFileNames.size} txt files")
         // 诊断：打印所有已导入 TXT 的 blocks 内容
         for (fileName in txtFileNames) {
             val blocks = loadTxtBlocks(fileName)
@@ -220,6 +174,27 @@ class AuthorImportUseCase(
                 AppLog.d("AuthorImport", "rematch: block[$idx] authors=${block.authorNames} works=${block.works.take(5)}${if (block.works.size > 5) "...+${block.works.size - 5}" else ""}")
             }
         }
+        rebuildAssociationsFromBlocks(scanUseCase)
+    }
+
+    /** 从全部已导入 TXT 的 blocks 统一重建作者与文件关联。
+     *
+     *  统一重建入口，被以下场景复用，确保跨 TXT 同名作者的关联取并集、不被单 TXT 删旧插新覆盖：
+     *  - TXT 导入完成（[importAuthorsFromText] 块格式分支）
+     *  - TXT 刷新降级（[rematchSingleTxtImport]）
+     *  - 常规扫描完成（[rematchAllTxtImports] → 本方法）
+     *  - 删除 TXT 后清理残留（[com.qimeng.media.ui.library.MediaLibraryViewModel.removeImportedTxtFile]）
+     *
+     *  逻辑：遍历全部已导入 TXT 的 blocks → 每块生成 AuthorEntity + 用 [findMatchingMediaLight] 匹配当前库非 COS 文件 →
+     *  统一 upsertAllAuthors + deleteCrossRefsByAuthorIds(全部相关作者) + upsertAllAuthorMedia(全部 crossRef)。
+     *  因为先删全部相关作者旧关联再插全量新关联，跨 TXT 同名作者关联 = 所有 TXT 该作者匹配文件并集，不会丢。 */
+    suspend fun rebuildAssociationsFromBlocks(scanUseCase: ScanUseCase) {
+        val txtFileNames = getImportedTxtFileNames()
+        if (txtFileNames.isEmpty()) return
+        val nonCosKeysAndNames = repository.getNonCosKeysAndFileNames()
+        if (nonCosKeysAndNames.isEmpty()) return
+
+        AppLog.d("AuthorImport", "rebuild: ${txtFileNames.size} txt files, ${nonCosKeysAndNames.size} media files")
 
         val now = System.currentTimeMillis()
         val authorEntities = mutableListOf<AuthorEntity>()
@@ -245,14 +220,14 @@ class AuthorImportUseCase(
 
         if (authorEntities.isNotEmpty()) {
             repository.upsertAllAuthors(authorEntities)
-            // 先删除这些作者的旧 crossRef，再插入新的（避免前缀匹配改为完整匹配后旧数据残留）
+            // 先删除这些作者的旧 crossRef，再插入新的（避免匹配规则变更后旧数据残留）
             repository.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
         }
         if (crossRefs.isNotEmpty()) {
             repository.upsertAllAuthorMedia(crossRefs)
         }
 
-        AppLog.d("AuthorImport", "rematchAllTxtImports: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
+        AppLog.d("AuthorImport", "rebuild: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
     }
 
     /** 获取所有已导入的TXT文件名列表 */
