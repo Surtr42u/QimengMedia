@@ -588,9 +588,13 @@ class MediaDetailFragment : Fragment() {
 
         val loader = SingletonImageLoader.get(requireContext())
         val memoryComfortable = isMemoryComfortable()
-        val extra = if (memoryComfortable) 1 else 0
-        val backCount = 1 + extra   // 基础1 + 充裕1
-        val forwardCount = 2 + extra // 基础2 + 充裕1
+        // 超大图(长边>4096)原图体积大(8192≈150MB/张)，预渲染过多会 OOM。
+        // 当前图是超大图时收紧预渲染范围（1前1后），否则维持基础 1前2后 / 内存充裕 2前3后。
+        val currentLongside = mediaList.getOrNull(index)?.let { maxOf(it.width ?: 0, it.height ?: 0) } ?: 0
+        val isHugeImage = currentLongside > HUGE_IMAGE_THRESHOLD
+        val extra = if (memoryComfortable && !isHugeImage) 1 else 0
+        val backCount = if (isHugeImage) 1 else 1 + extra   // 超大图1前 / 普通1+充裕1
+        val forwardCount = if (isHugeImage) 1 else 2 + extra // 超大图1后 / 普通2+充裕1
 
         val start = maxOf(0, index - backCount)
         val end = minOf(mediaList.lastIndex, index + forwardCount)
@@ -613,7 +617,7 @@ class MediaDetailFragment : Fragment() {
             enqueued++
         }
         // Coil 内部缓存去重：已命中的项 enqueue 会直接跳过不解码，enqueued 为本轮新入队数（不含命中的）
-        AppLog.d("Detail", "preload: 范围[$start..$end] 当前=$index 内存充裕=$memoryComfortable 入队=$enqueued")
+        AppLog.d("Detail", "preload: 范围[$start..$end] 当前=$index 内存充裕=$memoryComfortable 超大图=$isHugeImage 入队=$enqueued")
     }
 
     private suspend fun loadVideoFrame(uriString: String): Bitmap? = withContext(Dispatchers.IO) {
@@ -1259,6 +1263,8 @@ class MediaDetailFragment : Fragment() {
         private const val PAGE_SIZE = 40
         /** 距离边界多少项时触发预加载更多 */
         private const val LOAD_MORE_THRESHOLD = 5
+        /** 超大图阈值：长边超过此值视为超大图，预渲染范围收紧(1前1后)防 OOM */
+        private const val HUGE_IMAGE_THRESHOLD = 4096
 
         fun newInstance(recordKey: String) = MediaDetailFragment().apply {
             arguments = Bundle().apply { putString(ARG_RECORD_KEY, recordKey) }

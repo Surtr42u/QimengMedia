@@ -57,6 +57,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | `Profile` | 数据管理页面操作 |
 | `QimengMedia` | 全局异常、Application 生命周期、内存回收（onTrimMemory） |
 | `ANRWatchdog` | 主线程 ANR 监控（idle 识别 + 冻结自检后仅真卡才记录） |
+| `GpuInfo` | GPU 纹理上限探测（`GPU纹理上限=N 设备=xxx GPU=xxx`，启动时记录一次） |
 | `LargeImage` | 大图解码逐级回退路径（libspng/decodeFileDescriptor/decodeStream 命中或回退 Coil） |
 | `Zoom` | ZoomImageView 反射检测异常（仅非预期异常才记录，正常 NoSuchField 静默） |
 
@@ -90,9 +91,11 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | 扫描 600 文件 | < 5s | > 15s | `Scan`/`CosScan` |
 | 缩略图首屏加载 | < 500ms | > 2s | `Detail` |
 | 详情页图片解码 | < 1s | > 3s | `Detail` |
+| 详情页图片绘制（切图渲染层） | HARDWARE < 10ms / SOFTWARE 30~100ms | SOFTWARE > 200ms | `Detail`（`configureBaseMatrix` 时间间隔；智能分层后 4096 图走 HARDWARE ~5ms） |
 | 视频帧截取 | < 500ms/帧 | > 2s/帧 | `Detail` |
 | 数据库批量写入 500 条 | < 200ms | > 1s | `Scan` |
 | 内存占用（缩略图列表） | < 200MB | > 400MB | Profiler |
+| 内存占用（详情页浏览超大原图） | < 600MB | > 1GB（靠 LRU+onTrimMemory 不崩即可） | Profiler（放开 maxBitmapSize 后浏览 8192 原图 Native Heap 峰值 ~900MB） |
 | Coil 内存缓存命中率 | > 60% | < 30% | `Detail`（`showImage: 命中内存缓存`/`缓存未命中，异步解码` 计数统计） |
 
 ### 性能问题快速定位

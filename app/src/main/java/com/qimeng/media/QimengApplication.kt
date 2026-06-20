@@ -2,6 +2,8 @@ package com.qimeng.media
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import android.content.pm.ApplicationInfo
+import android.os.StrictMode
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -12,10 +14,14 @@ import coil3.video.VideoFrameDecoder
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
+import coil3.request.maxBitmapSize
+import coil3.size.Size
 import coil3.SingletonImageLoader
 import okio.Path.Companion.toOkioPath
 import com.qimeng.media.core.AppContainer
 import com.qimeng.media.core.AppLog
+import com.qimeng.media.core.AnrWatchdog
+import com.qimeng.media.core.GpuInfo
 import com.qimeng.media.scan.MediaStoreObserver
 import com.qimeng.media.scan.MediaStoreScanner
 import kotlinx.coroutines.CoroutineScope
@@ -27,15 +33,27 @@ class QimengApplication : Application() {
     val appContainer: AppContainer by lazy { AppContainer(this) }
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     lateinit var mediaStoreObserver: MediaStoreObserver
+    private lateinit var anrWatchdog: AnrWatchdog
 
     override fun onCreate() {
         super.onCreate()
         // 初始化文件日志（用于 logcat 不可读的设备）
         AppLog.init(this)
 
-        // 全局异常处理：防止未捕获异常导致闪退
+        // v1.7：Debug 构建开启 StrictMode，早发现主线程 IO/网络违规
+        if (isDebugBuild()) {
+            enableStrictMode()
+        }
+
+        // v1.7：启动 ANR 监控（主线程阻塞 5 秒记录到 AppLog）
+        anrWatchdog = AnrWatchdog()
+        anrWatchdog.start()
+
+        // 全局异常处理：记录日志后委托给系统默认处理器，避免吞掉异常导致主线程静默死亡（ANR）
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             AppLog.e("QimengMedia", "Uncaught exception on ${thread.name}", throwable)
+            defaultHandler?.uncaughtException(thread, throwable)
         }
 
         // 初始化 MediaStoreObserver
@@ -46,11 +64,16 @@ class QimengApplication : Application() {
             scope = applicationScope
         )
 
+        // 放开 maxBitmapSize 到 GPU 纹理上限（默认 Coil 限制 4096，会让 8192 等超大图降采样，
+        // 偏离"详情页始终显示原图"设计）。探测值来自 GpuInfo（实测 Adreno 750=16384）。
+        // 探测失败回退 4096（与原默认一致，不更差）。启动时同步探测一次（几十 ms，可接受）。
+        val gpuMax = GpuInfo.maxTextureSize(this)
         val imageLoader = ImageLoader.Builder(this)
             .components {
                 add(AnimatedImageDecoder.Factory())
                 add(VideoFrameDecoder.Factory())
             }
+            .maxBitmapSize(Size(gpuMax, gpuMax))
             .memoryCachePolicy(CachePolicy.ENABLED)
             .memoryCache {
                 MemoryCache.Builder()
@@ -112,5 +135,36 @@ class QimengApplication : Application() {
                 }
             }
         }
+    }
+
+    /** 判断当前是否为 Debug 构建（通过 ApplicationInfo.FLAG_DEBUGGABLE，无需 BuildConfig） */
+    private fun isDebugBuild(): Boolean {
+        return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
+    /**
+     * v1.7：Debug 模式开启 StrictMode，检测主线程 IO/网络违规。
+     * - 仅 Debug 构建生效，Release 不受影响
+     * - 检测到违规时打印日志到 logcat（penaltyLog），不弹窗（penaltyDialog 干扰调试）
+     * - 不使用 penaltyDeath() 避免调试时频繁崩溃
+     */
+    private fun enableStrictMode() {
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .detectNetwork()
+                .penaltyLog()
+                .build()
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedSqlLiteObjects()
+                .detectLeakedClosableObjects()
+                .detectActivityLeaks()
+                .penaltyLog()
+                .build()
+        )
+        AppLog.d("QimengMedia", "StrictMode enabled (Debug build)")
     }
 }
