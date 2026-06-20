@@ -333,7 +333,11 @@ class ZoomImageView @JvmOverloads constructor(
             val childField = drawable.javaClass.getDeclaredField("child")
             childField.isAccessible = true
             if (childField.get(drawable) is android.graphics.drawable.AnimatedImageDrawable) return true
-        } catch (e: Exception) { com.qimeng.media.core.AppLog.d("Zoom", "checkAnimatedDrawable failed: ${e.message}") }
+        } catch (e: NoSuchFieldException) {
+            // 预期路径：非 Coil ScaleDrawable 的普通 Drawable（如 BitmapDrawable）没有 child 字段，静默
+        } catch (e: Exception) {
+            com.qimeng.media.core.AppLog.d("Zoom", "checkAnimatedDrawable 异常: ${e.message}")
+        }
         return false
     }
 

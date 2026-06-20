@@ -84,22 +84,39 @@ object LargeImageDecoder {
             // PNG 优先尝试 libspng（比系统 libpng 快 2-3 倍）
             if (isPng && SpngDecoder.isAvailable) {
                 val bitmap = SpngDecoder.decodePng(context, uri)
-                if (bitmap != null) return@withContext bitmap
-                // libspng 失败，静默回退到 BitmapFactory
+                if (bitmap != null) {
+                    AppLog.d(TAG, "解码路径=libspng key=$recordKey 尺寸=${bitmap.width}x${bitmap.height}")
+                    return@withContext bitmap
+                }
+                AppLog.d(TAG, "libspng失败回退BitmapFactory key=$recordKey")
+            } else if (isPng) {
+                AppLog.d(TAG, "PNG但libspng不可用，走BitmapFactory key=$recordKey")
             }
 
             // 通用路径：decodeFileDescriptor（比 Coil 的 decodeStream 更快）
-            decodeWithFileDescriptor(context, uri)
-        } catch (_: Exception) {
+            val fdBitmap = decodeWithFileDescriptor(context, uri)
+            if (fdBitmap != null) {
+                AppLog.d(TAG, "解码路径=decodeFileDescriptor key=$recordKey 尺寸=${fdBitmap.width}x${fdBitmap.height}")
+                return@withContext fdBitmap
+            }
+            AppLog.d(TAG, "decodeFileDescriptor失败，回退decodeStream key=$recordKey")
+            null
+        } catch (e: Exception) {
             // 回退到 BitmapFactory.decodeStream
+            AppLog.d(TAG, "解码异常回退decodeStream key=$recordKey err=${e.javaClass.simpleName}")
             try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
+                val streamBitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
                     BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply {
                         inPreferredConfig = Bitmap.Config.ARGB_8888
                         inMutable = false
                     })
                 }
-            } catch (_: Exception) {
+                if (streamBitmap != null) {
+                    AppLog.d(TAG, "解码路径=decodeStream(异常回退) key=$recordKey 尺寸=${streamBitmap.width}x${streamBitmap.height}")
+                }
+                streamBitmap
+            } catch (e2: Exception) {
+                AppLog.w(TAG, "全部解码路径失败 key=$recordKey err=${e2.javaClass.simpleName}")
                 null
             }
         } finally {
@@ -165,6 +182,7 @@ object LargeImageDecoder {
     /**
      * 构建预加载 ImageRequest（供 preloadAround 使用）。
      * 使用 Coil 标准流程，自动利用内存/磁盘缓存。
+     * 视频帧取首帧（0ms）而非 3 秒帧，避免 seek 开销（详见 GUIDE_DEBUG.md 性能约束）。
      */
     fun buildPreloadRequest(
         context: Context,
@@ -182,7 +200,7 @@ object LargeImageDecoder {
             .apply {
                 if (isVideo) {
                     decoderFactory(VideoFrameDecoder.Factory())
-                    videoFrameMillis(3_000)
+                    videoFrameMillis(0)
                 }
                 if (isGif) {
                     bitmapConfig(Bitmap.Config.ARGB_8888)

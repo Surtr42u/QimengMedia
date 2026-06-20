@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -36,12 +37,14 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import coil3.SingletonImageLoader
+import coil3.asImage
 import coil3.gif.AnimatedImageDecoder
 import coil3.load
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.request.bitmapConfig
 import coil3.request.crossfade
+import coil3.request.placeholder
 import coil3.size.Size
 import coil3.video.VideoFrameDecoder
 import coil3.video.videoFrameMillis
@@ -62,12 +65,14 @@ import com.qimeng.media.databinding.FragmentMediaDetailBinding
 import com.qimeng.media.ui.browser.MediaBrowserLogic
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.widget.dp
+import com.qimeng.media.ui.widget.addPressAnimation
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -94,6 +99,13 @@ class MediaDetailFragment : Fragment() {
     private var isVideoPlaying = false
     private var exoPlayer: ExoPlayer? = null
     private var videoPreviewJob: Job? = null
+
+    // --- 分页加载（问题4）：详情页初始加载 PAGE_SIZE 个，滑动接近边界时增量加载 ---
+    private var sourceKeys: List<String> = emptyList()
+    private var sourceByKey: Map<String, MediaFileEntity> = emptyMap()
+    private var loadedStartIndex = 0   // mediaList[0] 在 sourceKeys 中的起始索引
+    private var totalSourceCount = 0   // 推荐列表总数（用于显示 "index/total"）
+    private var hasPagination = false  // 是否启用分页（sourceKeys 非空时启用）
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -173,6 +185,16 @@ class MediaDetailFragment : Fragment() {
         binding.detailTagBtn.setOnClickListener { showTagSheet() }
         binding.detailJumpBtn.setOnClickListener { showJumpSheet() }
 
+        // 按钮按下反馈动画（Material 3 Expressive 微交互）
+        listOf(
+            binding.detailBackButton,
+            binding.detailInfoButton,
+            binding.detailLikeBtn,
+            binding.detailFavoriteBtn,
+            binding.detailTagBtn,
+            binding.detailJumpBtn
+        ).forEach { it.addPressAnimation() }
+
         binding.detailImageView.onSingleTap = { toggleChrome() }
         binding.detailImageView.onSwipe = { moveBy(it) }
         binding.videoPlayButton.setOnClickListener {
@@ -211,16 +233,44 @@ class MediaDetailFragment : Fragment() {
         val key = startRecordKey ?: run { parentFragmentManager.popBackStack(); return }
         viewLifecycleOwner.lifecycleScope.launch {
             val allMedia = viewModel.allMedia.firstOrNull().orEmpty()
-            val sourceKeys = (requireActivity() as? MainActivity).orEmptySourceKeys()
+            val srcKeys = (requireActivity() as? MainActivity).orEmptySourceKeys()
             val byKey = allMedia.associateBy { it.recordKey }
-            mediaList = if (sourceKeys.isNotEmpty()) {
-                sourceKeys.mapNotNull { byKey[it] }
+
+            sourceByKey = byKey
+
+            if (srcKeys.isNotEmpty()) {
+                // 启用分页：从点击项开始加载 PAGE_SIZE 个
+                sourceKeys = srcKeys
+                totalSourceCount = srcKeys.size
+                hasPagination = true
+
+                val startIndex = srcKeys.indexOf(key)
+                if (startIndex >= 0) {
+                    loadedStartIndex = startIndex
+                    val end = minOf(srcKeys.size, startIndex + PAGE_SIZE)
+                    mediaList = srcKeys.subList(startIndex, end).mapNotNull { byKey[it] }
+                } else {
+                    // key 不在 sourceKeys 中，回退为仅显示该项
+                    mediaList = allMedia.find { it.recordKey == key }?.let { listOf(it) }.orEmpty()
+                    sourceKeys = mediaList.map { it.recordKey }
+                    loadedStartIndex = 0
+                    totalSourceCount = mediaList.size
+                    hasPagination = false
+                }
             } else {
-                allMedia
+                // 无 sourceKeys，使用全部媒体（不分页）
+                sourceKeys = allMedia.map { it.recordKey }
+                totalSourceCount = allMedia.size
+                hasPagination = false
+                mediaList = allMedia
             }
 
             if (mediaList.none { it.recordKey == key }) {
                 mediaList = allMedia.find { it.recordKey == key }?.let { listOf(it) }.orEmpty()
+                sourceKeys = mediaList.map { it.recordKey }
+                loadedStartIndex = 0
+                totalSourceCount = mediaList.size
+                hasPagination = false
             }
 
             if (mediaList.isEmpty()) {
@@ -234,6 +284,48 @@ class MediaDetailFragment : Fragment() {
     }
 
     private fun MainActivity?.orEmptySourceKeys(): List<String> = this?.currentDetailSourceRecordKeys().orEmpty()
+
+    // --- 分页加载（问题4）：接近边界时增量加载，避免一次性加载全部 ---
+
+    /** 向后加载更多（追加到 mediaList 末尾） */
+    private fun loadMoreForward() {
+        if (!hasPagination) return
+        val loadedEnd = loadedStartIndex + mediaList.size
+        if (loadedEnd >= sourceKeys.size) return
+        val newEnd = minOf(sourceKeys.size, loadedEnd + PAGE_SIZE)
+        val newItems = sourceKeys.subList(loadedEnd, newEnd).mapNotNull { sourceByKey[it] }
+        if (newItems.isNotEmpty()) {
+            mediaList = mediaList + newItems
+            AppLog.d("MediaDetail", "分页向后加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
+        }
+    }
+
+    /** 向前加载更多（插入到 mediaList 开头，需调整 currentIndex） */
+    private fun loadMoreBackward() {
+        if (!hasPagination || loadedStartIndex == 0) return
+        val newStart = maxOf(0, loadedStartIndex - PAGE_SIZE)
+        val offset = loadedStartIndex - newStart
+        val newItems = sourceKeys.subList(newStart, loadedStartIndex).mapNotNull { sourceByKey[it] }
+        if (newItems.isNotEmpty()) {
+            mediaList = newItems + mediaList
+            currentIndex += offset
+            loadedStartIndex = newStart
+            AppLog.d("MediaDetail", "分页向前加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
+        }
+    }
+
+    /** 检查是否需要加载更多数据（接近边界时触发） */
+    private fun loadMoreIfNeeded() {
+        if (!hasPagination) return
+        // 向后：距离末尾不足阈值时加载
+        if (currentIndex >= mediaList.size - LOAD_MORE_THRESHOLD) {
+            loadMoreForward()
+        }
+        // 向前：距离开头不足阈值且前面还有数据时加载
+        if (currentIndex <= LOAD_MORE_THRESHOLD - 1 && loadedStartIndex > 0) {
+            loadMoreBackward()
+        }
+    }
 
     private fun showMediaAt(index: Int, updatePreviousDuration: Boolean = true) {
         if (index !in mediaList.indices) return
@@ -250,7 +342,12 @@ class MediaDetailFragment : Fragment() {
         currentRecordKey = media.recordKey
         enterTimeMillis = System.currentTimeMillis()
 
-        binding.detailFileName.text = "%d/%d".format(index + 1, mediaList.size)
+        // 分页加载：接近边界时增量加载新数据
+        loadMoreIfNeeded()
+
+        // 显示 "实际位置/总数"（分页时 totalSourceCount 为推荐列表总数）
+        val displayIndex = loadedStartIndex + currentIndex + 1
+        binding.detailFileName.text = "%d/%d".format(displayIndex, totalSourceCount)
         updateLikeButton()
         updateFavoriteButton()
         observeTags(media.recordKey)
@@ -276,30 +373,61 @@ class MediaDetailFragment : Fragment() {
         binding.videoPlayButton.isVisible = false
         binding.detailBottomDock.isVisible = chromeVisible
         binding.detailImageView.isVisible = true
-        binding.detailImageView.setImageDrawable(null)
+        // 保留旧画面作为 placeholder，避免切换瞬间闪白
         binding.detailImageView.setBackgroundColor(0)
         val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
         val isPng = media.fileName.substringAfterLast('.', "").equals("png", ignoreCase = true)
-        // 优先用 LargeImageDecoder 直接解码（PNG 用 libspng，其他用 decodeFileDescriptor），
-        // 失败时回退到 Coil 标准流程
+
+        // 主线程同步检查 Coil 内存缓存：命中则直接 Coil load，跳过 LargeImageDecoder 的 IO 线程切换
+        // （40MB+ 超大图场景下，线程切换开销 13-34ms，同步命中可零延迟显示）
+        // Coil 的 LruCache 是线程安全的，主线程读取安全
+        if (isCoilMemoryCacheHit(media.recordKey)) {
+            AppLog.d("Detail", "showImage: 命中内存缓存 key=${media.recordKey} gif=$isGif")
+            loadOriginalImageWithCoil(media, isGif)
+            return
+        }
+
+        // 缓存未命中，异步解码（PNG 用 libspng，其他用 decodeFileDescriptor），解码成功写入缓存 + setImageBitmap；
+        // 解码失败回退 Coil 标准流程
+        AppLog.d("Detail", "showImage: 缓存未命中，异步解码 key=${media.recordKey} png=$isPng gif=$isGif")
         viewLifecycleOwner.lifecycleScope.launch {
+            val startMs = SystemClock.uptimeMillis()
             val bitmap = LargeImageDecoder.decodeCurrentImage(
                 requireContext(), media.uriString.toUri(), media.recordKey, isGif, isPng
             )
+            val costMs = SystemClock.uptimeMillis() - startMs
             if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
+                AppLog.d("Detail", "showImage: 解码完成 key=${media.recordKey} 耗时=${costMs}ms 尺寸=${bitmap.width}x${bitmap.height}")
                 binding.detailImageView.setImageBitmap(bitmap)
             } else if (currentRecordKey == media.recordKey) {
-                // 回退到 Coil 标准流程
-                binding.detailImageView.load(media.uriString.toUri()) {
-                    crossfade(false)
-                    size(Size.ORIGINAL)
-                    allowHardware(false)
-                    memoryCacheKey(media.recordKey)
-                    if (isGif) {
-                        bitmapConfig(Bitmap.Config.ARGB_8888)
-                        decoderFactory(AnimatedImageDecoder.Factory())
-                    }
-                }
+                // 回退到 Coil 标准流程，placeholder 保留当前画面
+                AppLog.d("Detail", "showImage: 回退Coil key=${media.recordKey} 耗时=${costMs}ms")
+                loadOriginalImageWithCoil(media, isGif)
+            }
+        }
+    }
+
+    /** 主线程同步检查 Coil 内存缓存是否命中（LruCache 线程安全） */
+    private fun isCoilMemoryCacheHit(recordKey: String): Boolean {
+        return try {
+            val cache = SingletonImageLoader.get(requireContext()).memoryCache ?: return false
+            cache[coil3.memory.MemoryCache.Key(recordKey)] != null
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 通过 Coil 加载原图（统一封装，placeholder 保留当前画面避免闪白） */
+    private fun loadOriginalImageWithCoil(media: MediaFileEntity, isGif: Boolean) {
+        binding.detailImageView.load(media.uriString.toUri()) {
+            placeholder(binding.detailImageView.drawable)
+            crossfade(false)
+            size(Size.ORIGINAL)
+            allowHardware(false)
+            memoryCacheKey(media.recordKey)
+            if (isGif) {
+                bitmapConfig(Bitmap.Config.ARGB_8888)
+                decoderFactory(AnimatedImageDecoder.Factory())
             }
         }
     }
@@ -310,23 +438,38 @@ class MediaDetailFragment : Fragment() {
         binding.detailVideoPlayer.isVisible = false
         binding.detailBottomDock.isVisible = chromeVisible
         binding.detailImageView.isVisible = true
-        binding.detailImageView.setBackgroundColor(Color.BLACK)
+        // 保留当前画面直到视频帧加载完成，减少切换空白
         videoPreviewJob?.cancel()
+        AppLog.d("Detail", "showVideo: key=${media.recordKey} uri=${media.uriString}")
         videoPreviewJob = viewLifecycleOwner.lifecycleScope.launch {
+            val startMs = SystemClock.uptimeMillis()
             val bitmap = loadVideoFrame(media.uriString)
+            val costMs = SystemClock.uptimeMillis() - startMs
             if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
+                AppLog.d("Detail", "showVideo: 首帧截取成功 key=${media.recordKey} 耗时=${costMs}ms 尺寸=${bitmap.width}x${bitmap.height}")
+                binding.detailImageView.setBackgroundColor(Color.BLACK)
                 binding.detailImageView.setImageBitmap(bitmap)
             } else if (currentRecordKey == media.recordKey) {
-                binding.detailImageView.load(media.uriString.toUri()) {
-                    crossfade(false)
-                    allowHardware(false)
-                    decoderFactory(VideoFrameDecoder.Factory())
-                    videoFrameMillis(3_000)
-                }
+                // 回退到 Coil VideoFrameDecoder，placeholder 保留当前画面
+                AppLog.d("Detail", "showVideo: 首帧失败回退Coil key=${media.recordKey} 耗时=${costMs}ms")
+                loadVideoFrameWithCoil(media)
             }
         }
         binding.videoTouchOverlay.isVisible = true
         updateVideoPlayButtonVisibility()
+    }
+
+    /** 通过 Coil 加载视频帧（统一封装，placeholder 保留当前画面，videoFrameMillis(0) 取首帧） */
+    private fun loadVideoFrameWithCoil(media: MediaFileEntity) {
+        binding.detailImageView.setBackgroundColor(Color.BLACK)
+        binding.detailImageView.load(media.uriString.toUri()) {
+            placeholder(binding.detailImageView.drawable)
+            crossfade(false)
+            allowHardware(false)
+            memoryCacheKey(media.recordKey)
+            decoderFactory(VideoFrameDecoder.Factory())
+            videoFrameMillis(0)
+        }
     }
 
     /** 设置视频触摸覆盖层：单击播放、横滑切换 */
@@ -416,8 +559,8 @@ class MediaDetailFragment : Fragment() {
         binding.videoPlayButton.isVisible = isVideoPreview && chromeVisible
     }
 
-    // 预加载 disposable 列表，切换时统一取消
-    private val preloadDisposables = mutableListOf<coil3.request.Disposable>()
+    // 预加载 disposable 映射（recordKey → disposable），支持按 key 精确取消（问题5）
+    private val preloadDisposables = mutableMapOf<String, coil3.request.Disposable>()
 
     /** 判断当前内存是否充裕，允许额外预渲染 */
     private fun isMemoryComfortable(): Boolean {
@@ -428,22 +571,34 @@ class MediaDetailFragment : Fragment() {
         return usedMb < maxMb * 0.5
     }
 
-    /** 双向预加载：基础1前2后，内存充裕时+1每侧（2前3后） */
+    /**
+     * 双向预加载：基础1前2后，内存充裕时+1每侧（2前3后）。
+     *
+     * 设计说明（回退到原始方案 2026-06-19）：
+     * - 每次切换取消所有旧预加载并重新预加载范围内所有项
+     * - Coil 内部缓存去重：已命中的项预加载会直接跳过，不会重复解码
+     * - 不在 Fragment 层做 isCoilCacheHit/isPreloadInProgress 提前判断（原始方案简洁且正确）
+     * - 不主动移除缓存条目，完全交给 Coil LRU + onTrimMemory 管理
+     * - 保留 Map 结构用于精确取消单个预加载（避免 List 的全量遍历）
+     */
     private fun preloadAround(index: Int) {
-        // 取消旧预加载请求
-        preloadDisposables.forEach { it.dispose() }
+        // 取消所有旧预加载请求（Coil 内部缓存去重，重新入队已命中的会直接跳过）
+        preloadDisposables.values.forEach { it.dispose() }
         preloadDisposables.clear()
 
         val loader = SingletonImageLoader.get(requireContext())
-        val extra = if (isMemoryComfortable()) 1 else 0
+        val memoryComfortable = isMemoryComfortable()
+        val extra = if (memoryComfortable) 1 else 0
         val backCount = 1 + extra   // 基础1 + 充裕1
         val forwardCount = 2 + extra // 基础2 + 充裕1
 
         val start = maxOf(0, index - backCount)
         val end = minOf(mediaList.lastIndex, index + forwardCount)
 
+        var enqueued = 0
         for (i in start..end) {
             if (i == index) continue // 当前正在显示，不需要预加载
+            if (i !in mediaList.indices) continue
             val media = mediaList[i]
             val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
             val request = LargeImageDecoder.buildPreloadRequest(
@@ -454,15 +609,19 @@ class MediaDetailFragment : Fragment() {
                 isGif
             )
             val disposable = loader.enqueue(request)
-            preloadDisposables.add(disposable)
+            preloadDisposables[media.recordKey] = disposable
+            enqueued++
         }
+        // Coil 内部缓存去重：已命中的项 enqueue 会直接跳过不解码，enqueued 为本轮新入队数（不含命中的）
+        AppLog.d("Detail", "preload: 范围[$start..$end] 当前=$index 内存充裕=$memoryComfortable 入队=$enqueued")
     }
 
     private suspend fun loadVideoFrame(uriString: String): Bitmap? = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(requireContext(), uriString.toUri())
-            retriever.getFrameAtTime(3_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            // 取首帧（0ms），避免 seek 开销，与预加载 videoFrameMillis(0) 对齐（详见 GUIDE_DEBUG.md）
+            retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
         } catch (_: Exception) {
             null
         } finally {
@@ -477,7 +636,11 @@ class MediaDetailFragment : Fragment() {
         binding.detailImageView.resetZoom()
         isTransitioning = true
         showMediaAt(targetIndex)
-        isTransitioning = false
+        // 防抖：延迟重置过渡标志，覆盖异步加载窗口，防止快速连续滑动竞态（问题3）
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(200)
+            isTransitioning = false
+        }
     }
 
     private fun toggleChrome() {
@@ -985,7 +1148,7 @@ class MediaDetailFragment : Fragment() {
         timelineTagJob?.cancel()
         videoPreviewJob?.cancel()
         // 取消所有预加载请求，释放预渲染内存
-        preloadDisposables.forEach { it.dispose() }
+        preloadDisposables.values.forEach { it.dispose() }
         preloadDisposables.clear()
         exoPlayer?.release()
         exoPlayer = null
@@ -1092,6 +1255,10 @@ class MediaDetailFragment : Fragment() {
         private const val KEY_FAVORITES = "favorite_record_keys"
         private const val KEY_LIKE_DATE_PREFIX = "like_date_"
         private const val KEY_LIKE_COUNT_PREFIX = "like_count_"
+        /** 分页每页加载数量 */
+        private const val PAGE_SIZE = 40
+        /** 距离边界多少项时触发预加载更多 */
+        private const val LOAD_MORE_THRESHOLD = 5
 
         fun newInstance(recordKey: String) = MediaDetailFragment().apply {
             arguments = Bundle().apply { putString(ARG_RECORD_KEY, recordKey) }

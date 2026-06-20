@@ -13,6 +13,7 @@
 | `app/src/main/java/com/qimeng/media/ui/album/AlbumDetailFragment.kt` | 相册出处详情（角色/类型筛选+药丸+COS支持） |
 | `app/src/main/java/com/qimeng/media/ui/album/SourceMatcher.kt` | 出处匹配引擎（SourceGroup规范名+变体，三层优先级匹配） |
 | `app/src/main/java/com/qimeng/media/ui/profile/ProfileFragment.kt` | 我的：扫描/作者/历史/主题/备份/自动同步/兼容性检查 |
+| `app/src/main/java/com/qimeng/media/ui/stats/DataStatsFragment.kt` | 数据统计页：专业数据报表（折线趋势/环形分布/柱状排行/横向柱条） |
 | `app/src/main/java/com/qimeng/media/core/CompatChecker.kt` | 兼容性检查工具（6项检查） |
 | `app/src/main/java/com/qimeng/media/ui/detail/ZoomImageView.kt` | 自定义缩放 ImageView（统一 `LAYER_TYPE_SOFTWARE` 纯软件渲染，仅 GIF AnimatedImageDrawable 时切换 `LAYER_TYPE_HARDWARE`；手势期间（双指缩放/放大拖拽）动态切换 `LAYER_TYPE_HARDWARE` 利用 GPU 加速矩阵变换，手势结束后 100ms 延迟切回 `LAYER_TYPE_SOFTWARE`；`lastDrawableWidth/Height` 记录实际尺寸防止Coil降采样导致matrix错乱；缩放范围 0.5x~5x，双击放大1.8x，近1.0的scale factor跳过减少无效重绘） |
 | `app/src/main/java/com/qimeng/media/ui/detail/BiliPlayerView.kt` | B站风格视频播放器（手势控制/倍速/静音/进度拖拽） |
@@ -32,6 +33,7 @@
 | `app/src/main/java/com/qimeng/media/ui/author/AuthorFilesFragment.kt` | 作者文件浏览页（作品/角色/类型筛选+药丸+COS支持+日期分组/缩放列数） |
 | `app/src/main/java/com/qimeng/media/ui/history/BrowseHistoryFragment.kt` | 浏览历史（分区/作品/角色/类型筛选+药丸+COS芯片） |
 | `app/src/main/java/com/qimeng/media/ui/library/MediaLibraryViewModel.kt` | 共享 ViewModel |
+| `app/src/main/java/com/qimeng/media/ui/widget/PressAnimation.kt` | 按下反馈动画扩展函数 `View.addPressAnimation()`（缩放 0.92→1.0，100ms） |
 
 ## 职责
 
@@ -41,13 +43,13 @@
 
 ## 导航结构
 
-底部导航四 Tab（`MainActivity.setupActions` → `showCachedFragment`）：首页、全部、相册、我的。Tab切换使用 `show/hide` 方式（非 `replace`），所有Tab Fragment同时存活，切换时只切换可见性，无闪烁无重建。
+底部导航五 Tab（`MainActivity.setupActions` → `showCachedFragment`）：首页、全部、相册、数据、我的。Tab切换使用 `show/hide` 方式（非 `replace`），所有Tab Fragment同时存活，切换时只切换可见性，无闪烁无重建。
 
 双击当前 Tab 回到顶部：`setOnItemSelectedListener` 检测 400ms 内同一 Tab 二次点击，调用 `scrollToTop()`。`scrollToTop()` 通过 `fragmentCache[selectedTabId]` 定位当前可见 Fragment（不用 `findFragmentById`，因 `add/hide` 模式下多 Fragment 共存同一容器，`findFragmentById` 可能返回非当前 Tab 的 Fragment）。RecyclerView 类 Fragment（首页、全部）使用 `stopScroll()` + `LinearLayoutManager.scrollToPositionWithOffset(0, 0)` 确保远距离滚动后也能精确回到顶部（`scrollToPosition(0)` 在滚动距离过大时不可靠）；ScrollView 类 Fragment（相册、我的）使用 `smoothScrollTo(0, 0)`。
 
 覆盖页面（`add` 叠加，不 destroy 底层 Fragment）：详情页、作者列表、作者文件浏览页、相册详情、浏览历史、收藏页、COS专区、搜索页
 
-覆盖页面入栈时底部导航隐藏（`addOnBackStackChangedListener` 中判断 topFragment 类型设 `GONE`），返回后自动恢复 `VISIBLE`。
+覆盖页面入栈时底部导航隐藏（`addOnBackStackChangedListener` 中判断 topFragment 类型设 `GONE`），返回后自动恢复 `VISIBLE`。`MainActivity.onResume()` 中调用 `syncBottomNavVisibilityWithBackStack()` 重新同步底部导航可见性——App 从后台恢复时 BackStack 未变化、`BackStackChangedListener` 不触发，但 `bottomNavigation.visibility` 可能被系统重置为 `VISIBLE`，导致详情页等覆盖页面上层显示外面 tab；该方法与 `BackStackChangedListener` 共用同一逻辑，确保两种路径状态一致。`syncBottomNavVisibilityWithBackStack()` 覆盖所有覆盖页面类型：`MediaDetailFragment`/`AuthorListFragment`/`AuthorFilesFragment`/`AlbumDetailFragment`/`BrowseHistoryFragment`/`FavoriteFragment`/`SearchFragment`/`StatsDetailFragment`。Activity 重建时（`savedInstanceState != null`）使用 `isRestoringState` 标志位防止系统恢复 `selectedItemId` 触发 `setOnItemSelectedListener` 误执行 `showCachedFragment`（其中 `popBackStack(INCLUSIVE)` 会清空覆盖页面 BackStack）。
 
 返回列表时底层 fragment 保持存活，无闪烁。
 
@@ -83,19 +85,20 @@
 - **熄屏亮屏/底部 Tab 切换不刷新**：`observeData()` 使用 `repeatOnLifecycle(STARTED)` 重新收集 Flow 时，不清空排序缓存和渲染指纹，数据未变化时 `render()` 跳过重排和 UI 更新
 - 收藏：重新从 SharedPreferences 读取收藏键并匹配媒体
 - 浏览历史/作者管理：下拉即刷新，数据由 Room Flow 自动驱动
+- **SwipeRefreshLayout 系统栏 inset**：SwipeRefreshLayout 根布局**不要**设置 `android:fitsSystemWindows="true"`，否则会与 `MainActivity` 主容器的 inset padding 重复应用，导致内容下沉一个状态栏高度。系统栏 padding 统一由 `MainActivity` 的 `setOnApplyWindowInsetsListener` 在主容器层处理，与数据页/相册页（ScrollView 根布局）保持一致。涉及布局：`fragment_home.xml`、`fragment_all_files.xml`、`fragment_author_files.xml`、`fragment_browse_history.xml`、`fragment_favorite.xml`
 
 ## 首页
 
 布局：`res/layout/fragment_home.xml`
 - 顶部一行：`[首页标题] [搜索框] [筛选图标] [网格图标]`
 - 网格图标随列数切换：1列显示 `ic_grid_1`，2列显示 `ic_grid_2`
-- 二级 chip：推荐 / COS / 排行榜（三选一 tab，左右横滑切换）
+- 二级 chip：推荐 / COS / 排行榜（三选一 tab，左右横滑切换），3 个胶囊切换按钮通过 `addPressAnimation()` 添加按下缩放反馈
 - 排行榜 chip：日榜 / 周榜 / 月榜 / 年榜
 - COS chip：切换到 COS 推荐模式，只显示 `isCosFile=true` 的媒体
 - 双列 RecyclerView（`MediaThumbnailAdapter`，Coil 加载，`itemViewCacheSize=40`）
 - 滚动到底增量加载，不重排
 - 左右横滑切换推荐/COS/排行榜：使用 `GestureDetector.onFling` 检测快速水平滑动，阈值 50dp + 速度 300
-- 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式
+- 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式，传当前页面已分页加载显示的文件列表（`adapter.currentList`，非完整排序列表 `tabSortedItems[currentTab]`），详情页仅可左右滑动浏览当前推荐页已可见的文件，数目与推荐页显示一致
 - 搜索框不可聚焦，点击跳转独立搜索界面（`SearchFragment`，通过 `MainActivity.showSearchFragment()` add 模式）
 - **搜索范围**：搜索时合并常规+COS文件（`cachedMedia + cachedCosMedia`），非搜索时按当前 tab 选择数据源
 - **搜索匹配维度**：除文件名/文件夹名/标签外，通过 `SearchContext` 额外匹配出处名（SourceMatcher）、角色名（SourceMatcher.matchAll）、COS作者名（MediaGroupHelper.findCosAuthorForMedia）、COS作品名（MediaGroupHelper.findCosCharacterForMedia）
@@ -151,12 +154,13 @@
 - 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**纯软件渲染 + 手势硬件加速**：默认 `LAYER_TYPE_SOFTWARE` + `ARGB_8888`，不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**手势期间动态硬件加速**：双指缩放/放大拖拽时切换 `LAYER_TYPE_HARDWARE`，利用 GPU 加速矩阵变换消除卡顿，手势结束后 100ms 延迟切回 `LAYER_TYPE_SOFTWARE`；**GIF 动图例外**：`ZoomImageView.setImageDrawable()` 检测到 `AnimatedImageDrawable` 时始终使用 `LAYER_TYPE_HARDWARE`（动画依赖硬件加速刷新帧）；**缩放范围**：0.5x~5x，双击放大3x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
 - 视频（仅 `MediaType.VIDEO`）：未播放时用 `ZoomImageView` 显示视频帧预览（黑色背景，优先使用 `MediaMetadataRetriever` 提取3秒帧，失败时回退到 Coil VideoFrameDecoder），中央显示 ▶ 播放按钮；单击预览区直接启动播放（进入 BiliPlayerView），横滑浏览其他文件。播放时 BiliPlayerView 接管触摸
 - 按返回键：播放中先退到 chrome 浏览模式（暂停+chrome显示），再按退回首页
-- 顶部操作层：返回（胶囊图标） / 当前序号 / 信息（胶囊图标），背景色跟随 `qmColorBg`（95% 不透明度），微略透明与背景层一体无分割感，点击信息图标弹出 BottomSheet 显示文件名/出处/尺寸/时长等详细信息（区分图片和视频）；尺寸/时长等元数据在扫描时未解码（`scanTreeFast` 跳过），打开信息面板时按需解码并缓存到数据库
-- 底部操作层：点赞（胶囊图标）/ 收藏（胶囊图标）/ 标签（胶囊图标）/ 快速转跳（胶囊图标），四个图标均匀分布居中，背景色跟随 `qmColorBg`（95% 不透明度），微略透明与背景层一体无分割感，过长图片时 tab 用背景色遮挡图片内容而非透明覆盖；收藏图标区分空心/实心状态；标签点击弹出 BottomSheet 标签管理，当前文件标签以水平滚动标签列表显示在上方（权重最高），其他可用标签以水平滚动列表显示在下方，点击关闭图标仅移除文件与标签关联不删除标签选项，输入框可添加新标签；快速转跳点击弹出 BottomSheet 显示当前文件关联的作者列表，点击作者名跳转到作者文件浏览页
+- 顶部操作层：返回（胶囊图标） / 当前序号 / 信息（胶囊图标），背景使用 `bg_detail_top_gradient` 渐变遮罩（从 `qmColorBg` 90% 不透明度渐变到透明），与背景层一体无分割感，点击信息图标弹出 BottomSheet 显示文件名/出处/尺寸/时长等详细信息（区分图片和视频）；尺寸/时长等元数据在扫描时未解码（`scanTreeFast` 跳过），打开信息面板时按需解码并缓存到数据库
+- 底部操作层：点赞（胶囊图标）/ 收藏（胶囊图标）/ 标签（胶囊图标）/ 快速转跳（胶囊图标），四个图标均匀分布居中，背景使用 `bg_detail_bottom_gradient` 渐变遮罩（从透明渐变到 `qmColorBg` 90% 不透明度），过长图片时 tab 用渐变背景遮挡图片内容而非透明覆盖；收藏图标区分空心/实心状态；标签点击弹出 BottomSheet 标签管理，当前文件标签以水平滚动标签列表显示在上方（权重最高），其他可用标签以水平滚动列表显示在下方，点击关闭图标仅移除文件与标签关联不删除标签选项，输入框可添加新标签；快速转跳点击弹出 BottomSheet 显示当前文件关联的作者列表，点击作者名跳转到作者文件浏览页
+- **按钮按下反馈动画**：详情页 6 个按钮（返回/info/点赞/收藏/标签/快速转跳）通过 `View.addPressAnimation()` 扩展函数添加按下缩放反馈（ACTION_DOWN 缩放 0.92，ACTION_UP 回弹 1.0，100ms `AccelerateDecelerateInterpolator`），增强触控感知
 - 弹窗：`BottomSheetDialog`，颜色统一用 `resolveThemeColor()` 跟随主题
 - 单击显隐 chrome（alpha 动画）
 - 左右滑动切换：`moveBy()` 先调用 `showMediaAt()` 更新内容，再对 `detailContentContainer` 做 200ms DecelerateInterpolator 滑入动画，确保新内容立即可见
-- 预加载：`preloadAround()` 双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；切换时取消旧预加载 disposable 释放内存；退出详情页时统一取消预加载请求并清空 disposable；**大图解码优化**（`LargeImageDecoder`，绕过 Coil Decoder 链的自定义解码器）：内部解码逐级回退——Coil 内存缓存命中（仅检查是否存在，不取出 Bitmap 对象——避免缓存驱逐时 recycle 导致 ImageView 绘制已回收 bitmap 崩溃；命中时返回 null 让 Fragment 走 Coil load 路径，Coil 命中内存缓存零延迟且正确管理 bitmap 生命周期）→ PNG 用 `SpngDecoder`（libspng，ARM NEON 优化，比系统 libpng 快 2-3 倍）→ `BitmapFactory.decodeFileDescriptor`（跳过 InputStream 中间层，比 Coil 的 decodeStream 快 ~10-20%）→ `BitmapFactory.decodeStream`（异常回退）；`LargeImageDecoder` 全部失败则由 Fragment 回退到 Coil 标准流程；解码成功后写入 Coil 内存缓存供后续访问零延迟；并发解码信号量限制（大图同时解码不超过 2 张，防止内存峰值）；预加载使用 Coil 标准流程（`size(Size.ORIGINAL)` + `memoryCacheKey(recordKey)`），自动利用内存/磁盘缓存；视频帧使用 `MediaMetadataRetriever` 在 `showMediaAt()` 中按需加载；**bitmap 回收防护**：所有 `setImageBitmap` 调用前检查 `!bitmap.isRecycled`，已回收 bitmap 自动回退到 Coil load
+- 预加载：`preloadAround()` 双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过，不会重复解码）；退出详情页时统一取消预加载；**placeholder 保留画面**：所有 Coil load 设置 `placeholder(当前drawable)`，加载期间保留旧画面不清空，根治来回滑动闪白；**Coil 缓存上限**：堆的 35%；**主线程同步缓存检查**（2026-06-19 优化）：`showImage()` 先在主线程同步检查 Coil 内存缓存（LruCache 线程安全），命中则直接 `loadOriginalImageWithCoil` 走 Coil load，跳过 `LargeImageDecoder` 的 `withContext(Dispatchers.IO)` 线程切换开销（40MB+ 超大图场景下省 13-34ms）；未命中才异步走 `LargeImageDecoder` 解码；**大图解码优化**（`LargeImageDecoder`，绕过 Coil Decoder 链的自定义解码器）：内部解码逐级回退——Coil 内存缓存命中（仅检查是否存在，不取出 Bitmap 对象——避免缓存驱逐时 recycle 导致 ImageView 绘制已回收 bitmap 崩溃；命中时返回 null 让 Fragment 走 Coil load 路径，Coil 命中内存缓存零延迟且正确管理 bitmap 生命周期）→ PNG 用 `SpngDecoder`（libspng，ARM NEON 优化，比系统 libpng 快 2-3 倍）→ `BitmapFactory.decodeFileDescriptor`（跳过 InputStream 中间层，比 Coil 的 decodeStream 快 ~10-20%）→ `BitmapFactory.decodeStream`（异常回退）；`LargeImageDecoder` 全部失败则由 Fragment 回退到 Coil 标准流程；解码成功后写入 Coil 内存缓存供后续访问零延迟；并发解码信号量限制（大图同时解码不超过 2 张，防止内存峰值）；预加载使用 Coil 标准流程（`size(Size.ORIGINAL)` + `memoryCacheKey(recordKey)`），自动利用内存/磁盘缓存；**视频帧取首帧**：详情页视频预览和预加载统一用 `videoFrameMillis(0)` 取首帧，避免 3 秒帧 seek 开销（详见 GUIDE_DEBUG.md 性能约束）；**滑动防抖**：`moveBy()` 设置 `isTransitioning` 后延迟 200ms 重置，覆盖异步加载窗口防止快速连续滑动竞态；**切换不闪白**：`showImage()`/`showVideo()` 不立即清空当前画面，保留旧图直到新内容加载完成；**bitmap 回收防护**：所有 `setImageBitmap` 调用前检查 `!bitmap.isRecycled`，已回收 bitmap 自动回退到 Coil load；**诊断日志**（2026-06-20 新增，消除 GUIDE_DEBUG 观察盲区）：`showImage()` 缓存命中分支打 `Detail: showImage: 命中内存缓存 key=xxx`，未命中分支打 `缓存未命中，异步解码` + 解码完成 `解码完成 key=xxx 耗时=Nms 尺寸=WxH`（耗时用 `SystemClock.uptimeMillis()` 包住 `decodeCurrentImage`）/ 回退 `回退Coil key=xxx 耗时=Nms`；`preloadAround()` 入口打 `preload: 范围[start..end] 当前=index 内存充裕=B 入队=N`；`LargeImageDecoder` 各回退路径打 `LargeImage: libspng/fileDescriptor 解码成功|失败`、`回退到 Coil 标准流程`。日志样例与命中率诊断方法详见 GUIDE_DEBUG.md「缩略图/详情页不显示诊断」
 
 ## BiliPlayerView 视频播放器
 
@@ -183,6 +187,84 @@
 - Coil 全局配置：Coil 3.4.0，`QimengApplication` 通过 `SingletonImageLoader.setSafe` 注册 `VideoFrameDecoder.Factory()` + `AnimatedImageDecoder.Factory()` 到 ImageLoader；内存缓存25%堆大小；磁盘缓存20%磁盘空间（首次解码后缓存到磁盘，后续加载无感）
 - 缩略图缓存策略：Coil `size(480,270)` 限制缩略图解码尺寸；RecyclerView `setItemViewCacheSize(20)` + `RecycledViewPool(max=20)`；`onViewRecycled` 时清除 ImageView drawable 释放内存；扫描/导入时即开始缓存缩略图到磁盘
 
+## 数据统计页
+
+专业数据报表页面，位于底部导航"数据"Tab（相册与我的之间）。
+
+**页面结构**（卡片式布局，所有卡片统一使用 `bg_stat_card` 背景）：
+- 时间范围切换胶囊组（7天/30天/全部，`bg_capsule_soft` 容器 + 选中项 `bg_capsule_primary` 填充）
+- 总览数字卡片（两行 6 个指标）：
+  - 第一行：总浏览次数 / 总播放次数 / 总浏览时长
+  - 第二行：总文件数 / 总占用空间 / 平均浏览深度（总浏览次数 / 有浏览记录的文件数）
+- 浏览趋势折线图卡片（`LineChartView`，按天/周聚合浏览量，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**）
+- 分布统计卡片（类型分布 + 来源分布合并展示，两个 `PieChartView` 横向排列，**纯展示无点击**，**点击卡片进入分布详情页**）
+- 热门文件 Top 5 柱状图卡片（`BarChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
+- 作者文件数 Top 5 横向柱条卡片（`BrowseStatsChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
+- 标签文件数 Top 5 横向柱条卡片（`BrowseStatsChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
+
+**交互设计**：
+- 点击热门文件/作者/标签/分布统计卡片 → 进入 `StatsDetailFragment` 全新详情界面（`MainActivity.showStatsDetail`）
+- 详情页排行榜条目可点击跳转：文件 → 文件详情页，作者 → 作者文件页，标签 → 暂不支持跳转
+- 环形图纯展示，不消费触摸事件（便于父卡片接收点击）
+- 图表入场动画（折线从左到右展开、柱条从底部生长、扇区从 0 度展开，DecelerateInterpolator）
+- 时间范围切换重新聚合数据（7天/30天按天分组，全部按周分组）
+- 排行榜前三名排名数字高亮（主题色）
+- 卡片右上角"查看全部 ›"/"查看详情 ›"提示可点击展开
+
+**统计详情页**（`StatsDetailFragment`）：
+- 顶部返回栏 + 动态标题
+- 统计摘要卡片（2列网格，根据模式动态生成：总和/均值/峰值等）
+- 数据洞察卡片（自动生成的文字摘要，如"最热门文件占总浏览量X%"、"第一名热度是第二名的X倍"等，运动健康 app 风格的数据洞察）
+- 辅助图表（文件模式显示浏览趋势折线图）
+- 完整 Top 20 排行榜列表（`RankListAdapter`，`nestedScrollingEnabled=false` 随 ScrollView 滚动，每行带相对第一名的进度条）
+- 四种模式：`MODE_FILES`（文件浏览）、`MODE_AUTHORS`（作者文件数）、`MODE_TAGS`（标签文件数）、`MODE_DISTRIBUTION`（分布统计：类型/来源对比）
+
+**文件模式排序切换交互**：
+- 排行榜标题右侧"按热度/按时长"胶囊切换按钮
+- 按热度：按 viewCount + playCount 降序
+- 按时长：按 totalBrowseSeconds 降序，数值显示为可读时长（如"1小时23分"）
+- 切换时使用缓存数据重新渲染，无需重新查询数据库
+
+**分布统计模式（无排行榜，改为分布对比卡片）**：
+- 隐藏排行榜区域，显示分布对比区域
+- 卡片1：类型分布对比（图片/视频/动图的数量、大小、浏览量三维度横向进度条对比）
+- 卡片2：来源分布对比（常规 vs COS 的数量、大小、浏览量对比）
+- 卡片间 12dp 留白（`distributionCardParams`），避免视觉重叠
+- 每个指标项：名称 + 进度条（相对最大值百分比）+ 数值，三列横向排列
+
+**浏览趋势图点击交互**（`LineChartView`）：
+- 点击数据点（48dp 命中阈值内）高亮该点并显示数值气泡（如"06/15  12次"）
+- 气泡位置优先在点上方，空间不足时切换到下方
+- 点击空白处取消选中
+- 动画进行中不响应点击（`animatedProgress >= 0.95f` 才响应）
+
+**排行榜 item 设计**（`item_rank_list.xml`）：
+- 绒布卡片背景（`bg_stat_card`），与统计页卡片风格一致
+- 排名数字（前三名主题色高亮）+ 标题 + 副标题 + 进度条（相对第一名百分比）+ 数值
+- 进度条 drawable：`bg_rank_progress`（圆角细条，主题色填充）
+
+**分布统计扩展性**：
+- 类型分布渲染由 `typeDistributionConfig` 列表驱动（MediaType → 显示名称），未来新增 MediaType 只需在列表追加一项，渲染自动适配
+- PieChartView 始终显示所有类型（含0值），0值在图例显示但不在环形图绘制扇区
+- 分布对比卡片的指标项通过 `DistributionMetric` 数据驱动，未来新增维度只需追加指标项
+
+**数据源**：
+- 浏览统计：`viewModel.allStats`（ViewStatsEntity 全量内存聚合）
+- 浏览趋势：`viewModel.history`（ViewHistoryEntity，按 openedAtMillis 时间分桶）
+- 类型/来源分布：`viewModel.allMedia`（MediaFileEntity，按 mediaType/isCosFile 内存分组）
+- 作者排行：`viewModel.authors` + `viewModel.authorFileCounts`（关联 authorId → displayName）
+- 标签排行：`viewModel.allMediaTags`（MediaTagName，按 name 分组计数）
+
+**自绘图表组件**（`ui/widget/`）：
+- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签
+- `BarChartView`：竖向柱状图，渐变填充 + 点击高亮 + 数值标签，BarEntry 携带 id 支持跳转
+- `PieChartView`：环形图，多色调色板 + 中心总览 + 底部图例（纵向排列避免窄空间挤压，纯展示不消费触摸事件）
+- `BrowseStatsChartView`：横向柱条，BarEntry 携带 id 支持跳转
+
+**排行榜组件**（`ui/stats/`）：
+- `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
+- `StatsDetailBottomSheet`：详细排行榜 BottomSheet，点击卡片弹出，展示 Top 20 完整列表
+
 ## 我的页
 
 - 图片/视频数量卡片
@@ -193,10 +275,10 @@
 - 兼容性检查：检查 Android 版本、SAF 授权、存储空间、MediaStore 可用性、备份写入权限、设备信息
 - 数据管理行打开底部弹层，提供常规目录、COS目录、TXT导入作者、数据备份、缓存与同步。
 - 常规目录：点击后弹出子弹层，上方显示已添加目录列表（每行显示目录名+删除按钮），下方"+ 选择文件夹"添加新目录。
-- 数据备份：点击后弹出子弹层，显示目录结构说明（绮梦影库/个人偏好+app数据），当前备份位置，"+ 选择文件夹"设置新位置。选择文件夹后自动创建「绮梦影库」目录，内含「个人偏好」（偏好JSON+报告TXT）和「app数据」（自动同步的数据库JSON）两个子文件夹，并立即导出偏好数据。
+- 数据备份：点击后弹出子弹层，显示目录结构说明（绮梦影库/个人偏好+app数据），当前备份位置，"+ 选择文件夹"设置新位置。选择文件夹后自动创建「绮梦影库」目录，内含「个人偏好」（偏好JSON+报告TXT）和「app数据」（自动同步的数据库JSON）两个子文件夹，并立即导出偏好数据。支持"自定义导出"入口，可勾选 9 个章节导出报告（详见 GUIDE_BACKUP.md）。
 - TXT导入作者：点击后弹出子弹层，上方显示已导入的TXT文件名列表（每行显示文件名+🔄刷新按钮+×删除按钮），下方格式说明 + "+ 选择 TXT 文件"按钮。
 - 数据管理弹层禁止使用系统默认列表对话框，必须使用 `?attr/qmColor*` 或 `resolveThemeColor()` 保持主题一致。
-- 主题色彩跟随手机系统明暗模式，主题行只提示当前策略
+- 主题色彩：`themeRow` **不可点击**（v1.10 设计决策：仅跟随手机系统明暗模式，无 App 内切换入口）。`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`，点击无任何反应。详见 `GUIDE_THEME.md`「明暗模式系统」
 
 ## 详情页沉浸浏览
 
@@ -214,7 +296,7 @@
 - 缩略图解码三级策略和预生成机制详见 `GUIDE_ALGORITHM.md`
 - **动态分辨率**：`MediaThumbnailAdapter` 和 `GroupedMediaAdapter` 支持 `thumbnailWidth`/`thumbnailHeight` 属性，首页1列时使用 960x540，2列时使用 480x270，其他页面默认 480x270
 - 详情页视频预览：先查 Coil 内存缓存（预加载） → `ThumbnailCache.readFrame()` → Coil `VideoFrameDecoder` → `MediaMetadataRetriever` 回退
-- 详情页预加载：`preloadAround()` 双向预加载（1前2后，内存充裕时2前3后），使用 `LargeImageDecoder.buildPreloadRequest()` 构建请求
+- 详情页预加载：`preloadAround()` 双向预加载（1前2后，内存充裕时2前3后），每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过）；使用 `LargeImageDecoder.buildPreloadRequest()` 构建请求
 - 占位色用 `R.color.qm_placeholder`（亮色 `#E0E0E0`，暗色 `#2A2A2A`），避免深色模式下占位与背景同色
 - 视频缩略图右下角显示纯文字时长，格式为 `m:ss` 或 `h:mm:ss`，不使用胶囊底
 
@@ -232,10 +314,16 @@
 ## UI 约束
 
 - XML 颜色全部用 `?attr/qmColor*`，禁止 `@color/qm_*`。
-- Kotlin 代码用 `ctx.resolveThemeColor(R.attr.qmColor*)` 或 `ThemeHelper.resolve(context)`。
+- Kotlin 代码用 `ctx.resolveThemeColor(R.attr.qmColor*)` 或 `ThemeHelper.resolve(context)` / `ThemeHelper.resolveGenerated(context)`（优先从 ThemeManager 获取热更新颜色）。
 - 缩略图加载参数：Coil size(480,270) crossfade(false)；原始URI加载 allowHardware(false)（纯软件渲染），本地缓存文件加载 allowHardware(true)（GPU加速）。
-- `QimengCapsuleChip` 样式：`height=30dp minWidth=48dp paddingHorizontal=12dp textSize=12sp`。
-- 底部导航：`elevation="0dp" itemRippleColor="@android:color/transparent" activeIndicatorStyle="0dp"`。
+- `QimengCapsuleChip` 样式：`height=32dp minWidth=48dp paddingHorizontal=14dp textSize=12sp`（100dp 圆角胶囊）。
+- 底部导航：`elevation=8dp` 与内容区分层，选中指示器 `Widget.Qimeng.BottomNavigationView.ActiveIndicator`（pill 形状，`qmColorPrimarySoft` 背景），选中态 `qmColorPrimary`，label 始终显示。
+- 卡片统一无描边，靠 bg/surface/surfaceSoft 三层色差制造层次（详见 GUIDE_THEME.md「设计理念」）。
+- 圆角规范：卡片 16dp / 统计卡 20dp / 胶囊 100dp / 底部 Sheet 28dp。
+- **按下反馈动画**：可点击的图标按钮和胶囊切换按钮统一使用 `View.addPressAnimation()` 添加按下缩放反馈（0.92→1.0），增强触控感知。已在详情页 6 按钮、首页 3 胶囊启用。
+- **渐变遮罩**：详情页顶部/底部操作栏使用 `bg_detail_top_gradient` / `bg_detail_bottom_gradient` 渐变遮罩替代纯色背景，与媒体内容层一体无分割感。
+- **SwipeRefreshLayout**：根布局**不要**设置 `android:fitsSystemWindows="true"`，系统栏 padding 由 `MainActivity` 主容器统一处理，避免重复下沉。
+- **主题切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。系统明暗模式变化时，`MainActivity.onConfigurationChanged` 检测 `uiMode` 变化并 `recreate()`，让所有 `?attr` 颜色和 `resolveThemeColor()` 调用重新生效。
 
 ## 万能筛选组件
 
@@ -272,12 +360,6 @@
   - 涉及 Fragment：AllFilesFragment、FavoriteFragment、BrowseHistoryFragment、AlbumDetailFragment、AuthorFilesFragment
   - 状态变量：`sourcePillsExpanded`、`charPillsExpanded`、`partitionPillsExpanded`、`typePillsExpanded`
 
-### 长按修改分区名
-
-- ~~长按相册卡片弹出 AlertDialog，可修改分区名~~（已移除）
-- 新名称自动加入自定义出处（`AppPrefsManager.customAlbumSources`）
-- 后续同名文件会自动归入此分区（如用户添加"ACC"，后续"ACC 角色1.png"自动归入"ACC"分区）
-
 ### COS 作者分区
 
 - 相册分区页面底部显示"COS 作者"分隔标题，下方按作者分组展示 COS 文件
@@ -306,12 +388,6 @@
 - **滑动暂停**：RecyclerView 滑动时（`SCROLL_STATE_DRAGGING` / `SETTLING`）暂停缩略图加载，已加载的缩略图保持可见（不清除），未加载的显示占位色；滑动停止（`SCROLL_STATE_IDLE`）后 `notifyDataSetChanged()` 触发加载
 - **适配器**：`MediaThumbnailAdapter.paused` 和 `GroupedMediaAdapter.paused` 控制暂停状态
 - **覆盖页面**：HomeFragment、AllFilesFragment、AlbumDetailFragment、AuthorFilesFragment、FavoriteFragment
-
-### 已移除功能
-
-- **相册规则按钮**：数据管理中的"相册规则"按钮已移除（内置检索表+自定义出处已替代其功能）
-- **seedDefaultAlbumRules()**：ViewModel 中的默认规则种子方法已删除
-- **AlbumRuleEntity/AlbumRuleDao**：数据库层保留（备份兼容），但 UI 入口已移除
 
 ## 浏览历史
 
@@ -403,7 +479,7 @@ COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-06-10
+> 最后更新：2026-06-19
 
 ## 应用图标
 

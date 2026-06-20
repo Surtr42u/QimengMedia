@@ -7,7 +7,8 @@
 | 文件 | 职责 |
 |---|---|
 | `core/AppLog.kt` | 文件日志工具，同时写 logcat 和内部文件 |
-| `QimengApplication.kt` | 初始化 AppLog，全局 UncaughtExceptionHandler 写文件日志 |
+| `core/AnrWatchdog.kt` | ANR 监控：主线程阻塞 5 秒记录堆栈到 AppLog |
+| `QimengApplication.kt` | 初始化 AppLog、AnrWatchdog、Debug 模式 StrictMode、全局 UncaughtExceptionHandler |
 
 ## 职责
 
@@ -48,13 +49,16 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 |---|---|
 | `Scan` | 常规扫描（scanDirectory/refreshScanSource） |
 | `CosScan` | COS 扫描（scanCosDirectory/scanCosMedia/queryCosFolder） |
-| `Detail` | 详情页加载（图片/视频预览、解码） |
+| `Detail` | 详情页加载（图片/视频预览、解码、预渲染范围） |
 | `Home` | 首页推荐刷新 |
 | `AutoSync` | 自动同步 |
 | `AutoRefresh` | MediaStore 自动增量刷新（MediaStoreObserver） |
 | `AppPrefs` | 偏好管理（AppPrefsManager 写入失败等） |
 | `Profile` | 数据管理页面操作 |
-| `QimengMedia` | 全局异常、Application 生命周期 |
+| `QimengMedia` | 全局异常、Application 生命周期、内存回收（onTrimMemory） |
+| `ANRWatchdog` | 主线程 ANR 监控（idle 识别 + 冻结自检后仅真卡才记录） |
+| `LargeImage` | 大图解码逐级回退路径（libspng/decodeFileDescriptor/decodeStream 命中或回退 Coil） |
+| `Zoom` | ZoomImageView 反射检测异常（仅非预期异常才记录，正常 NoSuchField 静默） |
 
 #### 添加日志的原则
 
@@ -89,7 +93,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | 视频帧截取 | < 500ms/帧 | > 2s/帧 | `Detail` |
 | 数据库批量写入 500 条 | < 200ms | > 1s | `Scan` |
 | 内存占用（缩略图列表） | < 200MB | > 400MB | Profiler |
-| Coil 内存缓存命中率 | > 60% | < 30% | 观察缩略图闪烁 |
+| Coil 内存缓存命中率 | > 60% | < 30% | `Detail`（`showImage: 命中内存缓存`/`缓存未命中，异步解码` 计数统计） |
 
 ### 性能问题快速定位
 
@@ -120,7 +124,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 3. 常见原因：
    - 详情页 `Size.ORIGINAL` 加载超大图 → 使用 `decodeFileDescriptor` + `inSampleSize`
    - 缩略图缓存数量过多 → 减少 RecyclerView pool size
-   - 预加载过多全尺寸图片 → 限制预加载数量（当前左右各 3 张）
+   - 预加载过多全尺寸图片 → 限制预加载数量（当前基础 1 前 2 后，内存充裕时 +1 每侧即 2 前 3 后）
 
 #### 扫描速度慢
 
@@ -136,12 +140,18 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | 场景 | 内存缓存 | 磁盘缓存 | 尺寸 |
 |---|---|---|---|
 | 缩略图列表 | 35% 可用内存 | 20% 磁盘空间 | 480×270 |
-| 详情页图片 | 不缓存（手动解码） | 不缓存 | 全尺寸 inSampleSize=1 |
+| 详情页图片 | 缓存（LargeImageDecoder 解码后写入 + 内部检查命中返回 null 让 Fragment 走 Coil load） | 不缓存 | Size.ORIGINAL |
 | 详情页视频预览 | 缓存 | 缓存 | 1440×2560 |
 | 预加载（图片） | 缓存 | 缓存 | Size.ORIGINAL |
 | 预加载（视频） | 缓存 | 缓存 | 720×1280 |
 
 **注意**：详情页退出时只释放 ImageView drawable 和取消请求，**不清空内存缓存**（避免 600+ 缩略图同时重新加载）。
+
+**详情页缓存去重机制**（原始方案 + 主线程同步优化）：
+- `showImage()` 先在主线程同步检查 Coil 内存缓存（`isCoilMemoryCacheHit`，LruCache 线程安全），命中则直接 `loadOriginalImageWithCoil` 走 Coil load，跳过 `LargeImageDecoder` 的 `withContext(Dispatchers.IO)` 线程切换开销（40MB+ 超大图场景下省 13-34ms）
+- 未命中才异步走 `LargeImageDecoder.decodeCurrentImage`，内部再次检查缓存（防预加载刚完成写入），命中返回 null → Fragment 回退 Coil load 命中缓存零延迟；未命中则解码（PNG 用 libspng，其他用 decodeFileDescriptor），成功写入缓存 + setImageBitmap
+- `showVideo()` 直接走 `loadVideoFrame`（MediaMetadataRetriever），失败回退 Coil VideoFrameDecoder
+- `preloadAround()` 每次切换取消所有旧预加载并重新预加载范围内所有项；Coil 内部缓存去重，已命中的项预加载会直接跳过，不会重复解码
 
 ---
 
@@ -246,12 +256,21 @@ while ($true) {
 
 1. 打开对应页面
 2. 读取日志，搜索 `Detail` 标签：
-   - `loadImage: start` — 加载是否启动
-   - `loadImage: success/failed` — 图片解码是否成功
+   - `showImage: 命中内存缓存 key=xxx` — Coil 内存缓存命中，走快速分支（零延迟，跳过异步解码）
+   - `showImage: 缓存未命中，异步解码 key=xxx` — 进入 LargeImageDecoder 异步解码
+   - `showImage: 解码完成 key=xxx 耗时=Nms 尺寸=WxH` — 异步解码成功（耗时反映大图解码性能）
+   - `showImage: 回退Coil key=xxx 耗时=Nms` — LargeImageDecoder 全部回退路径失败，改走 Coil 标准流程
+   - `preload: 范围[start..end] 当前=index 内存充裕=B 入队=N` — 预渲染范围（基础 1 前 2 后，内存充裕时 2 前 3 后）
    - `loadVideoPreview: coilSuccess/coilFailed` — 视频帧截取是否成功
    - `loadVideoPreview: retrieverSuccess/allFailed` — 回退方案是否成功
-3. 如果只有 `start` 没有 `success/failed`，说明请求被取消或卡住
-4. 用 Profiler 检查 CPU 和内存，确认是否有资源竞争
+3. 搜索 `LargeImage` 标签查看解码逐级回退路径：
+   - `LargeImage: libspng 解码成功/失败` — PNG 走 libspng 的结果
+   - `LargeImage: fileDescriptor 解码成功/失败` — BitmapFactory.decodeFileDescriptor 的结果
+   - `LargeImage: 回退到 Coil 标准流程` — 所有回退路径均失败
+4. 如果只有 `缓存未命中` 没有 `解码完成`/`回退Coil`，说明异步解码被取消（快速滑动切走）或卡住
+5. 用 Profiler 检查 CPU 和内存，确认是否有资源竞争
+
+**原图缓存命中率诊断**：统计 `showImage: 命中内存缓存` 出现次数占总 `showImage` 次数的比例。正常左右滑动场景命中率应 > 60%（预渲染生效）；频繁 `缓存未命中` 说明预渲染范围未覆盖或内存回收过于激进（检查 `QimengMedia: onTrimMemory` 日志）。
 
 ### 详情页闪退诊断（IllegalArgumentException: width and height must be > 0）
 
@@ -277,7 +296,41 @@ while ($true) {
 - **SAF 扫描速度**：5000+ 文件 SAF 递归扫描需 90+ 秒，这是 SAF IPC 固有限制
 - **MediaStore 非标准目录**：用户自定义路径（如 `/storage/emulated/0/1/HHH/`）不被 MediaStore 索引，COS 扫描始终走 SAF 回退
 - **PowerShell 编码**：直接 `adb shell` 输出中文可能乱码（GBK 解码 UTF-8），使用 ProcessStartInfo + 文件中转可避免
-- **视频帧截取性能**：`videoFrameMillis(3000)` 需 seek 到 3 秒位置，对大视频文件 CPU 开销大；缩略图应使用 `videoFrameMillis(0)` 取首帧
+- **视频帧截取性能**：`videoFrameMillis(3000)` 需 seek 到 3 秒位置，对大视频文件 CPU 开销大；缩略图和详情页预览统一使用 `videoFrameMillis(0)` 取首帧（详情页于 2026-06-19 对齐缩略图策略，消除 seek 开销）；详情页 `loadVideoFrame` 回退路径同样取首帧（`getFrameAtTime(0, OPTION_CLOSEST_SYNC)`）
+
+---
+
+## ANR 监控与 StrictMode
+
+### ANR 监控（AnrWatchdog）
+
+`core/AnrWatchdog.kt` 在 `QimengApplication.onCreate()` 中启动，自动检测主线程阻塞。
+
+**工作原理**：
+1. 后台守护线程每 3 秒向主线程 post 一个 tick 任务，记录时间戳
+2. 后台线程检查时间戳是否更新
+3. 主线程阻塞超过 5 秒未更新 → 判定为 ANR，记录主线程堆栈到 AppLog
+4. 同一次 ANR 30 秒内不重复记录，避免日志刷屏
+
+**误报抑制（idle 识别 + 冻结自检，2026-06-20 新增）**：
+- **idle 识别**：判定 ANR 前先检查主线程堆栈栈顶，若为 `MessageQueue.nativePollOnce` / `MessageQueue.next` / `Looper.loop`，说明主线程在 idle 等待消息（非真卡），跳过记录。早期版本会把"主线程空闲但 watchdog 守护线程被系统冻结/doze"误判为 ANR，产生 `主线程阻塞 128317ms` 这类递增巨量误报。
+- **冻结自检**：守护线程 sleep 醒来后对比"预期 sleep 时长(3s)"与"实际 sleep 时长"，若实际远超预期（> 预期 × FREEZE_RATIO，默认 3 倍 = 9s），判定为 watchdog 自身被系统冻结，本轮跳过判定并重置 tickTimestamp，避免冻结累积产生误报。
+
+**日志识别**：搜索 `ANRWatchdog` 标签，格式为 `主线程阻塞 Xms（超过阈值 5000ms），疑似 ANR` + 主线程堆栈。注意：堆栈栈顶若为 `nativePollOnce` 则是早期版本误报（已修复），真 ANR 堆栈栈顶应在业务代码（解码/IO/锁）。
+
+**注意**：仅记录日志，不弹窗、不杀进程。ANR 发生时 App 仍可能响应（取决于阻塞是否解除）。
+
+### StrictMode（仅 Debug 构建）
+
+`QimengApplication.enableStrictMode()` 在 Debug 构建中开启，Release 不受影响。
+
+**检测项**：
+- ThreadPolicy：主线程磁盘读写、网络操作（penaltyLog 打印到 logcat）
+- VmPolicy：SQLite 对象泄漏、Closable 对象泄漏、Activity 泄漏
+
+**使用方式**：Debug 构建运行时，logcat 中搜索 `StrictMode` 标签查看违规。不使用 penaltyDeath 避免调试时频繁崩溃。
+
+---
 
 ## 修改注意事项
 
@@ -300,4 +353,4 @@ while ($true) {
 - 涉及 SAF、真实 Uri、视频播放、图片缩放时需真机验证
 - 协程测试使用 test dispatcher
 
-> 最后更新：2026-06-05
+> 最后更新：2026-06-18

@@ -36,6 +36,7 @@ import com.qimeng.media.ui.browser.MediaBrowserLogic
 import com.qimeng.media.ui.browser.MediaFilterSheet
 import com.qimeng.media.ui.browser.MediaFilterState
 import com.qimeng.media.ui.widget.dp
+import com.qimeng.media.ui.widget.addPressAnimation
 import com.qimeng.media.ui.browser.MediaRankingPeriod
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.search.SearchFragment
@@ -130,9 +131,11 @@ class HomeFragment : Fragment() {
 
     private fun setupRecycler() {
         adapter = MediaThumbnailAdapter(
-            onItemClick = { media, source ->
+            onItemClick = { media, _ ->
                 if (System.currentTimeMillis() - flingConsumedAt < 300) return@MediaThumbnailAdapter
-                (requireActivity() as? MainActivity)?.showDetailFragment(media.recordKey, source.map { it.recordKey })
+                // 只传当前页面已分页加载显示的文件（adapter.currentList），而非完整排序列表。
+                // 详情页仅可左右滑动浏览当前页面已可见的文件，数目与推荐页显示一致。
+                (requireActivity() as? MainActivity)?.showDetailFragment(media.recordKey, adapter.currentList.map { it.recordKey })
             },
             lifecycleScope = viewLifecycleOwner.lifecycleScope
         )
@@ -176,6 +179,9 @@ class HomeFragment : Fragment() {
         chipRecommend?.setOnClickListener { setTab(TAB_RECOMMEND) }
         chipRanking?.setOnClickListener { setTab(TAB_RANKING) }
         chipCos?.setOnClickListener { setTab(TAB_COS) }
+
+        // 胶囊切换按钮按下反馈动画
+        listOf(chipRecommend, chipRanking, chipCos).forEach { it?.addPressAnimation() }
         rankChips.forEach { (period, chip) -> chip.setOnClickListener { setRankPeriod(period) } }
         columnButton?.setOnClickListener { toggleColumns() }
         filterButton?.setOnClickListener {
@@ -374,8 +380,9 @@ class HomeFragment : Fragment() {
         }
         val newFp = "${workingMedia.size}|$currentTab|$rankPeriod|${filterState.hashCode()}|$query|$refreshSeed"
         val oldFp = tabSortFingerprints[currentTab].orEmpty()
-        com.qimeng.media.core.AppLog.d("Home", "render: fp=$newFp, oldFp=$oldFp, mediaSize=${workingMedia.size}, displayCount=$displayCount")
         if (newFp != oldFp) {
+            // 日志放在短路块内：fingerprint 相同时（详情页切换、无关 Flow emit）静默，避免视觉噪音
+            com.qimeng.media.core.AppLog.d("Home", "render: fp=$newFp, oldFp=$oldFp, mediaSize=${workingMedia.size}, displayCount=$displayCount")
             tabSortFingerprints[currentTab] = newFp
             val filtered = withContext(Dispatchers.Default) {
                 MediaBrowserLogic.applyFilter(workingMedia, query, filterState, stats, tagMap, cachedHistory, likeCounts)

@@ -6,7 +6,7 @@
 
 ## 当前基准
 
-- 版本：v1.6
+- 版本：v1.10
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
@@ -34,9 +34,9 @@
 - 已下载 Android 开发和 UI 相关外部 Skill，来源记录在 `app/ai-skills/external/DOWNLOADED_SOURCES.md`。
 - 已启用 ViewBinding。
 - 已实现 `MainActivity` 作为单 Activity 主容器。
-- 已实现底部四 Tab： 首页、全部、相册、我的。
+- 已实现底部五 Tab： 首页、全部、相册、数据、我的。
 - 已启用 Room + KSP，建立完整数据层。
-- 已实现 9 个 DAO、`AppDatabase`、`LocalMediaRepository`、`DefaultLocalMediaRepository`。
+- 已实现 10 个 DAO、`AppDatabase`、`LocalMediaRepository`、`DefaultLocalMediaRepository`。
 - 已建立 `RecordKeyFactory`、`MediaType` 常量、备份 JSON 模型。
 - 已新增 `QimengApplication`、`AppContainer`、`MediaLibraryViewModel`。
 - 已实现 SAF 扫描。
@@ -64,15 +64,16 @@
 - 已调整"我的/数据管理"：移除独立扫描、重置统计、种子规则和 TXT 导入行，统一放入项目主题底部弹层；弹层提供常规目录、COS目录、备份保存位置、TXT 导入作者、缓存与同步；扫描支持多目录合并索引图片和视频。缓存与同步从独立行移入数据管理弹窗。
 - UI 已精简：搜索栏与标题同排、芯片缩至 30dp、纯矢量图标无文字、底部无边距色条。
 - 缩略图加载参数（Coil 3.4 `size(480,270) crossfade(false) allowHardware(false)`），`itemViewCacheSize=20`，`RecycledViewPool(max=20)`。
-- 缩略图加载使用 `ThumbnailLoader` 三级策略：`ContentResolver.loadThumbnail`（MediaStore URI，30-100ms）→ `getEmbeddedPicture`（视频内嵌封面）→ 首帧截取+黑帧检测（`loadFirstFrame()` 固定时间 0ms→1s→2s→3s→5s，自动跳过纯黑帧，采样100像素点亮度<15判定纯黑）。
-- **本地缩略图缓存**（`ThumbnailCache`）：缩略图和视频详情帧保存为本地 WebP 文件（`filesDir/thumbnails/`），加载时先查本地缓存（极快），没有再走解码流程并缓存。统一图片和视频策略。Coil 加载缓存文件时 `allowHardware(true)` GPU 渲染更快。`MediaThumbnailAdapter` 后台解码用信号量限制并发（最多 2 个），且解码前检查缓存文件是否已被预生成创建，避免与预生成争抢 IO/内存导致 OOM 卡死。
-- 扫描完成后后台预生成缩略图到本地缓存（`pregenerateThumbnails`），已缓存的文件自动跳过。**统一并发池**：根据设备 CPU 核数和运存自动调整（`getConcurrency`），并发=CPU核数×1.5（上限16），图片视频共用并发池，图片优先排列，设备总内存<4GB时减半（用`ActivityManager.MemoryInfo.totalMem`判断，非App堆上限`memoryClass`）。ViewModel `init` 块启动时即从数据库读取已有文件，按常规/COS分组分别通过 `ThumbnailUseCase` 预生成，进度 Flow 正确更新到 UI。
+- 缩略图加载使用 `ThumbnailLoader` 三级策略（`ContentResolver.loadThumbnail` → `getEmbeddedPicture` → 首帧截取+黑帧检测），完整策略详见 `GUIDE_ALGORITHM.md`「缩略图解码策略」。
+- **本地缩略图缓存**（`ThumbnailCache`）：缩略图和视频详情帧保存为本地 WebP 文件（`filesDir/thumbnails/`），加载时先查本地缓存，没有再走解码流程并缓存。Coil 加载缓存文件时 `allowHardware(true)` GPU 渲染更快。`MediaThumbnailAdapter` 后台解码用信号量限制并发（最多 2 个），且解码前检查缓存文件是否已被预生成创建，避免与预生成争抢 IO/内存导致 OOM 卡死。
+- 扫描完成后后台预生成缩略图到本地缓存（`pregenerateThumbnails`），已缓存的文件自动跳过。**统一并发池**：根据设备 CPU 核数和运存自动调整（`getConcurrency`），并发=CPU核数×1.5（上限16），图片视频共用并发池，图片优先排列，设备总内存<4GB时减半。ViewModel `init` 块启动时即从数据库读取已有文件，按常规/COS分组分别通过 `ThumbnailUseCase` 预生成，进度 Flow 正确更新到 UI。
 - `cache_version` 机制：版本升级时自动清除视频缩略图缓存重新生成（黑帧检测逻辑变更后需要重新缓存）。
-- 详情页预加载左右各 3 个文件，视频详情帧也使用 `ThumbnailCache` 缓存。详情页图片始终加载完整原图（不降采样），这是设计决策：用户点击查看的就是原始分辨率。
-- **大图软解优化**（`LargeImageDecoder`，绕过 Coil Decoder 链的自定义解码器）：内部解码逐级回退：Coil 内存缓存命中（仅检查是否存在，不取出 Bitmap 对象——避免缓存驱逐时 recycle 导致 ImageView 绘制已回收 bitmap 崩溃；命中时返回 null 让 Fragment 走 Coil load 路径，Coil 命中内存缓存零延迟且正确管理 bitmap 生命周期）→ PNG 用 libspng（ARM NEON 优化，比系统 libpng 快 2-3 倍）→ `BitmapFactory.decodeFileDescriptor`（跳过 InputStream 中间层，比 Coil 的 decodeStream 快 ~10-20%）→ `BitmapFactory.decodeStream`（异常回退）；`LargeImageDecoder` 全部失败则由 Fragment 回退到 Coil 标准流程；解码成功后写入 Coil 内存缓存供后续访问零延迟；并发解码信号量限制（大图同时解码不超过 2 张，防止内存峰值）；预加载使用 Coil 标准流程自动利用缓存。
+- 详情页预加载基础 1 前 2 后（内存充裕时 2 前 3 后），视频详情帧也使用 `ThumbnailCache` 缓存。详情页图片始终加载完整原图（不降采样），这是设计决策：用户点击查看的就是原始分辨率。
+- **大图软解优化**（`LargeImageDecoder`，绕过 Coil Decoder 链的自定义解码器）：内部解码逐级回退——Coil 内存缓存命中（仅检查是否存在，不取出 Bitmap 对象——避免缓存驱逐时 recycle 导致 ImageView 绘制已回收 bitmap 崩溃；命中时返回 null 让 Fragment 走 Coil load 路径，Coil 命中内存缓存零延迟且正确管理 bitmap 生命周期）→ PNG 用 libspng（ARM NEON 优化，比系统 libpng 快 2-3 倍）→ `BitmapFactory.decodeFileDescriptor`（跳过 InputStream 中间层，比 Coil 的 decodeStream 快 ~10-20%）→ `BitmapFactory.decodeStream`（异常回退）；`LargeImageDecoder` 全部失败则由 Fragment 回退到 Coil 标准流程；解码成功后写入 Coil 内存缓存供后续访问零延迟；并发解码信号量限制（大图同时解码不超过 2 张，防止内存峰值）；预加载使用 Coil 标准流程自动利用缓存。
 - **libspng 集成**（`SpngDecoder` + `app/src/main/cpp/spng/`）：v0.7.4（MIT 协议），CMake + JNI 桥接，使用 NDK 自带 zlib，ARM NEON 优化在 arm64-v8a/armeabi-v7a 自动启用；仅详情页当前 PNG 图片使用，解码失败静默回退到 BitmapFactory，不影响其他流程。
-- **详情页预渲染策略**：双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；切换时取消旧预加载请求释放内存；退出详情页时统一取消预加载并清空 disposable。
-- **内存安全**：`QimengApplication.onTrimMemory` 三级回收——RUNNING_CRITICAL 清空 3/4 内存缓存（保留最近访问的 1/4）、RUNNING_LOW 移除一半缓存条目（LRU 最久未访问的优先移除）、UI_HIDDEN 移除非当前查看项的预渲染缓存（保留最近访问的 1 个条目）。
+- **详情页预渲染策略**：双向预加载，基础 1 前 2 后（阅读 D 时预渲染 C/D/E/F），内存充裕时 +1 每侧（2 前 3 后）；每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过，不会重复解码）；退出详情页时统一取消预加载；**视频帧取首帧**：详情页预览和预加载统一 `videoFrameMillis(0)` 取首帧，消除 3 秒帧 seek 开销。
+- **内存安全**：`QimengApplication.onTrimMemory` 三级回收——RUNNING_CRITICAL 移除 3/4 缓存条目（保留最近 1/4）、RUNNING_LOW 移除一半、UI_HIDDEN 保留最近 1 个条目移除其余预渲染；cache.keys 按 LRU 顺序迭代，take/dropLast 保留最近访问的条目。
+- **详情页分页加载**：详情页初始加载 40 个媒体（从点击项开始），滑动接近边界（距末尾 5 项）时自动加载 40 个；向前滑动接近开头时也自动加载 40 个并调整索引；显示 "实际位置/推荐总数"，不影响推荐机制。
 - 底部导航 `elevation=0dp + itemRippleColor透明 + activeIndicator隐藏`。
 - `TagDao` 新增 `observeTagEntitiesForMedia`、`observeAllMediaTagNames`、`getCrossRefsByRecordKeys` 查询。
 - `AuthorDao` 新增 `deleteAuthorsByIds` 批量删除。
@@ -82,8 +83,11 @@
 - 当前所有核心功能已完成。
 - 已实现推荐偏好设置（"我的→推荐偏好"），用户可调整推荐算法 9 个权重维度（标签相关性/标签合集/互动热度/浏览时效/点赞偏好/新发现/新鲜度/浏览深度/随机性），`MediaBrowserLogic.recommend()` 接受可选 `customPrefs` 参数覆盖默认权重。偏好弹窗提供 4 个预设方案（均衡推荐/高记忆流行/深度探索/新鲜优先），预设定义位于 `ProfileFragment.recPrefPresets`。
 - 已实现视频时间轴标签（BiliPlayerView 时间轴标签图标按钮 + 标签芯片），用户可在视频播放时添加/删除时间点标记，点击标签跳转到标记位置，长按弹出操作菜单（跳转/删除）。
-- 已实现 `recommendation_prefs.json` 和 `timeline_tags.json` 备份导入导出，JSON 文件清单 11 个全部已实现。
+- 已实现 `recommendation_prefs.json` 和 `timeline_tags.json` 备份导入导出，JSON 文件清单 10 个全部已实现。
 - 已修复详情页点击 chrome/系统栏显隐时图片和视频跳动：详情页始终 edge-to-edge 全屏布局，`syncSystemBars()` 保持 `setDecorFitsSystemWindows(false)` 不变，仅通过 `WindowInsetsControllerCompat` 控制系统栏显隐，不触发布局变化；`MainActivity.setDetailMode()` 在详情页激活时清除主容器系统栏 padding，退出时恢复。
+- 已补充详情页渲染诊断日志并修复日志噪音（2026-06-20，真机调试发现）：① `MediaDetailFragment.showImage` 补缓存命中/未命中/解码完成(含耗时)/回退Coil 日志、`preloadAround` 补范围日志、`LargeImageDecoder` 补各回退路径（libspng/fileDescriptor）日志，消除 GUIDE_DEBUG 承诺但代码缺失的观察盲区（现可统计原图缓存命中率）；② `AnrWatchdog` 新增 idle 识别（栈顶为 nativePollOnce/next/Looper.loop 跳过）+ 冻结自检（实际 sleep 远超预期则跳过并重置时间戳），修复设备息屏/后台守护线程被冻结产生的 `主线程阻塞 128317ms` 递增误报；③ `HomeFragment.render` 日志从短路判断前移到 fingerprint 变化块内，消除详情页切换时底层 Home 无关 Flow emit 触发的日志噪音（双重短路本身健全，零开销）；④ `ZoomImageView.containsAnimatedDrawable` 对 NoSuchFieldException 静默（非 Coil ScaleDrawable 无 child 字段是预期），消除每张图 `checkAnimatedDrawable failed` warning 刷屏。
+- 已修复详情页退后台再回来显示外面 tab：`MainActivity.onResume()` 新增 `syncBottomNavVisibilityWithBackStack()` 调用，根据 BackStack 栈顶 Fragment 类型同步 `bottomNavigation` 可见性；该方法与 `addOnBackStackChangedListener` 共用同一逻辑。背景：App 从后台恢复时 BackStack 未变化、`BackStackChangedListener` 不触发，但 `bottomNavigation.visibility` 可能被系统重置为 `VISIBLE`，导致详情页等覆盖页面上层显示外面 tab。
+- 已修复点击主题色彩闪退：回退到原始方案（v1.10 设计决策），`ProfileFragment.themeRow` 点击只显示 Toast "已跟随手机明暗模式"，不弹窗、不调用 `setDefaultNightMode()`；删除 `showThemeModeDialog()` 和 `updateThemeModeSelection()` 方法；`MainActivity.applyStoredTheme()` 只调用 `setTheme()` 不调用 `setDefaultNightMode()`。项目仅跟随手机系统明暗模式，`AppPrefs.themeMode` 字段保留用于备份 JSON 兼容性但无 UI 入口修改。
 - 详情页 chrome 已改为四层结构：纯背景层、透明居中文件层、上下轻量图标操作层、沉浸隐藏层；白天显示浅底深色图标，夜间显示黑底浅色图标，沉浸后系统栏和上下操作层消失且文件不移动。视频先显示同步背景的预览层和 ▶ 播放按钮，单击预览区切换 chrome（与图片一致），点击播放按钮才启动 BiliPlayerView 播放器 UI。
 - 已将 `DetailVideoPlayer` 替换为 `BiliPlayerView`（B站风格自定义控制器），基于 Media3 ExoPlayer + PlayerView，支持手势控制（竖屏单击暂停/横屏单击显隐UI）、长按2x倍速（竖屏拖动锁定/退出）、倍速PopupWindow选择、时间轴标签、全屏切换（500ms防抖）。
 - 已替换应用图标为木纹 XB 雕刻图标：Adaptive Icon 前景 PNG（drawable 各密度）+ 背景色 `#DDBC98` + mipmap 完整图标回退（5 密度 PNG）；启动画面已隐藏图标仅显示纯色背景。
@@ -113,7 +117,7 @@
 
 - 扫描：读取用户授权目录中的图片和视频。
 - 数据：保存媒体索引、统计、历史、标签、作者、相册规则、设置。
-- UI：首页、全部、相册、我的、详情页、设置页、作者管理页。
+- UI：首页、全部、相册、数据统计、我的、详情页、设置页、作者管理页。
 - 主题：跟随系统白天/深色模式，全局明/暗两套显示逻辑。
 - 推荐：基于本地统计、标签、作者、相册出处和偏好计算。
 - 备份：导入导出 JSON，指定备份目录后自动同步。
@@ -121,14 +125,15 @@
 
 ## 页面结构
 
-底部导航保持四个 Tab：
+底部导航保持五个 Tab：
 
 - 首页
 - 全部
 - 相册
+- 数据
 - 我的
 
-作者管理不放到底部 Tab，入口位于“我的”页面的独立功能行。常规目录入口也放在“我的”页面，首页只承担浏览和推荐展示职责。
+作者管理不放到底部 Tab，入口位于"我的"页面的独立功能行。常规目录入口也放在"我的"页面，首页只承担浏览和推荐展示职责。
 
 ## 项目目录目标
 
@@ -164,6 +169,7 @@ QimengMedia/
 │           │   ├── LargeImageDecoder.kt
 │           │   ├── SpngDecoder.kt
 │           │   ├── AppLog.kt
+│           │   ├── AnrWatchdog.kt
 │           │   ├── CompatChecker.kt
 │           │   ├── MediaCacheCleaner.kt
 │           │   └── MediaDetailPrefsCleaner.kt
@@ -176,9 +182,9 @@ QimengMedia/
 │           │   │   │   └── AuthorFileCount.kt
 │           │   │   └── model/MediaTagName.kt
 │           │   ├── model/MediaType.kt
+│           │   ├── prefs/
+│           │   │   └── AppPrefsManager.kt
 │           │   └── repository/
-│           ├── prefs/
-│           │   └── AppPrefsManager.kt
 │           ├── scan/
 │           │   ├── SafMediaScanner.kt
 │           │   ├── MediaStoreScanner.kt
@@ -228,11 +234,20 @@ QimengMedia/
 │               ├── history/BrowseHistoryFragment.kt
 │               ├── library/MediaLibraryViewModel.kt
 │               ├── search/SearchFragment.kt
+│               ├── stats/                       # 数据统计页（专业报表）
+│               │   ├── DataStatsFragment.kt     # 数据统计主页面
+│               │   ├── StatsDetailFragment.kt   # 统计详情页（全新界面）
+│               │   └── RankListAdapter.kt       # 排行榜列表 Adapter（点击跳转）
 │               └── widget/
+│                   ├── BarChartView.kt          # 竖向柱状图（自绘 Canvas）
+│                   ├── BrowseStatsChartView.kt  # 浏览统计柱状图（自绘 Canvas）
 │                   ├── DimenExt.kt
 │                   ├── FlowLayout.kt
+│                   ├── LineChartView.kt         # 折线/面积趋势图（自绘 Canvas）
 │                   ├── MaxHeightScrollView.kt
-│                   └── PinchZoomHelper.kt
+│                   ├── PieChartView.kt          # 环形图（自绘 Canvas）
+│                   ├── PinchZoomHelper.kt
+│                   └── PressAnimation.kt        # 按下反馈动画扩展函数 addPressAnimation()
 ├── docs/
 │   ├── AI_WRITTEN_SKILLS/          # 项目内自写通用 AI 参考规范
 │   ├── PROJECT_GUIDE.md
@@ -278,4 +293,4 @@ QimengMedia/
 
 换 AI、换开发工具或交接项目时，必须传完整源码目录，不只传 APK。
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-19
