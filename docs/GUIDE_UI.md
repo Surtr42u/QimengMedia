@@ -264,7 +264,7 @@
 
 **排行榜组件**（`ui/stats/`）：
 - `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
-- `StatsDetailBottomSheet`：详细排行榜 BottomSheet，点击卡片弹出，展示 Top 20 完整列表
+- `StatsDetailFragment`：统计详情页（全新界面，非 BottomSheet），点击卡片进入，展示 Top 20 完整列表 + 统计摘要 + 数据洞察
 
 ## 我的页
 

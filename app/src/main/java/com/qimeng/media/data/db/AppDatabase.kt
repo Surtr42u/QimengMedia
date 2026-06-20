@@ -42,7 +42,7 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
         ScanSourceEntity::class,
         CosWorkEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -72,13 +72,19 @@ abstract class AppDatabase : RoomDatabase() {
             it.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_cos_works_authorName_workName ON cos_works(authorName, workName)")
         }
 
+        // v1.7 索引审计：为 media_files.uriString 补索引，加速 LIKE 前缀查询
+        // （getRecordKeysByUriPrefix / getCosRecordKeysByUriPrefix / getCosRecordKeysByUriPrefixLight）
+        private val MIGRATION_2_3 = androidx.room.migration.Migration(2, 3) {
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_media_files_uriString ON media_files(uriString)")
+        }
+
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build().also { instance = it }
         }
     }

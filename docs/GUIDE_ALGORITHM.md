@@ -73,7 +73,7 @@
 | browseDepth | 0.03 | 0.03 | 正常 |
 | randomFactor | 0~0.30 | **0~0.485** | 接收了回收权重，刷新效果大幅增强 |
 
-**注**：mediaTypeBalance 已移除，视频/图片分布由 `balanceVideoImage()` 自然混合策略负责，不在评分中重复处理。
+视频/图片分布由 `balanceVideoImage()` 自然混合策略负责，不在评分中重复处理。
 
 **数据完善后的设计权重**（自动恢复）：
 

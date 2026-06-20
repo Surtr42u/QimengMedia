@@ -5,6 +5,8 @@
     <attr name="qmColorSurfaceSoft" format="reference|color" />
     <attr name="qmColorPrimary" format="reference|color" />
     <attr name="qmColorPrimarySoft" format="reference|color" />
+    <attr name="qmColorAccent" format="reference|color" />
+    <attr name="qmColorAccentSoft" format="reference|color" />
     <attr name="qmColorTextPrimary" format="reference|color" />
     <attr name="qmColorTextSecondary" format="reference|color" />
     <attr name="qmColorChipBg" format="reference|color" />

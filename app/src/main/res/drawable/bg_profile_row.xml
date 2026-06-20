@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 个人页行项：16dp 圆角，纯色填充无描边，去掉早期安卓的框感 -->
     <corners android:radius="16dp" />
     <solid android:color="?attr/qmColorSurface" />
-    <stroke
-        android:width="1dp"
-        android:color="?attr/qmColorDivider" />
 </shape>

@@ -1,0 +1,15 @@
+#!/bin/sh
+# v1.7：detekt pre-commit hook
+# 安装方式：git config core.hooksPath .githooks
+# 作用：提交前自动运行 detekt，不通过则阻止提交（detekt.yml 中 ignoreFailures=true，仅警告不阻断）
+
+echo "[pre-commit] running detekt..."
+./gradlew detekt --quiet
+if [ $? -ne 0 ]; then
+    echo "[pre-commit] detekt failed. 请修复上述问题后重试。"
+    echo "[pre-commit] 如需跳过检查，使用 git commit --no-verify（不推荐）"
+    exit 1
+fi
+
+echo "[pre-commit] detekt passed."
+exit 0

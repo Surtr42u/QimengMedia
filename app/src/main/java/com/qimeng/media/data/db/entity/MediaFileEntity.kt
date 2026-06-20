@@ -11,7 +11,10 @@ import androidx.room.PrimaryKey
         Index(value = ["mediaType"]),
         Index(value = ["modifiedAtMillis"]),
         Index(value = ["folderName"]),
-        Index(value = ["isCosFile"])
+        Index(value = ["isCosFile"]),
+        // uriString 索引：用于 getRecordKeysByUriPrefix/getCosRecordKeysByUriPrefix 等 LIKE 前缀查询
+        // SQLite 对 LIKE 'prefix%' 可使用索引加速（v1.7 索引审计补漏）
+        Index(value = ["uriString"])
     ]
 )
 data class MediaFileEntity(

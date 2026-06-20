@@ -67,7 +67,7 @@ class QimengApplication : Application() {
         // 放开 maxBitmapSize 到 GPU 纹理上限（默认 Coil 限制 4096，会让 8192 等超大图降采样，
         // 偏离"详情页始终显示原图"设计）。探测值来自 GpuInfo（实测 Adreno 750=16384）。
         // 探测失败回退 4096（与原默认一致，不更差）。启动时同步探测一次（几十 ms，可接受）。
-        val gpuMax = GpuInfo.maxTextureSize(this)
+        val gpuMax = GpuInfo.maxTextureSize()
         val imageLoader = ImageLoader.Builder(this)
             .components {
                 add(AnimatedImageDecoder.Factory())

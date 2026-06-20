@@ -104,9 +104,8 @@ class ProfileFragment : Fragment() {
             showCompatCheckDialog()
         }
 
-        binding.themeRow.setOnClickListener {
-            Toast.makeText(requireContext(), "已跟随手机明暗模式", Toast.LENGTH_SHORT).show()
-        }
+        // 主题色彩行不可点击（v1.10 设计决策：仅跟随手机系统明暗模式，无 App 内切换入口）。
+        // QimengProfileRow 默认 clickable=false，不设置 OnClickListener 即不可点击。
 
         binding.recommendationPrefsRow.setOnClickListener {
             showRecommendationPrefsDialog()
@@ -363,8 +362,91 @@ class ProfileFragment : Fragment() {
             backupLocationLauncher.launch(null)
         })
 
+        // v1.7：自定义导出报告（章节勾选）
+        container.addView(SheetUiHelper.sheetLabel(ctx, "自定义导出"))
+        container.addView(SheetUiHelper.sheetAction(ctx, "自定义章节导出报告") {
+            showCustomReportExportDialog()
+        })
+
         dialog.setContentView(container)
         dialog.show()
+    }
+
+    /**
+     * v1.7：自定义章节导出报告对话框。
+     * 用户勾选要导出的章节，确认后导出到备份目录的"个人偏好"子文件夹。
+     */
+    private fun showCustomReportExportDialog() {
+        if (cachedBackupName == null) {
+            Toast.makeText(requireContext(), "请先设置备份位置", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val sectionNames = arrayOf(
+            "总览（汇总统计）",
+            "总 Top 30（混合排行）",
+            "常规 Top 20",
+            "COS作品 Top 20",
+            "作者 Top 20",
+            "关注作者",
+            "标签 Top 20",
+            "全部标签",
+            "收藏列表"
+        )
+        val checkedItems = booleanArrayOf(true, true, true, true, true, true, true, true, true)
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("选择导出章节")
+            .setMultiChoiceItems(sectionNames, checkedItems) { _, which, isChecked ->
+                checkedItems[which] = isChecked
+            }
+            .setPositiveButton("导出") { _, _ ->
+                val options = com.qimeng.media.backup.ReportSectionOptions(
+                    overview = checkedItems[0],
+                    mixedTop = checkedItems[1],
+                    normalTop = checkedItems[2],
+                    cosWorkTop = checkedItems[3],
+                    authorTop = checkedItems[4],
+                    followedAuthors = checkedItems[5],
+                    tagTop = checkedItems[6],
+                    allTags = checkedItems[7],
+                    favorites = checkedItems[8]
+                )
+                if (options.selectedCount == 0) {
+                    Toast.makeText(requireContext(), "请至少选择一个章节", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                viewLifecycleOwner.lifecycleScope.launch {
+                    Toast.makeText(requireContext(), "正在导出报告...", Toast.LENGTH_SHORT).show()
+                    try {
+                        val db = com.qimeng.media.data.db.AppDatabase.getInstance(requireContext())
+                        val manager = com.qimeng.media.backup.BackupManager(requireContext())
+                        // 从 settings 表获取备份目录 URI，定位"个人偏好"子文件夹
+                        val success = withContext(Dispatchers.IO) {
+                            val backupUriStr = viewModel.getBackupDirectoryUri()
+                            if (backupUriStr == null) {
+                                false
+                            } else {
+                                val rootDir = DocumentFile.fromTreeUri(requireContext(), Uri.parse(backupUriStr))
+                                val prefsDir = rootDir?.findFile("个人偏好")
+                                if (prefsDir != null) {
+                                    manager.exportPersonalPrefsToFile(prefsDir.uri, db, options)
+                                } else {
+                                    false
+                                }
+                            }
+                        }
+                        Toast.makeText(requireContext(),
+                            if (success) "报告已导出（${options.selectedCount}/9 章节）" else "导出失败，请检查备份目录",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(requireContext(), "导出失败：${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun showTxtImportDialog() {
@@ -453,12 +535,18 @@ class ProfileFragment : Fragment() {
         val message = when (status) {
             ScanStatus.Idle -> return
             ScanStatus.Running -> "正在扫描常规目录..."
-            is ScanStatus.Success -> "扫描完成：${status.directoryCount} 个目录，共 ${status.count} 个文件"
+            is ScanStatus.Success -> buildString {
+                append("扫描完成：${status.directoryCount} 个目录，共 ${status.count} 个文件")
+                // v1.7：大文件/大总量警告
+                status.warning?.let { append("\n⚠ $it") }
+            }
             is ScanStatus.Error -> "扫描失败：${status.message}"
         }
         if (message != lastScanMessage) {
             lastScanMessage = message
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            // 含警告时延长显示时间，确保用户能看到
+            val duration = if (status is ScanStatus.Success && status.warning != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+            Toast.makeText(requireContext(), message, duration).show()
         }
     }
 

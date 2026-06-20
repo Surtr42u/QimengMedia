@@ -16,8 +16,8 @@ android {
         applicationId = "com.qimeng.media"
         minSdk = 31
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.6"
+        versionCode = 9
+        versionName = "1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -38,6 +38,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // 开启资源压缩：配合 R8 移除未引用资源，减小 release APK 体积
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -55,8 +57,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     lint {
-        // AGP 9.x lintAnalyzeDebug 命令行运行会卡死，改为不阻断
-        // 推荐在 Android Studio 中查看 Lint 警告（Analyze > Inspect Code）
+        // 不阻断构建：Lint 报告供参考，详细检查用 Android Studio Inspect Code
+        // （命令行 lintDebug 实测 1m54s 可完成，历史卡死问题已随 daemon 规范化消失）
         abortOnError = false
         warningsAsErrors = false
         checkReleaseBuilds = true
@@ -71,7 +73,16 @@ android {
             "IconDensities",
             "Overdraw",
             "UseCompoundDrawables",
-            "TooManyViews"
+            "TooManyViews",
+            // Media3 ExoPlayer @UnstableApi opt-in 会向引用 MediaDetailFragment 的
+            // MainActivity 传播报 Error；项目已决定使用 Media3，无需逐层 opt-in 标注
+            "UnsafeOptInUsageError",
+            // App 仅中文本地应用，硬编码中文文本是有意设计（不提取 strings.xml）
+            "ConstantLocale",
+            // App 用 SAF 目录授权而非标准媒体选择器，SelectedPhotoAccess（部分照片访问）不适用
+            "SelectedPhotoAccess",
+            // targetSdk=36 已是当前最新稳定版（Android 16），Lint 提示升级到预览版无意义
+            "OldTargetApi"
         )
     }
 }

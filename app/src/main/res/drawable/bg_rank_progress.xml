@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 排行榜进度条（相对第一名的百分比），圆角细条，强调色填充 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 背景 -->
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <solid android:color="?attr/qmColorSurfaceSoft" />
+            <corners android:radius="2dp" />
+        </shape>
+    </item>
+    <!-- 进度：用强调色突出数据可视化 -->
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <solid android:color="?attr/qmColorAccent" />
+                <corners android:radius="2dp" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

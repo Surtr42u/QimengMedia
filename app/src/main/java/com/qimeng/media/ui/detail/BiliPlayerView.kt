@@ -810,8 +810,10 @@ class BiliPlayerView @JvmOverloads constructor(
         val m = (totalSec % 3600) / 60
         val s = totalSec % 60
         val prefix = if (ms < 0) "-" else ""
-        return if (h > 0) "$prefix$h:${String.format("%02d", m)}:${String.format("%02d", s)}"
-        else "$prefix${m}:${String.format("%02d", s)}"
+        // 固定使用 Locale.US，确保时长始终输出拉丁数字（避免非拉丁 locale 下显示异常字符）
+        val locale = java.util.Locale.US
+        return if (h > 0) "$prefix$h:${String.format(locale, "%02d", m)}:${String.format(locale, "%02d", s)}"
+        else "$prefix${m}:${String.format(locale, "%02d", s)}"
     }
 
 }

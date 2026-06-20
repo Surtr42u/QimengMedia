@@ -29,6 +29,7 @@ import com.qimeng.media.ui.main.HomeFragment
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.profile.ProfileFragment
 import com.qimeng.media.ui.search.SearchFragment
+import com.qimeng.media.ui.stats.StatsDetailFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -39,6 +40,10 @@ class MainActivity : AppCompatActivity() {
 
     private val fragmentCache = mutableMapOf<Int, Fragment>()
     private var lastNightMode = 0
+    // Activity 重建时（savedInstanceState != null），系统恢复 bottomNavigation.selectedItemId
+    // 可能触发 setOnItemSelectedListener，导致 showCachedFragment 误执行 popBackStack 清空覆盖页面。
+    // 用此标志位在重建期间跳过 listener 的默认行为，保留 BackStack 中的覆盖页面（如详情页）。
+    private var isRestoringState = false
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -64,6 +69,9 @@ class MainActivity : AppCompatActivity() {
         // M8: 配置变更后 fragmentCache 中的 Fragment 引用已失效，必须清空
         if (savedInstanceState != null) {
             fragmentCache.clear()
+            // 标记正在重建状态，防止系统恢复 selectedItemId 时 listener 误触发 showCachedFragment
+            // 清空覆盖页面 BackStack（如详情页），导致详情页上方出现底部 tab
+            isRestoringState = true
         }
 
         // L7: 恢复 detailSourceRecordKeys
@@ -78,6 +86,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.bottomNavigation.setOnItemSelectedListener { item ->
+            // Activity 重建期间，系统恢复 selectedItemId 会触发此 listener。
+            // 此时 BackStack 中可能还有覆盖页面（如详情页），不应执行 showCachedFragment
+            // （其中 popBackStack(INCLUSIVE) 会清空覆盖页面，导致详情页上方出现底部 tab）。
+            // 直接返回 true 让 selectedItemId 恢复生效，但不切换 Fragment。
+            if (isRestoringState) {
+                isRestoringState = false
+                return@setOnItemSelectedListener true
+            }
+
             val now = System.currentTimeMillis()
             val isDoubleTap = item.itemId == lastTabId && (now - lastTabClickTime) < 400
             lastTabId = item.itemId
@@ -91,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                     R.id.navigation_home -> showCachedFragment(R.id.navigation_home) { HomeFragment() }
                     R.id.navigation_all -> showCachedFragment(R.id.navigation_all) { AllFilesFragment() }
                     R.id.navigation_album -> showCachedFragment(R.id.navigation_album) { AlbumFragment() }
+                    R.id.navigation_stats -> showCachedFragment(R.id.navigation_stats) { com.qimeng.media.ui.stats.DataStatsFragment() }
                     R.id.navigation_profile -> showCachedFragment(R.id.navigation_profile) { ProfileFragment() }
                     else -> false
                 }
@@ -98,17 +116,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         supportFragmentManager.addOnBackStackChangedListener {
+            syncBottomNavVisibilityWithBackStack()
             val topFragment = supportFragmentManager.findFragmentById(R.id.fragmentContainer)
-            binding.bottomNavigation.visibility = when {
-                topFragment is MediaDetailFragment ||
-                topFragment is AuthorListFragment ||
-                topFragment is AuthorFilesFragment ||
-                topFragment is AlbumDetailFragment ||
-                topFragment is BrowseHistoryFragment ||
-                topFragment is FavoriteFragment ||
-                topFragment is SearchFragment -> View.GONE
-                else -> View.VISIBLE
-            }
             AppLog.d("MainActivity", "BackStackChanged: topFragment=${topFragment?.javaClass?.simpleName}, bottomNav=${binding.bottomNavigation.visibility}")
         }
 
@@ -142,6 +151,29 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         applyThemeColors()
+        // 重置重建标志位：listener 若未被触发（selectedItemId 未变），此处兜底重置，
+        // 防止后续用户首次点击 tab 被误判为重建回调而忽略。
+        isRestoringState = false
+        // 修复：App 从后台恢复时，bottomNavigation.visibility 可能被系统重置为 VISIBLE，
+        // 但 BackStackChangedListener 不会触发（BackStack 没变化），导致详情页上层显示外面 tab。
+        // 这里主动同步一次 BackStack 状态，确保详情页等全屏 Fragment 在前台时 tab 隐藏。
+        syncBottomNavVisibilityWithBackStack()
+    }
+
+    /** 根据 BackStack 栈顶 Fragment 类型同步 bottomNavigation 可见性 */
+    private fun syncBottomNavVisibilityWithBackStack() {
+        val topFragment = supportFragmentManager.findFragmentById(R.id.fragmentContainer)
+        binding.bottomNavigation.visibility = when {
+            topFragment is MediaDetailFragment ||
+            topFragment is AuthorListFragment ||
+            topFragment is AuthorFilesFragment ||
+            topFragment is AlbumDetailFragment ||
+            topFragment is BrowseHistoryFragment ||
+            topFragment is FavoriteFragment ||
+            topFragment is SearchFragment ||
+            topFragment is StatsDetailFragment -> View.GONE
+            else -> View.VISIBLE
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -185,6 +217,7 @@ class MainActivity : AppCompatActivity() {
             is HomeFragment -> topFragment.scrollToTop()
             is AllFilesFragment -> topFragment.scrollToTop()
             is AlbumFragment -> topFragment.scrollToTop()
+            is com.qimeng.media.ui.stats.DataStatsFragment -> topFragment.scrollToTop()
             is ProfileFragment -> topFragment.scrollToTop()
         }
     }
@@ -246,6 +279,16 @@ class MainActivity : AppCompatActivity() {
             .commit()
     }
 
+    /** 进入统计详情页（mode 见 StatsDetailFragment.MODE_*） */
+    fun showStatsDetail(mode: String, timeRange: String) {
+        binding.bottomNavigation.visibility = View.GONE
+        supportFragmentManager.beginTransaction()
+            .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+            .add(R.id.fragmentContainer, StatsDetailFragment.newInstance(mode, timeRange))
+            .addToBackStack(null)
+            .commit()
+    }
+
     fun showSearchFragment() {
         binding.bottomNavigation.visibility = View.GONE
         supportFragmentManager.beginTransaction()
@@ -274,17 +317,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyStoredTheme() {
         setTheme(R.style.Theme_绮梦影库)
+        // 项目设计决策（v1.10 起）：仅跟随手机系统明暗模式，不调用 setDefaultNightMode()。
+        // 系统 DayNight 自动选择 values/values-night，无需 App 内手动切换。
     }
 
     @Suppress("DEPRECATION")
     fun applyThemeColors() {
-        val colors = ThemeHelper.resolve(this)
-        val lightBars = resources.configuration.run {
-            (uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) !=
-                android.content.res.Configuration.UI_MODE_NIGHT_YES
-        }
-        window.statusBarColor = colors.bg
-        window.navigationBarColor = colors.surface
+        // 直接从 ?attr 解析颜色（跟随系统明暗模式，values/values-night 自动切换）
+        val c = ThemeHelper.resolve(this)
+        val lightBars = !isNightMode()
+        window.statusBarColor = c.bg
+        window.navigationBarColor = c.surface
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = lightBars
             isAppearanceLightNavigationBars = lightBars

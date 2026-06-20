@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
 import com.qimeng.media.R
 import com.qimeng.media.ThemeColors
 import com.qimeng.media.ThemeHelper
@@ -37,7 +38,7 @@ object MediaPillsHelper {
             textSize = 12f
             setTextColor(if (active) colors.bg else colors.textSecondary)
             background = if (active) {
-                context.getDrawable(R.drawable.bg_capsule_primary)
+                AppCompatResources.getDrawable(context, R.drawable.bg_capsule_primary)
             } else {
                 null
             }

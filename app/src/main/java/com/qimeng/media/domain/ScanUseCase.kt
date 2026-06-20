@@ -27,8 +27,6 @@ class ScanUseCase(
     private val authorImportUseCase: AuthorImportUseCase
 ) {
     private var lastAutoRefreshTime = 0L
-    private val AUTO_REFRESH_INTERVAL = 30_000L // 30秒内不重复自动刷新
-    private val COS_AUTO_REFRESH_INTERVAL = 300_000L // COS目录5分钟内不重复自动刷新
 
     /** 扫描指定目录，返回扫描结果和扫描到的媒体文件列表 */
     suspend fun scanDirectory(uri: Uri, displayName: String? = null): ScanResult {
@@ -72,7 +70,9 @@ class ScanUseCase(
                 AppLog.d("Scan", "rematchAllTxtImports failed: ${e.message}")
             }
 
-            return ScanResult.Success(mediaFiles.size, 1, scannedMedia)
+            // v1.7：检测大文件/大总量警告
+            val warning = ScanResult.buildScanWarning(scannedMedia)
+            return ScanResult.Success(mediaFiles.size, 1, scannedMedia, warning)
         } catch (exception: Exception) {
             AppLog.e("Scan", "scanDirectory failed: ${exception.message}", exception)
             return ScanResult.Error(exception.message ?: "扫描失败", scannedMedia)
@@ -177,7 +177,9 @@ class ScanUseCase(
             crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
 
             AppLog.d("CosScan", "scanCosDirectory: success, files=${newCosMedia.size}, authors=${newCosWorks.map { it.authorName }.distinct().size}, works=${newCosWorks.size}")
-            return ScanResult.Success(newCosMedia.size, 1, cosScanMedia)
+            // v1.7：检测大文件/大总量警告
+            val warning = ScanResult.buildScanWarning(newCosMedia)
+            return ScanResult.Success(newCosMedia.size, 1, cosScanMedia, warning)
         } catch (e: Exception) {
             AppLog.e("CosScan", "scanCosDirectory failed: ${e.message}", e)
             return ScanResult.Error(e.message ?: "COS扫描失败", cosScanMedia)
@@ -526,11 +528,50 @@ class ScanUseCase(
             "author_$hash"
         }
     }
+
+    companion object {
+        /** 自动刷新防抖：常规目录 30 秒内不重复刷新 */
+        private const val AUTO_REFRESH_INTERVAL = 30_000L
+        /** 自动刷新防抖：COS 目录 5 分钟内不重复刷新 */
+        private const val COS_AUTO_REFRESH_INTERVAL = 300_000L
+    }
 }
 
 /** 扫描操作结果，用于 UseCase 向 ViewModel 返回结构化数据 */
 sealed class ScanResult {
     abstract val mediaFiles: List<MediaFileEntity>
-    data class Success(val count: Int, val directoryCount: Int = 1, override val mediaFiles: List<MediaFileEntity>) : ScanResult()
+    data class Success(
+        val count: Int,
+        val directoryCount: Int = 1,
+        override val mediaFiles: List<MediaFileEntity>,
+        /** v1.7：扫描警告信息（大文件/大总量），null 表示无警告 */
+        val warning: String? = null
+    ) : ScanResult()
     data class Error(val message: String, override val mediaFiles: List<MediaFileEntity>) : ScanResult()
+
+    companion object {
+        /** v1.7 大文件扫描警告阈值 */
+        const val LARGE_FILE_THRESHOLD_BYTES = 100L * 1024 * 1024 // 100MB
+        const val LARGE_TOTAL_THRESHOLD_BYTES = 10L * 1024 * 1024 * 1024 // 10GB
+
+        /**
+         * v1.7：检测扫描结果是否需要警告（单文件 >100MB 或总量 >10GB）。
+         * 返回警告文案，无警告返回 null。
+         */
+        fun buildScanWarning(mediaFiles: List<MediaFileEntity>): String? {
+            if (mediaFiles.isEmpty()) return null
+            val totalBytes = mediaFiles.sumOf { it.sizeBytes }
+            val largeFiles = mediaFiles.count { it.sizeBytes > LARGE_FILE_THRESHOLD_BYTES }
+
+            val warnings = mutableListOf<String>()
+            if (totalBytes > LARGE_TOTAL_THRESHOLD_BYTES) {
+                val totalGB = totalBytes / (1024.0 * 1024 * 1024)
+                warnings.add("扫描总量约 ${String.format(java.util.Locale.US, "%.1f", totalGB)} GB")
+            }
+            if (largeFiles > 0) {
+                warnings.add("含 $largeFiles 个大文件(>100MB)")
+            }
+            return if (warnings.isEmpty()) null else warnings.joinToString("，") + "，扫描可能耗时"
+        }
+    }
 }

@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="qm_bg">#000000</color>
-    <color name="qm_surface">#000000</color>
-    <color name="qm_surface_soft">#141414</color>
-    <color name="qm_primary">#D9D9D9</color>
-    <color name="qm_primary_soft">#26D9D9D9</color>
-    <color name="qm_text_primary">#F2F2F2</color>
-    <color name="qm_text_secondary">#B8B8B8</color>
-    <color name="qm_chip_bg">#1D1D1D</color>
-    <color name="qm_divider">#252525</color>
-    <color name="qm_placeholder">#2A2A2A</color>
+    <!-- 夜间模式：暖黑而非纯黑，与木纹图标的暖色调一致 -->
+    <color name="qm_bg">#0F0E0D</color>
+    <color name="qm_surface">#1C1A17</color>
+    <color name="qm_surface_soft">#262320</color>
+    <!-- 夜间主色用木纹色，与图标一致 -->
+    <color name="qm_primary">#DDBC98</color>
+    <color name="qm_primary_soft">#26DDBC98</color>
+    <!-- 夜间强调色：明亮琥珀 -->
+    <color name="qm_accent">#DDBC98</color>
+    <color name="qm_accent_soft">#26DDBC98</color>
+    <!-- 夜间文字暖白 -->
+    <color name="qm_text_primary">#F2EDE5</color>
+    <color name="qm_text_secondary">#B0A69A</color>
+    <!-- 夜间胶囊和分割线暖灰 -->
+    <color name="qm_chip_bg">#2A2622</color>
+    <color name="qm_divider">#332E28</color>
+    <color name="qm_placeholder">#2A2622</color>
 </resources>

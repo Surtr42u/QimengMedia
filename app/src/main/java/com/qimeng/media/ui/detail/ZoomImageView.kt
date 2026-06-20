@@ -202,7 +202,7 @@ class ZoomImageView @JvmOverloads constructor(
             setLayerType(LAYER_TYPE_SOFTWARE, null)
             return
         }
-        val maxSize = GpuInfo.maxTextureSize(context)
+        val maxSize = GpuInfo.maxTextureSize()
         if (longside <= maxSize) {
             setLayerType(LAYER_TYPE_HARDWARE, null)
         } else {
@@ -228,7 +228,7 @@ class ZoomImageView @JvmOverloads constructor(
         if (containsAnimatedDrawable(drawable)) return true
         val longside = drawableLongSide(drawable)
         if (longside <= 0) return false
-        return longside <= GpuInfo.maxTextureSize(context)
+        return longside <= GpuInfo.maxTextureSize()
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {

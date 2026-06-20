@@ -26,8 +26,6 @@ class AutoSyncUseCase(
 ) {
     private var lastAutoSyncTime = 0L
     private var lastFullSyncTime = 0L
-    private val AUTO_SYNC_DEBOUNCE_MS = 30_000L // 30秒防抖（app数据/）
-    private val FULL_SYNC_DEBOUNCE_MS = 60_000L // 60秒防抖（全量同步）
 
     /** 扫描/刷新后触发：只写 app数据/，30秒防抖 */
     suspend fun triggerAutoSyncIfNeeded() {
@@ -106,5 +104,9 @@ class AutoSyncUseCase(
 
     companion object {
         const val KEY_BACKUP_DIRECTORY_URI = "backup_directory_uri"
+        /** 30秒防抖（app数据/） */
+        private const val AUTO_SYNC_DEBOUNCE_MS = 30_000L
+        /** 60秒防抖（全量同步） */
+        private const val FULL_SYNC_DEBOUNCE_MS = 60_000L
     }
 }

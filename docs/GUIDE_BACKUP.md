@@ -48,6 +48,7 @@
 - 自动同步使用防抖，避免每次小改动都写盘。
 - 写入时使用临时文件再替换，避免半写入损坏。
 - 导出失败提示用户，不影响数据库主数据。
+- 写入后立即回读校验（round-trip test），确保 JSON 可被正常解析。校验失败则删除该文件并记录 `AppLog.e`，防止备份损坏导致导入时静默丢数据。
 
 ## 导入原则
 
@@ -56,6 +57,16 @@
 - 对未知字段忽略但保留兼容空间。
 - 找不到媒体文件时保留未匹配记录。
 - 导入前可提示是否覆盖、合并或跳过冲突。
+
+### 导入安全加固（2026-06-20 审查新增）
+
+备份 JSON 虽通常为用户自有数据，但仍做防御性加固，防恶意/损坏备份导致异常：
+
+- **JSON 文件大小上限**：`readJson` 单文件最大 64MB（预检 `DocumentFile.length()` + 读取后二次校验 `bytes.size`），超过则跳过并记 `AppLog.w`，防 OOM。正常备份 JSON 仅几 MB，不触及上限。
+- **数值字段范围校验**：`importMediaStats` 的 `viewCount`/`playCount`/`totalBrowseSeconds`/`lastOpenedAtMillis`/`updatedAtMillis`、`importHistory` 的 `openedAtMillis`、`importLikes` 的 `likeCount` 均用 `coerceAtLeast(0)` 钳制非负，防恶意备份注入负数/异常统计。
+- **likes 条目数上限**：`importLikes` 限制最多 5000 条，超过跳过剩余并记日志，防 SharedPreferences 键膨胀。
+- **跨引用注入防护**：`importAuthors` 的 `files[]` recordKey 仅当 `mediaMap` 中存在时才建立 `AuthorMediaCrossRef`，不存在的 key 静默跳过，无法注入任意关联。
+- **SAF 重新授权**：导入的 `uriString`（扫描源/备份目录）由 Android `ContentResolver` 在每次访问时重新授权，用户未授权的 URI 直接 `SecurityException`，无法逃逸到任意文件。
 
 ## 冲突处理
 
@@ -110,6 +121,19 @@
 | `personal_prefs.json` | JSON | 完整数据备份，COS+常规统一，含统计/标签/作者/作品 |
 | `personal_prefs_report.txt` | 纯中文文本 | 给用户自己看，人类可读的偏好报告 |
 
+### 自定义章节导出报告
+
+数据备份弹层新增"自定义导出"入口，用户可勾选要导出的章节（默认全选），确认后导出到备份目录的"个人偏好"子文件夹。
+
+**实现要点**：
+- `ReportSectionOptions` 数据类（9 个 Boolean 字段，默认全 true 保持向后兼容）封装章节勾选状态
+- `BackupManager.exportPersonalPrefsToFile` 接受 `ReportSectionOptions` 参数，`buildReportText` 按选项条件性拼接章节
+- `ProfileFragment.showCustomReportExportDialog()` 使用 `AlertDialog.setMultiChoiceItems` 实现多选
+- 备份目录 URI 从 settings 表 `KEY_BACKUP_DIRECTORY_URI` 读取（通过 `MediaLibraryViewModel.getBackupDirectoryUri()`）
+- 至少需选择 1 个章节，否则提示"请至少选择一个章节"
+
+**可勾选章节**（9 个）：总览、总 Top 30、常规 Top 20、COS作品 Top 20、作者 Top 20、关注作者、标签 Top 20、全部标签、收藏列表
+
 ### JSON 文件（完整数据备份）
 
 `data` 区域包含 8 个部分（COS+常规统一）：
@@ -135,10 +159,10 @@ JSON 可完整还原 TXT 报告（viewStats 含 mediaType 和 isCosFile，可区
 - 【总览】文件总数（常规/COS）、收藏数（常规/COS）、标签数、作者数、关注作者数、总查看/播放次数、总浏览时长
 - 【总 Top 30】COS作品+常规文件混合，按热度分降序（COS 按作品聚合，常规按单个文件）
 - 【常规 Top 20】非 COS 文件，按单个文件热度分降序
-- 【COS Top 20】按作品聚合，按热度分降序
+- 【COS作品 Top 20】按作品聚合，按热度分降序
 - 【作者 Top 20】不分 COS/常规，按偏好度降序
 - 【关注的作者】全部列出
-- 【标签 Top 10】按关联文件数降序
+- 【标签 Top 20】按关联文件数降序
 - 【所有标签】全部列出（名称 + 关联文件数）
 - 【收藏的文件】全部列出
 - 排行说明

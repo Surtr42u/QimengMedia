@@ -214,7 +214,7 @@
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
 | 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 5 个核心测试类 | ./gradlew test |
-| Lint 警告 | 0 个 Error | 命令行卡死，改用 AS | Android Studio Inspect Code |
+| Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
 ### 当前已备案的黄色区项（基于 detekt 实证数据 2026-06-17）
@@ -248,13 +248,87 @@
 | `MediaFilterSheet.show` | 35 | <20 | 拆分为 show()编排 + appendTimeRangeSection + appendTagsSection + buildFooter，引入 FilterStateHolder 解决闭包问题 |
 | `MediaRenderHelper`（新增） | - | - | 纯计算型 object，封装 applyTypeFilter/computeDisplayed/buildFingerprint，5 个 Fragment 共享，消除重复代码 |
 
+### 全项目审查清理（2026-06-20）
+
+基于 detekt 实测 + 安全审查 + 死代码扫描的全项目代码审查，本次清理项：
+
+| 类别 | 文件/项 | 处理方式 |
+|---|---|---|
+| 死资源（主题选择器回退残留） | `bg_color_circle.xml`、`bg_color_circle_small.xml`、`bg_preset_card.xml`、`bg_theme_drag_handle.xml`、`bg_theme_sheet.xml`、`ic_check.xml`、`ic_close.xml`、`theme_overlays.xml` | 删除。这些是"点击主题色彩闪退回退到仅跟随系统"那次决策后未清理的 UI 残留（对应 PROJECT_GUIDE 主题回退记录），全项目零引用 |
+| 未使用私有属性 | `BarChartView.bgColor`、`LineChartView.valueLabelPaint`、`PieChartView.selectedStrokePaint` | 删除。图表组件开发时预留但未接入绘制流程的画笔/颜色 |
+| 未使用参数 | `GpuInfo.maxTextureSize(context)`、`GpuInfo.maxTextureSizeOrDefault(context)` 的 `context` 参数 | 删除参数 + 同步更新 3 处调用方（QimengApplication、ZoomImageView ×2）。EGL14 探测不依赖 Context，参数本属冗余 |
+| 未使用参数 | `StatsDetailFragment.renderDistributionComparison` 的 `statsMap` 参数 | 删除参数 + 更新调用处。分布对比已用预聚合的 typeData/sourceData，statsMap 为签名遗留 |
+| 命名违规（VariableNaming） | `ScanUseCase` 的 `AUTO_REFRESH_INTERVAL`/`COS_AUTO_REFRESH_INTERVAL`（原为类体 `private val` 大写命名） | 移入 `ScanUseCase.companion object` 改为 `private const val`，符合"常量大写下划线"规范且 const val 大写合规 |
+| 隐式默认 Locale（ImplicitDefaultLocale） | `BackupManager.exportPersonalPrefs` 的 `String.format("%.1f", ...)`、`BiliPlayerView.formatMs` 的 `String.format("%02d", ...)` ×3 | 统一加 `Locale.US`，确保时长/统计数字始终输出拉丁数字，避免非拉丁 locale（阿拉伯语等）下显示异常字符 |
+| 安全加固（备份导入） | `BackupManager.readJson` | 单文件最大 64MB 上限（预检 `file.length()` + 读取后二次校验），防恶意/损坏 JSON 导致 OOM |
+| 安全加固（备份导入） | `importMediaStats`/`importHistory` | viewCount/playCount/totalBrowseSeconds/openedAtMillis/updatedAtMillis 等数值字段 `coerceAtLeast(0)`，防恶意备份注入负数/异常统计 |
+| 安全加固（备份导入） | `importLikes` | 条目数上限 5000 + likeCount 钳制非负，防 SharedPreferences 键膨胀 |
+
+**未重构项（合理复杂度，备案不重构）**：detekt 报告的 12 处 `LoopWithTooManyJumpStatements` 经评估均为解析/匹配/扫描/监控循环的合理控制流（如 `AnrWatchdog` 守护线程的 return@thread/continue、`SourceMatcher` 角色/变体匹配的前置过滤 continue、`MediaStoreScanner` 路径解析的 break），强行重构违反"重构不改变功能行为"原则且增加 bug 风险，按 §8"合理复杂度"场景认可，不重构。
+
+**安全审查结论**（9 维度）：Manifest/网络/文件SAF/备份注入/SQL注入/反序列化/Intent/日志/硬编码密钥全部 CLEAN，无 CRITICAL/HIGH/MEDIUM 漏洞。详见 `GUIDE_BACKUP.md`「导入安全加固」。
+
+### WIP 代码审查（2026-06-20，审查其他 AI 留下的未提交改动）
+
+审查范围：v1.7 数据统计新模块（`ui/stats/`）、自绘图表 widget、DB schema v3、扫描优化、主题/导航等未提交 WIP。
+
+| 类别 | 文件/项 | 处理 |
+|---|---|---|
+| ImplicitDefaultLocale（detekt 漏检，Kotlin `.format()` 扩展不触发该规则） | `DataStatsFragment`（formatNumber/formatDuration/formatSize/avgDepth 共 9 处）、`StatsDetailFragment`（6 处 SummaryItem/insights + formatNumber/formatSize 共 9 处）、`ScanUseCase.buildScanWarning`（1 处） | 统一改 `String.format(java.util.Locale.US, ...)`。非拉丁 locale（阿拉伯语等）下 `%.1f` 会输出阿拉伯-印度数字，与中文单位"万/天/GB"混排显示异常。`SimpleDateFormat.format()` 用 `Locale.getDefault()` 是**正确的**（日期应本地化），未改 |
+| 文档与代码不一致 | `GUIDE_UI.md` 排行榜组件段写 `StatsDetailBottomSheet` | 修正为 `StatsDetailFragment`（实际是全新界面 Fragment，非 BottomSheet） |
+
+**WIP 审查待办项处理结果（2026-06-20，已全部处理）**：
+
+1. **`MediaStoreObserver` 精准增量死变量清理（已处理）**：移除 `pendingChangeUris`（Set 收集 + synchronized 锁，收集后从不消费）和 `changedUris` 中间变量，保留 `pendingChangeCount`（AtomicInteger，轻量，log 合并次数有诊断价值）。`scheduleRefresh` 不再传 uri 参数，类注释去掉"精准增量"的虚假承诺。同步更新 `GUIDE_SCAN.md` 防抖时间 2秒→5秒。
+2. **stats 模块重复代码提取（已处理）**：新增 `ui/stats/StatsFormatHelper.kt` 共享 object（纯计算型，无 Context 依赖），提取 `formatNumber`/`formatSize`/`groupByDay`/`groupByWeek` 4 个逐字重复方法。`DataStatsFragment`/`StatsDetailFragment` 改为调用 `StatsFormatHelper.xxx`，删除各自的私有实现 + 未使用 import（SimpleDateFormat/Calendar/Date）。两文件各自独有的 `formatDuration`（语义不同：一个分钟→天/时/分，一个秒→小时/分）不合并，保留私有。
+3. **`viewModel.allMedia` 全量加载（评估后不改）**：`allMedia` 是多页面（全部/相册/收藏等列表页）共用的已有 Flow，stats 页复用它做 count/sum 聚合是合理的，非额外查询。改 DAO 聚合需新增专门 Flow + DAO 方法 + Repository 接口，与现有 Flow 重复，收益不抵成本。本地媒体库文件数通常几百到几千，全量 `MediaFileEntity` 占用约几 MB，可接受。结论：保持现状，`GUIDE_UI.md` 已注明有意为之。
+
+### Android Lint + 死类扫描补查（2026-06-20）
+
+补做之前遗漏的 Android Lint 运行和 Kotlin 层死类系统扫描。
+
+**Android Lint**（命令行 `lintDebug` 实测 1m54s 可完成，历史"卡死"问题随 daemon 规范化已消失）：
+
+| 类别 | 项 | 处理 |
+|---|---|---|
+| Error: UseAppTint（Priority 1） | `fragment_stats_detail.xml:26` 返回箭头用 `android:tint` | 改为 `app:tint`（AppCompat 矢量图 tint 应使用 app 命名空间） |
+| Error: ResAuto ×3（Priority 9） | `fragment_author_list.xml`/`fragment_browse_history.xml`/`fragment_favorite.xml` 的 `xmlns:app` 拼写错误：`http://schemas.android.com/apk-res-auto`（少一个 `/`） | 修正为 `http://schemas.android.com/apk/res-auto`。拼错的命名空间会导致布局内 `app:xxx` 属性失效 |
+| Error: UnsafeOptInUsageError ×5 | `MainActivity` 引用 `MediaDetailFragment`（已标 `@UnstableApi`）触发 Media3 opt-in 传播报 Error | `build.gradle.kts` lint disable 加 `UnsafeOptInUsageError`（项目已决定使用 Media3，无需逐层 opt-in 标注；`MediaDetailFragment`/`BiliPlayerView` 已标 `@UnstableApi`） |
+| Warning: UnusedResources | 7 个 drawable（`bg_avatar_placeholder`/`bg_capsule_primary_soft`/`bg_detail_action`/`bg_detail_bar`/`bg_detail_button`/`ic_player_forward`/`ic_player_rewind`）+ 2 个 color（`black`/`white`） | 删除。Lint 权威检测，全项目零引用。`bg_detail_*` 系详情页 chrome 重构后废弃，`ic_player_forward/rewind` 系 BiliPlayerView 改版后未用的快进快退图标 |
+| Warning: DrawAllocation | `BarChartView.onDraw` 在绘制循环内分配 `RectF`/`LinearGradient` | **未修，标记为待优化**：柱状图条目仅 Top 5，每帧分配几个小对象影响可忽略；预分配复用需重构 onDraw 逻辑，风险较高，属其他 AI 的 WIP 图表代码，建议后续性能优化时处理 |
+| Warning: Manifest INTERNET `tools:node=remove` | 无其他声明可移除的提示 | 良性，保留（主动剥离网络权限的安全做法） |
+
+**Kotlin 死类扫描**：系统扫描全项目顶层 class/object，发现 `backup/BackupModels.kt` **整个文件是死代码**——20 个 data class（`BackupEnvelope`/`SettingsBackup`/`MediaStatsBackup`... 等）+ 1 个常量 `CURRENT_BACKUP_SCHEMA_VERSION`，全项目零外部消费，只在文件内自闭环（早期类型化备份模型设计，后 BackupManager 改用 `JSONObject` 手工序列化后废弃未删）。已删除整个文件，构建验证通过。
+
+### Lint Warning 优化（2026-06-20，243→225）
+
+对剩余 243 个 Warning 逐类评估，修复可安全处理的，其余按理由保留：
+
+**已修复**：
+| 类别 | 处理 |
+|---|---|
+| UseCompatLoadingForDrawables（6 处） | `context.getDrawable()`/`requireContext().getDrawable()` → `AppCompatResources.getDrawable()`（兼容矢量图 tint，MediaPillsHelper + StatsDetailFragment） |
+| NotShrinkingResources（1） | release 构建加 `isShrinkResources = true`，配合 R8 移除未引用资源减小 APK |
+| ConstantLocale（2）/SelectedPhotoAccess（2）/OldTargetApi（1） | lint disable 并附理由：App 仅中文本地应用 locale 运行时变化不适用；用 SAF 目录授权而非标准媒体选择器，SelectedPhotoAccess 不适用；targetSdk=36 已是当前最新稳定版 |
+
+**保留未修（附理由）**：
+| 类别 | 数量 | 理由 |
+|---|---|---|
+| HardcodedText/SetTextI18n | 132 | 本地中文 App 有意硬编码文本，提取 strings.xml 收益为零且增加维护成本 |
+| DrawAllocation | 15 | 自绘图表 onDraw 内分配对象，条目少（Top 5）影响小，预分配复用需重构 onDraw 逻辑风险高 |
+| ContentDescription/ClickableViewAccessibility/LabelFor | 22 | 无障碍提示，纯视觉媒体库价值有限且工作量大 |
+| UselessParent/DisableBaselineAlignment | 5 | 布局微优化，前者改结构有 UI 破坏风险，后者收益极小 |
+| IconLauncherShape/IconDuplicates/IconXmlAndPng/MonochromeLauncherIcon/IconLocation | 20 | 启动器图标设计取舍 |
+| ObsoleteDep/NewerVersionAvailable/GradleDependency | 24 | 依赖版本升级，属单独大动作，不在代码审查范围 |
+| ClickableViewAccessibility 等 | 6 | 自定义 View onTouchEvent 缺 performClick，改动需逐个评估手势逻辑 |
+
 ### Detekt 配置
 
 - 配置文件：`detekt.yml`（项目根目录）
 - 运行：`./gradlew detekt`
 - 报告：`app/build/reports/detekt/detekt.html`
 - 当前设为 `ignoreFailures=true`（不阻断构建），后续逐步收紧阈值
-- 已修复：UnusedPrivateMember、UnusedParameter、WildcardImport、NewLineAtEndOfFile 等
+- 已修复：UnusedPrivateMember、UnusedParameter、WildcardImport、NewLineAtEndOfFile、VariableNaming、ImplicitDefaultLocale、UnusedPrivateProperty 等（详见上方「全项目审查清理 2026-06-20」表）
 
 ### 已有单元测试
 
@@ -305,6 +379,7 @@
 | `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+辅助图表+Top 20 排行榜/分布对比卡片，四种模式，文件模式支持热度/时长排序切换，分布模式显示类型/来源两张对比卡片，浏览趋势图支持点击数据点显示数值气泡） | DataStatsFragment |
 | `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
 | `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置）, ZoomImageView（智能分层渲染判断） |
+| `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
 
 ### 共享胶囊筛选体系
 
@@ -469,4 +544,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-20

@@ -101,6 +101,7 @@
 - `deleteMediaAndRefs` 扩展：事务内删除6张表（新增 view_stats/view_history/timeline_tags），事务外清理 SharedPreferences（点赞/收藏）和缓存（Coil 内存缓存 + ThumbnailCache）；启动时 `cleanupStaleRefs()` 清理历史残留数据。
 - `authors.json` schemaVersion 升至 2：导出时 files 数组填入关联 recordKey，导入时恢复 AuthorMediaCrossRef。
 - 个人偏好 TXT 报告 COS 排行按作品（文件夹）聚合显示，常规文件不变。
+- 已完成全项目代码审查与安全加固（2026-06-20）：① 安全审查 9 维度（Manifest/网络/文件SAF/备份注入/SQL注入/反序列化/Intent/日志/硬编码密钥）全部 CLEAN，无 CRITICAL/HIGH/MEDIUM 漏洞，详见 `GUIDE_BACKUP.md`「导入安全加固」；② 死代码清除：删除 8 个主题选择器回退残留孤儿资源（`bg_color_circle`/`bg_color_circle_small`/`bg_preset_card`/`bg_theme_drag_handle`/`bg_theme_sheet`/`ic_check`/`ic_close`/`theme_overlays.xml`）、3 个未使用图表画笔属性（`BarChartView.bgColor`/`LineChartView.valueLabelPaint`+连带的`textColorPrimary`/`PieChartView.selectedStrokePaint`）、`GpuInfo` 冗余 context 参数（同步更新 3 处调用方）、`StatsDetailFragment.renderDistributionComparison` 遗留 statsMap 参数；③ 代码规范修复：`ScanUseCase`/`AutoSyncUseCase` 防抖常量移入 companion object 改 `const val`（消除 VariableNaming）、4 处 `String.format` 加 `Locale.US`（消除 ImplicitDefaultLocale，防非拉丁 locale 时长显示异常）；④ 安全加固：`BackupManager.readJson` 单文件 64MB 上限防 OOM、`importMediaStats`/`importHistory`/`importLikes` 数值字段 `coerceAtLeast(0)` + likes 5000 条上限防 SharedPreferences 膨胀。detekt 的 UnusedPrivateProperty/UnusedParameter/VariableNaming/ImplicitDefaultLocale 全部清零，详见 `GUIDE_CODE_MAINTENANCE.md`「全项目审查清理 2026-06-20」。
 
 ## 核心原则
 
@@ -194,7 +195,6 @@ QimengMedia/
 │           │   └── ScanUtils.kt
 │           ├── backup/
 │           │   ├── BackupManager.kt
-│           │   ├── BackupModels.kt
 │           │   ├── BackupFileNames.kt
 │           │   └── BackupRepository.kt
 │           ├── domain/
@@ -239,6 +239,7 @@ QimengMedia/
 │               ├── stats/                       # 数据统计页（专业报表）
 │               │   ├── DataStatsFragment.kt     # 数据统计主页面
 │               │   ├── StatsDetailFragment.kt   # 统计详情页（全新界面）
+│               │   ├── StatsFormatHelper.kt     # 统计页共享格式化与聚合（formatNumber/formatSize/groupByDay/groupByWeek）
 │               │   └── RankListAdapter.kt       # 排行榜列表 Adapter（点击跳转）
 │               └── widget/
 │                   ├── BarChartView.kt          # 竖向柱状图（自绘 Canvas）
@@ -295,4 +296,4 @@ QimengMedia/
 
 换 AI、换开发工具或交接项目时，必须传完整源码目录，不只传 APK。
 
-> 最后更新：2026-06-19
+> 最后更新：2026-06-20

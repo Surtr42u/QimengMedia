@@ -15,8 +15,8 @@
 | 文档 | 管什么 | 核心内容 |
 |---|---|---|
 | `GUIDE_UI.md` | 所有页面的文件路径、布局结构、导航行为、RecyclerView 适配器 | 详情页叠加模式、首页芯片栏、全部页日期分组、筛选面板 |
-| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份 JSON 格式、UseCase 层 | 11 个实体、10 个 DAO、4 个 UseCase、完整文件名主键、7 个 JSON 文件格式 |
-| `GUIDE_THEME.md` | 9 个 `?attr/qmColor*` 颜色属性、系统白天/夜间两套主题、代码中使用方式 | `values` / `values-night`、`ThemeHelper.resolve()`、系统栏明暗同步 |
+| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份 JSON 格式、UseCase 层 | 12 个实体、10 个 DAO、4 个 UseCase、完整文件名主键、10 个 JSON 文件格式 |
+| `GUIDE_THEME.md` | 9 个 `?attr/qmColor*` 颜色属性、明暗模式切换（跟随系统/浅色/深色）、代码中使用方式 | `values` / `values-night`、`ThemeHelper.resolve()`、`AppCompatDelegate.setDefaultNightMode()`、系统栏明暗同步 |
 | `GUIDE_SCAN.md` | SAF 授权目录、双引擎扫描（MediaStore+SAF）、两套扫描体系、COS 路径解析 | MediaStore 优先 + SAF 回退、scanTreeFast、按需元数据解码 |
 | `GUIDE_ALGORITHM.md` | 推荐公式 10 维权重、排行榜周期、筛选面板全字段、排序缓存 | tagRelevance 0.22 + engagement 0.15 + tagCollection 0.15 + discovery 0.15 等 |
 | `GUIDE_BACKUP.md` | 备份目录管理、导入导出流程图、数据管理弹层功能 | BackupManager、SAF 目录选择、自动同步 |
@@ -72,4 +72,4 @@
 
 所有人（AI 或程序员）改代码前请先读 `AGENTS.md` 和 `AI_README_FIRST.md`。
 
-> 最后更新：2026-06-06
+> 最后更新：2026-06-18

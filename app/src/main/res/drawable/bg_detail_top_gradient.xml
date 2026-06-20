@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 详情页顶部栏渐变遮罩：从 bg 色到透明，营造沉浸感 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#E6F2F1ED"
+        android:endColor="#00F2F1ED" />
+</shape>

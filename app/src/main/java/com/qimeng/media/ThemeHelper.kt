@@ -6,6 +6,12 @@ import android.util.TypedValue
 import androidx.annotation.AttrRes
 import androidx.core.content.ContextCompat
 
+/**
+ * 主题色解析工具。
+ *
+ * v1.10 起：取消主题定制系统（ThemeManager/ThemePreset），仅保留跟随手机系统的明暗模式。
+ * 所有颜色由 values/values-night 静态决定，运行时直接解析 ?attr。
+ */
 fun Context.resolveThemeColor(@AttrRes attr: Int): Int {
     val tv = TypedValue()
     theme.resolveAttribute(attr, tv, true)
@@ -21,6 +27,8 @@ data class ThemeColors(
     val surfaceSoft: Int,
     val primary: Int,
     val primarySoft: Int,
+    val accent: Int,
+    val accentSoft: Int,
     val textPrimary: Int,
     val textSecondary: Int,
     val chipBg: Int,
@@ -28,17 +36,18 @@ data class ThemeColors(
 )
 
 object ThemeHelper {
-    fun resolve(context: Context): ThemeColors = with(context) {
-        ThemeColors(
-            bg = resolveThemeColor(R.attr.qmColorBg),
-            surface = resolveThemeColor(R.attr.qmColorSurface),
-            surfaceSoft = resolveThemeColor(R.attr.qmColorSurfaceSoft),
-            primary = resolveThemeColor(R.attr.qmColorPrimary),
-            primarySoft = resolveThemeColor(R.attr.qmColorPrimarySoft),
-            textPrimary = resolveThemeColor(R.attr.qmColorTextPrimary),
-            textSecondary = resolveThemeColor(R.attr.qmColorTextSecondary),
-            chipBg = resolveThemeColor(R.attr.qmColorChipBg),
-            divider = resolveThemeColor(R.attr.qmColorDivider)
-        )
-    }
+    /** 批量解析 11 个主题色，直接从 ?attr 读取（跟随系统明暗模式） */
+    fun resolve(context: Context): ThemeColors = ThemeColors(
+        bg = context.resolveThemeColor(R.attr.qmColorBg),
+        surface = context.resolveThemeColor(R.attr.qmColorSurface),
+        surfaceSoft = context.resolveThemeColor(R.attr.qmColorSurfaceSoft),
+        primary = context.resolveThemeColor(R.attr.qmColorPrimary),
+        primarySoft = context.resolveThemeColor(R.attr.qmColorPrimarySoft),
+        accent = context.resolveThemeColor(R.attr.qmColorAccent),
+        accentSoft = context.resolveThemeColor(R.attr.qmColorAccentSoft),
+        textPrimary = context.resolveThemeColor(R.attr.qmColorTextPrimary),
+        textSecondary = context.resolveThemeColor(R.attr.qmColorTextSecondary),
+        chipBg = context.resolveThemeColor(R.attr.qmColorChipBg),
+        divider = context.resolveThemeColor(R.attr.qmColorDivider)
+    )
 }

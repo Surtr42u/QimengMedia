@@ -13,6 +13,10 @@
         android:icon="@drawable/ic_nav_album"
         android:title="相册" />
     <item
+        android:id="@+id/navigation_stats"
+        android:icon="@drawable/ic_nav_stats"
+        android:title="数据" />
+    <item
         android:id="@+id/navigation_profile"
         android:icon="@drawable/ic_nav_profile"
         android:title="我的" />

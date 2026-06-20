@@ -23,7 +23,7 @@
 
 - Room 实体和 DAO（11 个实体、10 个 DAO、AppDatabase、LocalMediaRepository）。
 - Repository 接口与默认实现（DefaultLocalMediaRepository）。
-- JSON 导入导出模型（BackupModels、BackupFileNames、BackupRepository 接口）。
+- JSON 导入导出（BackupFileNames、BackupRepository 接口；序列化使用 JSONObject 手工实现，BackupManager 内完成）。
 - 记录键工厂（RecordKeyFactory）。
 - 自动同步到用户指定备份目录（后续接入文件读写）。
 
@@ -85,29 +85,6 @@
 
 ---
 
-## 版本更新记录
-
-### v1.6
-
-- **代码规范重构（基于 detekt 实证）**：
-  - 新增 `MediaRenderHelper` 纯计算型 object（封装 applyTypeFilter/computeDisplayed/buildFingerprint），5 个 Fragment 共享渲染计算逻辑
-  - 5 个 Fragment.render 重构（CC 22-48→<20）：拆分为 render()编排 + computeXxxGroupsAsync()协程计算 + updateXxxUI()UI更新
-  - `MediaFilterSheet.show` 重构（CC 35→<20）：拆分为 show()编排 + appendTimeRangeSection/appendTagsSection/buildFooter + FilterStateHolder
-  - `MediaDetailFragment.showMediaAt` 重构（CC 29→5）：提取 showImage/showVideo/setupVideoTouchOverlay/isTapGesture/needsMetadataDecode
-  - `MediaBrowserLogic.recommend` 重构（CC 31→6）：提取 resolveWeights/computeNormDenominators/shuffleBuckets + RecommendWeights/NormDenominators 数据类
-  - `BackupManager` 报告生成重构：密封类 RankEntry 消除 !!、PersonalPrefsReportData 数据类封装 24 参数、buildReportText 按章节提取 10 个子方法
-  - 清理 8 处死代码（seekRelative/extractInt/resolver/formatSeconds/showRootFragment/THUMB_SIZE/MediaStoreObserver.trigger参数/SafMediaScanner.extractInt）
-  - 删除死代码 DetailSheetHelper.kt
-- **代码规范文档弹性化**：GUIDE_CODE_MAINTENANCE.md 改为三档警戒线弹性规范（绿色/黄色/红色），基于 detekt 实证数据备案
-
-### v1.5
-
-- **分区药丸默认改为「全部」**：全部页/收藏页/浏览历史的分区药丸默认选中"全部"（非"默认/常规"），"全部"显示常规+COS合并后的所有文件，"常规"只显示非COS文件
-- **mergeGroups() 分组合并**：「全部」分区模式下，使用 `mergeGroups()` 合并常规和COS的出处分组/角色分组结果，相同 key（如"其他"）的文件列表拼接而非覆盖；AllFilesFragment、FavoriteFragment、BrowseHistoryFragment 均使用此模式
-- **BrowseHistoryFragment 空状态完善**：常规/全部模式空状态显示"没有浏览记录"，COS模式空状态显示"没有COS浏览记录"
-
----
-
 ## 统一待办清单
 
 ### 维护规则
@@ -116,4 +93,4 @@
 - 新增功能如果产生了新的待办，在本文件新增对应阶段或追加到已有阶段"当前状态"的后续项中。
 - 每次修改 `DEVELOPMENT_PLAN.md` 后更新底部时间戳。
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-20

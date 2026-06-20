@@ -106,6 +106,33 @@ private sealed class RankEntry {
     internal data class CosWork(override val score: Int, val entry: CosWorkEntry) : RankEntry()
 }
 
+/**
+ * v1.7：个人偏好报告章节勾选配置。
+ * 默认全部为 true（导出所有章节），保持向后兼容。
+ * 通过 UI 勾选框控制，支持只导出部分章节。
+ */
+data class ReportSectionOptions(
+    val overview: Boolean = true,           // 【总览】汇总统计
+    val mixedTop: Boolean = true,           // 【总 Top 30】混合排行
+    val normalTop: Boolean = true,          // 【常规 Top 20】
+    val cosWorkTop: Boolean = true,         // 【COS作品 Top 20】
+    val authorTop: Boolean = true,          // 【作者 Top 20】
+    val followedAuthors: Boolean = true,    // 【关注作者】
+    val tagTop: Boolean = true,             // 【标签 Top 20】
+    val allTags: Boolean = true,            // 【全部标签】
+    val favorites: Boolean = true           // 【收藏列表】
+) {
+    /** 是否所有章节都被选中（等于默认行为） */
+    val isAllSelected: Boolean get() = overview && mixedTop && normalTop && cosWorkTop &&
+        authorTop && followedAuthors && tagTop && allTags && favorites
+
+    /** 选中章节数量 */
+    val selectedCount: Int get() = listOf(
+        overview, mixedTop, normalTop, cosWorkTop,
+        authorTop, followedAuthors, tagTop, allTags, favorites
+    ).count { it }
+}
+
 class BackupManager(private val context: Context) {
 
     suspend fun autoSyncToDirectory(dirUri: Uri, database: AppDatabase, appPrefsManager: AppPrefsManager): Boolean = withContext(Dispatchers.IO) {
@@ -129,6 +156,9 @@ class BackupManager(private val context: Context) {
         /**
          * 原子写入JSON文件：先写入临时文件，成功后再重命名
          * 避免写入过程中崩溃导致文件损坏
+         *
+         * v1.7：写入后立即回读校验（round-trip test），确保 JSON 可被正常解析。
+         * 校验失败则删除该文件并记录日志，防止备份损坏导致导入时静默丢数据。
          */
         fun writeJson(name: String, json: JSONObject) {
             try {
@@ -149,12 +179,30 @@ class BackupManager(private val context: Context) {
                 dir.findFile(name)?.takeIf { it.isFile }?.delete()
                 
                 // 3. 重命名临时文件为最终文件名
-                tempFile.renameTo(name)
+                if (!tempFile.renameTo(name)) {
+                    AppLog.e("BackupManager", "writeJson rename failed for $name")
+                    return
+                }
+
+                // 4. v1.7 round-trip 校验：回读并验证 JSON 可解析
+                val writtenFile = dir.findFile(name) ?: run {
+                    AppLog.e("BackupManager", "writeJson verify failed: file not found after rename: $name")
+                    return
+                }
+                context.contentResolver.openInputStream(writtenFile.uri)?.use { stream ->
+                    val readBack = String(stream.readBytes(), Charsets.UTF_8)
+                    JSONObject(readBack) // 若 JSON 损坏，此处抛 JSONException
+                } ?: run {
+                    AppLog.e("BackupManager", "writeJson verify failed: cannot open input stream: $name")
+                    return
+                }
+
                 count++
             } catch (e: Exception) {
-                AppLog.d("BackupManager", "writeJson failed for $name: ${e.message}")
-                // 清理临时文件
+                AppLog.e("BackupManager", "writeJson failed for $name: ${e.message}", e)
+                // 清理临时文件和损坏的最终文件
                 dir.findFile("${name}.tmp")?.delete()
+                dir.findFile(name)?.delete()
             }
         }
 
@@ -179,9 +227,22 @@ class BackupManager(private val context: Context) {
 
         fun readJson(name: String): JSONObject? {
             val file = dir.findFile(name) ?: return null
+            // 安全加固：限制单文件最大 64MB，防止恶意/损坏的备份 JSON 导致 OOM
+            // （正常备份 JSON 仅几 MB；用户自己的统计数据不会触及此上限）
+            val maxBytes = 64L * 1024 * 1024
+            val declaredLen = file.length()
+            if (declaredLen in 1..Long.MAX_VALUE && declaredLen > maxBytes) {
+                com.qimeng.media.core.AppLog.w("Backup", "readJson 跳过 $name：文件 ${declaredLen / 1024}KB 超过上限 ${maxBytes / 1024}KB")
+                return null
+            }
             return try {
                 context.contentResolver.openInputStream(file.uri)?.use { stream ->
-                    JSONObject(String(stream.readBytes()))
+                    val bytes = stream.readBytes()
+                    if (bytes.size > maxBytes) {
+                        com.qimeng.media.core.AppLog.w("Backup", "readJson 跳过 $name：实际读取 ${bytes.size / 1024}KB 超过上限")
+                        return@use null
+                    }
+                    JSONObject(String(bytes))
                 }
             } catch (e: Exception) { com.qimeng.media.core.AppLog.d("Backup", "readJson failed for $name: ${e.message}"); null }
         }
@@ -457,11 +518,12 @@ class BackupManager(private val context: Context) {
                 ViewStatsEntity(
                     recordKey = obj.optString("recordKey", ""),
                     fileName = obj.optString("fileName", ""),
-                    viewCount = obj.optInt("viewCount", 0),
-                    playCount = obj.optInt("playCount", 0),
-                    totalBrowseSeconds = obj.optLong("totalBrowseSeconds", 0),
-                    lastOpenedAtMillis = if (obj.has("lastOpenedAtMillis") && !obj.isNull("lastOpenedAtMillis")) obj.optLong("lastOpenedAtMillis") else null,
-                    updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis())
+                    // 安全加固：钳制负数/异常值，防止恶意备份注入不合理统计
+                    viewCount = obj.optInt("viewCount", 0).coerceAtLeast(0),
+                    playCount = obj.optInt("playCount", 0).coerceAtLeast(0),
+                    totalBrowseSeconds = obj.optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
+                    lastOpenedAtMillis = if (obj.has("lastOpenedAtMillis") && !obj.isNull("lastOpenedAtMillis")) obj.optLong("lastOpenedAtMillis").coerceAtLeast(0L) else null,
+                    updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
                 )
             )
         }
@@ -477,7 +539,7 @@ class BackupManager(private val context: Context) {
                     recordKey = obj.optString("recordKey", ""),
                     fileName = obj.optString("fileName", ""),
                     mediaType = obj.optString("mediaType", "image"),
-                    openedAtMillis = obj.optLong("openedAtMillis", System.currentTimeMillis())
+                    openedAtMillis = obj.optLong("openedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
                 )
             )
         }
@@ -538,16 +600,23 @@ class BackupManager(private val context: Context) {
         val editor = prefs.edit()
         val likes = data.optJSONArray("likes")
         if (likes != null) {
+            // 安全加固：限制条目数，防止恶意备份注入海量键导致 SharedPreferences 膨胀
+            var imported = 0
             for (i in 0 until likes.length()) {
+                if (imported >= MAX_LIKE_ENTRIES) {
+                    com.qimeng.media.core.AppLog.w("Backup", "importLikes 达到上限 $MAX_LIKE_ENTRIES，跳过剩余条目")
+                    break
+                }
                 val obj = likes.optJSONObject(i) ?: continue
                 val recordKey = obj.optString("recordKey", "")
                 if (recordKey.isBlank()) continue
-                val likeCount = obj.optInt("likeCount", 0)
+                val likeCount = obj.optInt("likeCount", 0).coerceAtLeast(0)
                 val lastLikeDate = if (obj.has("lastLikeDate") && !obj.isNull("lastLikeDate")) obj.optString("lastLikeDate", "") else null
                 editor.putInt("like_count_$recordKey", likeCount)
                 if (lastLikeDate != null) {
                     editor.putString("like_date_$recordKey", lastLikeDate)
                 }
+                imported++
             }
         }
         val favs = data.optJSONArray("favorites")
@@ -562,7 +631,10 @@ class BackupManager(private val context: Context) {
         editor.apply()
     }
 
-    suspend fun exportPersonalPrefs(database: AppDatabase): Pair<JSONObject, String> = withContext(Dispatchers.IO) {
+    suspend fun exportPersonalPrefs(
+        database: AppDatabase,
+        sectionOptions: ReportSectionOptions = ReportSectionOptions()
+    ): Pair<JSONObject, String> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val db = database
 
@@ -825,7 +897,8 @@ class BackupManager(private val context: Context) {
                 cosWorks = cosWorks,
                 cosWorkFilesMap = cosWorkFilesMap,
                 now = now
-            )
+            ),
+            sectionOptions
         )
 
         JSONObject().apply {
@@ -850,29 +923,54 @@ class BackupManager(private val context: Context) {
      * 章节 2-10 各自委托给独立的私有方法，主体仅做编排，便于维护。
      * 输出文本格式为既有约定，修改时须保持逐字节一致（详见 docs/GUIDE_BACKUP.md）。
      */
-    private fun buildReportText(data: PersonalPrefsReportData): String {
+    private fun buildReportText(
+        data: PersonalPrefsReportData,
+        options: ReportSectionOptions = ReportSectionOptions()
+    ): String {
         val sb = StringBuilder()
         val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(data.now))
 
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine("  绮梦影库 · 个人偏好报告")
         sb.appendLine("  导出时间：$date")
+        // v1.7：显示选中章节数（非全选时）
+        if (!options.isAllSelected) {
+            sb.appendLine("  导出章节：${options.selectedCount}/9")
+        }
         sb.appendLine("═══════════════════════════════════════")
         sb.appendLine()
 
-        appendOverviewSection(sb, data)
+        if (options.overview) {
+            appendOverviewSection(sb, data)
+        }
 
         val normalEntries = buildNormalEntries(data)
         val cosWorkEntries = buildCosWorkEntries(data)
 
-        appendMixedTopSection(sb, normalEntries, cosWorkEntries)
-        appendNormalTopSection(sb, normalEntries)
-        appendCosWorkTopSection(sb, cosWorkEntries)
-        appendAuthorTopSection(sb, data)
-        appendFollowedAuthorsSection(sb, data)
-        appendTagTopSection(sb, data.tagFreq)
-        appendAllTagsSection(sb, data.tagList, data.tagFreq)
-        appendFavoritesSection(sb, data.favSet)
+        if (options.mixedTop) {
+            appendMixedTopSection(sb, normalEntries, cosWorkEntries)
+        }
+        if (options.normalTop) {
+            appendNormalTopSection(sb, normalEntries)
+        }
+        if (options.cosWorkTop) {
+            appendCosWorkTopSection(sb, cosWorkEntries)
+        }
+        if (options.authorTop) {
+            appendAuthorTopSection(sb, data)
+        }
+        if (options.followedAuthors) {
+            appendFollowedAuthorsSection(sb, data)
+        }
+        if (options.tagTop) {
+            appendTagTopSection(sb, data.tagFreq)
+        }
+        if (options.allTags) {
+            appendAllTagsSection(sb, data.tagList, data.tagFreq)
+        }
+        if (options.favorites) {
+            appendFavoritesSection(sb, data.favSet)
+        }
         appendRankingNotes(sb)
 
         return sb.toString()
@@ -889,7 +987,7 @@ class BackupManager(private val context: Context) {
         sb.appendLine("  关注作者数：${data.followedIds.size}")
         sb.appendLine("  总查看次数：${data.totalViews}")
         sb.appendLine("  总播放次数：${data.totalPlays}")
-        val hours = String.format("%.1f", data.totalBrowseSeconds / 3600.0)
+        val hours = String.format(java.util.Locale.US, "%.1f", data.totalBrowseSeconds / 3600.0)
         sb.appendLine("  总浏览时长：$hours 小时")
         sb.appendLine()
     }
@@ -1047,7 +1145,11 @@ class BackupManager(private val context: Context) {
         sb.appendLine("═══════════════════════════════════════")
     }
 
-    suspend fun exportPersonalPrefsToFile(dirUri: Uri, database: AppDatabase): Boolean = withContext(Dispatchers.IO) {
+    suspend fun exportPersonalPrefsToFile(
+        dirUri: Uri,
+        database: AppDatabase,
+        sectionOptions: ReportSectionOptions = ReportSectionOptions()
+    ): Boolean = withContext(Dispatchers.IO) {
         val dir = DocumentFile.fromTreeUri(context, dirUri) ?: return@withContext false
 
         /**
@@ -1074,7 +1176,7 @@ class BackupManager(private val context: Context) {
             }
         }
 
-        val (json, reportText) = exportPersonalPrefs(database)
+        val (json, reportText) = exportPersonalPrefs(database, sectionOptions)
         val success1 = writeFile(BackupFileNames.PERSONAL_PREFS, "application/json", json.toString(2).toByteArray(Charsets.UTF_8))
         val success2 = writeFile(BackupFileNames.PERSONAL_PREFS_REPORT, "text/plain", reportText.toByteArray(Charsets.UTF_8))
 
@@ -1085,6 +1187,8 @@ class BackupManager(private val context: Context) {
         private const val PREFS_MEDIA_DETAIL = "media_detail_prefs"
         private const val KEY_FAVORITES = "favorite_record_keys"
         private const val PREFS_AUTHOR_FOLLOW = "author_follow_prefs"
+        /** 导入 likes 条目数上限，防 SharedPreferences 键膨胀 */
+        private const val MAX_LIKE_ENTRIES = 5000
     }
 
     /** 全量同步：同时写入 app数据/、个人偏好/ 和 格式说明/ 三个子目录 */

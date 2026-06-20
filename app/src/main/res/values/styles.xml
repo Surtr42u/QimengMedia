@@ -1,30 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 胶囊切换组件：100dp 圆角，未选中态 -->
     <style name="QimengCapsuleChip">
         <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">30dp</item>
+        <item name="android:layout_height">32dp</item>
         <item name="android:layout_marginEnd">6dp</item>
         <item name="android:background">@drawable/bg_capsule_soft</item>
         <item name="android:gravity">center</item>
         <item name="android:minWidth">48dp</item>
-        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingHorizontal">14dp</item>
         <item name="android:textColor">?attr/qmColorTextSecondary</item>
         <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">normal</item>
     </style>
 
+    <!-- 个人页行项：16dp 圆角白色卡片，与暖白背景形成层次 -->
     <style name="QimengProfileRow">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">72dp</item>
         <item name="android:layout_marginBottom">12dp</item>
-        <item name="android:background">@drawable/bg_empty_panel</item>
+        <item name="android:background">@drawable/bg_profile_row</item>
         <item name="android:gravity">center_vertical</item>
         <item name="android:paddingHorizontal">18dp</item>
         <item name="android:textColor">?attr/qmColorTextPrimary</item>
         <item name="android:textSize">15sp</item>
     </style>
 
-    <style name="NoActiveIndicator">
-        <item name="android:layout_height">0dp</item>
-        <item name="android:layout_width">0dp</item>
+    <!-- 底部导航选中指示器：pill 形状，主色浸润背景 -->
+    <style name="Widget.Qimeng.BottomNavigationView.ActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">?attr/qmColorPrimarySoft</item>
     </style>
 </resources>

@@ -17,6 +17,8 @@
         <item name="qmColorSurfaceSoft">@color/qm_surface_soft</item>
         <item name="qmColorPrimary">@color/qm_primary</item>
         <item name="qmColorPrimarySoft">@color/qm_primary_soft</item>
+        <item name="qmColorAccent">@color/qm_accent</item>
+        <item name="qmColorAccentSoft">@color/qm_accent_soft</item>
         <item name="qmColorTextPrimary">@color/qm_text_primary</item>
         <item name="qmColorTextSecondary">@color/qm_text_secondary</item>
         <item name="qmColorChipBg">@color/qm_chip_bg</item>

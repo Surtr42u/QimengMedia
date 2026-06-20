@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <corners android:radius="24dp" />
-    <solid android:color="?attr/qmColorSurfaceSoft" />
+    <!-- 统计卡：20dp 圆角，纯色填充无描边，靠色差制造层次 -->
+    <corners android:radius="20dp" />
+    <solid android:color="?attr/qmColorSurface" />
 </shape>

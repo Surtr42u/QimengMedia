@@ -1,6 +1,5 @@
 package com.qimeng.media.core
 
-import android.content.Context
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
@@ -38,7 +37,7 @@ object GpuInfo {
      * 首次调用触发后台探测并阻塞等待结果；后续调用直接返回缓存。
      * 探测失败返回 [DEFAULT_MAX_TEXTURE_SIZE]。
      */
-    fun maxTextureSize(context: Context): Int {
+    fun maxTextureSize(): Int {
         ensureProbeStarted()
         probeLatch.await()
         return cachedMaxTextureSize
@@ -49,7 +48,7 @@ object GpuInfo {
      * 用于 ImageLoader 配置等不希望阻塞主线程的场景。
      * 后续实际加载图片时 maxTextureSize 会拿到探测后的真实值。
      */
-    fun maxTextureSizeOrDefault(context: Context): Int {
+    fun maxTextureSizeOrDefault(): Int {
         ensureProbeStarted()
         return if (cachedMaxTextureSize > 0) cachedMaxTextureSize else DEFAULT_MAX_TEXTURE_SIZE
     }
