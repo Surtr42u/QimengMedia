@@ -315,11 +315,20 @@ while ($true) {
 3. 主线程阻塞超过 5 秒未更新 → 判定为 ANR，记录主线程堆栈到 AppLog
 4. 同一次 ANR 30 秒内不重复记录，避免日志刷屏
 
-**误报抑制（idle 识别 + 冻结自检，2026-06-20 新增）**：
-- **idle 识别**：判定 ANR 前先检查主线程堆栈栈顶，若为 `MessageQueue.nativePollOnce` / `MessageQueue.next` / `Looper.loop`，说明主线程在 idle 等待消息（非真卡），跳过记录。早期版本会把"主线程空闲但 watchdog 守护线程被系统冻结/doze"误判为 ANR，产生 `主线程阻塞 128317ms` 这类递增巨量误报。
+**误报抑制（idle 识别 + 冻结自检 + 推进识别）**：
+- **idle 识别**：判定 ANR 前先检查主线程堆栈**前 3 行**，若出现 `MessageQueue.nativePollOnce` / `MessageQueue.next` / `Looper.loop`（含 `Looper.loopOnce`），说明主线程在 idle 等待消息（非真卡），跳过记录。检查前若干行而非仅栈顶，可覆盖栈顶为 `Looper.loopOnce` 内部系统调用（如 `PerfettoTrace.begin` 埋点）的 idle。早期版本会把"主线程空闲但 watchdog 守护线程被系统冻结/doze"误判为 ANR，产生 `主线程阻塞 128317ms` 这类递增巨量误报。
 - **冻结自检**：守护线程 sleep 醒来后对比"预期 sleep 时长(3s)"与"实际 sleep 时长"，若实际远超预期（> 预期 × FREEZE_RATIO，默认 3 倍 = 9s），判定为 watchdog 自身被系统冻结，本轮跳过判定并重置 tickTimestamp，避免冻结累积产生误报。
+- **推进识别（高负载误报抑制，2026-06-20 新增）**：高负载下（如 12 并发缩略图预生成）主线程做真实 UI 工作（列表绑定/滚动/渲染/View 构造/视频事件）时单次操作变慢，tick Runnable 排在主线程队列后无法及时执行 → tickTimestamp 不更新 → 误判阻塞。但此时主线程仍在推进（每个检查周期抓到的栈顶不同），非死锁。判定规则（`classifyBlock`）：
+  - 连续 `CONSECUTIVE_SAME_TOP_LIMIT`（默认 3，约 9 秒）个检查周期栈顶相同（卡同一处不动）→ 报真 ANR（`BlockKind.STUCK_ANR`，E 级日志）
+  - 栈顶在变化（推进中）→ 降级为 debug 日志（`BlockKind.WORKING_SLOW`，D 级 `主线程慢 Xms（高负载推进中，栈顶变化），非死锁，降级记录`），不报 ANR
+  - 阻塞超过 `HARD_ANR_THRESHOLD_MS`（默认 30 秒）硬阈值兜底 → 无论栈顶是否变化都报 ANR，防罕见的"栈顶循环变化死循环"漏报
+  - idle 命中 → 跳过（`BlockKind.IDLE`）
+  - 实测依据：5090 文件 COS 缩略图预生成负载下出现 7 条误报，栈顶各不相同（PerfettoTrace/TextView/HardwareRenderer/EdgeEffect/MaterialCardView/Media3.ListenerSet），阻塞均 6-6.3 秒，App 全程响应正常 → 推进变慢而非死锁。推进识别将其从 E 级 ANR 降为 D 级 debug。
 
-**日志识别**：搜索 `ANRWatchdog` 标签，格式为 `主线程阻塞 Xms（超过阈值 5000ms），疑似 ANR` + 主线程堆栈。注意：堆栈栈顶若为 `nativePollOnce` 则是早期版本误报（已修复），真 ANR 堆栈栈顶应在业务代码（解码/IO/锁）。
+**日志识别**：
+- 搜索 `ANRWatchdog` 标签的 **E 级**日志（`主线程阻塞 Xms（连续 N 次栈顶相同或超硬阈值 30000ms），疑似 ANR`）= 真 ANR，堆栈栈顶应在业务代码（解码/IO/锁）且连续多次不变。
+- **D 级**日志（`主线程慢 Xms（高负载推进中，栈顶变化），非死锁，降级记录`）= 高负载下推进变慢，非真 ANR，可忽略或用于性能观察。
+- 旧版本（v1.7）的 E 级 `主线程阻塞 Xms（超过阈值 5000ms），疑似 ANR` 若栈顶在系统框架内部（非业务代码）且阻塞 6 秒左右，多为推进变慢误报，v1.8 已降级为 D 级。
 
 **注意**：仅记录日志，不弹窗、不杀进程。ANR 发生时 App 仍可能响应（取决于阻塞是否解除）。
 
@@ -356,4 +365,4 @@ while ($true) {
 - 涉及 SAF、真实 Uri、视频播放、图片缩放时需真机验证
 - 协程测试使用 test dispatcher
 
-> 最后更新：2026-06-18
+> 最后更新：2026-06-20
