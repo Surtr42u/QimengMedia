@@ -208,16 +208,17 @@ class ZoomImageView @JvmOverloads constructor(
         if (longside <= 0) {
             // 无尺寸信息（图尚未解码），保守用 SOFTWARE
             setLayerType(LAYER_TYPE_SOFTWARE, null)
-            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: 无尺寸→SOFTWARE gpuMax=${GpuInfo.maxTextureSize()}")
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: 无尺寸→SOFTWARE safeMax=$HARDWARE_RENDER_SAFE_SIZE gpuMax=${GpuInfo.maxTextureSize()}")
             return
         }
-        val maxSize = GpuInfo.maxTextureSize()
-        if (longside <= maxSize) {
+        // 渲染层用安全阈值（4096）而非 GPU 纹理上限（maxTextureSize 探测值如 16384）：
+        // 超大 bitmap 走 HARDWARE 时厂商驱动无法正确应用 MATRIX 缩放，超大图必须走 SOFTWARE 保正确性
+        if (longside <= HARDWARE_RENDER_SAFE_SIZE) {
             setLayerType(LAYER_TYPE_HARDWARE, null)
-            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside ≤ gpuMax=$maxSize → HARDWARE")
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside ≤ safeMax=$HARDWARE_RENDER_SAFE_SIZE → HARDWARE (gpuMax=${GpuInfo.maxTextureSize()})")
         } else {
             setLayerType(LAYER_TYPE_SOFTWARE, null)
-            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside > gpuMax=$maxSize → SOFTWARE")
+            com.qimeng.media.core.AppLog.d("Detail", "applyOptimalLayerType: longside=$longside > safeMax=$HARDWARE_RENDER_SAFE_SIZE → SOFTWARE (gpuMax=${GpuInfo.maxTextureSize()})")
         }
     }
 
@@ -239,7 +240,8 @@ class ZoomImageView @JvmOverloads constructor(
         if (containsAnimatedDrawable(drawable)) return true
         val longside = drawableLongSide(drawable)
         if (longside <= 0) return false
-        return longside <= GpuInfo.maxTextureSize()
+        // 与 applyOptimalLayerType 同阈值：超大图手势期间也保持 SOFTWARE，避免 matrix 缩放失效
+        return longside <= HARDWARE_RENDER_SAFE_SIZE
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -416,6 +418,14 @@ class ZoomImageView @JvmOverloads constructor(
         private const val DOUBLE_TAP_SCALE = 1.8f
         private const val SWIPE_DISTANCE_DP = 60
         private const val SWIPE_VELOCITY = 800f
+        // 硬件渲染安全阈值：长边超过此值的图走 LAYER_TYPE_SOFTWARE。
+        // GpuInfo.maxTextureSize() 返回 OpenGL 理论上限（如 Adreno 750 探测得 16384），但厂商 GPU 驱动
+        // 对超大 bitmap 无法正确应用 MATRIX 缩放（实测 8000x8000 走 HARDWARE 时图按原始像素从左上角
+        // 绘制，matrix 失效，表现为左上角小方块）。4096 是业界公认稳定值（Glide/Fresco 默认上限，
+        // Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 GpuInfo 探测失败
+        // 回退值 DEFAULT_MAX_TEXTURE_SIZE=4096 一致。注意：此阈值仅用于渲染层选择，与 Coil maxBitmapSize
+        // 解码降采样上限（=gpuMax，放开让 8192 解原图）是两个独立配置。
+        private const val HARDWARE_RENDER_SAFE_SIZE = 4096
     }
 
 }

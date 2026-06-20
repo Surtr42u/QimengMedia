@@ -91,7 +91,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | 扫描 600 文件 | < 5s | > 15s | `Scan`/`CosScan` |
 | 缩略图首屏加载 | < 500ms | > 2s | `Detail` |
 | 详情页图片解码 | < 1s | > 3s | `Detail` |
-| 详情页图片绘制（切图渲染层） | HARDWARE < 10ms / SOFTWARE 30~100ms | SOFTWARE > 200ms | `Detail`（`configureBaseMatrix` 时间间隔；智能分层后 4096 图走 HARDWARE ~5ms） |
+| 详情页图片绘制（切图渲染层） | HARDWARE < 10ms / SOFTWARE 30~100ms（超大图 >4096 走 SOFTWARE 可能 100ms+，保 matrix 正确性优先于速度） | SOFTWARE > 200ms | `Detail`（`configureBaseMatrix` 时间间隔；智能分层后 ≤4096 走 HARDWARE ~5ms，>4096 走 SOFTWARE 保正确性——超大 bitmap HARDWARE 层 matrix 缩放失效，详见 GUIDE_UI.md「智能分层渲染」） |
 | 视频帧截取 | < 500ms/帧 | > 2s/帧 | `Detail` |
 | 数据库批量写入 500 条 | < 200ms | > 1s | `Scan` |
 | 内存占用（缩略图列表） | < 200MB | > 400MB | Profiler |
