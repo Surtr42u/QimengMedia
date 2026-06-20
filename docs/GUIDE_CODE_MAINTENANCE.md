@@ -378,7 +378,7 @@
 | `RankListAdapter` | `ui/stats/RankListAdapter.kt` | 通用排行榜列表 Adapter（点击跳转，前三名高亮，副标题可选，进度条相对第一名百分比，DiffUtil 局部更新） | DataStatsFragment, StatsDetailFragment |
 | `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+辅助图表+Top 20 排行榜/分布对比卡片，四种模式，文件模式支持热度/时长排序切换，分布模式显示类型/来源两张对比卡片，浏览趋势图支持点击数据点显示数值气泡） | DataStatsFragment |
 | `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
-| `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置）, ZoomImageView（智能分层渲染判断） |
+| `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置，放开超大图解码原图）, ZoomImageView（仅诊断日志显示 gpuMax；渲染层判断改用 `HARDWARE_RENDER_SAFE_SIZE=4096` 常量，不再用 maxTextureSize——见 GUIDE_UI.md「智能分层渲染」阈值根因） |
 | `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
 
 ### 共享胶囊筛选体系
