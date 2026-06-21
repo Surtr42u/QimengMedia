@@ -218,4 +218,163 @@ class MediaGroupHelperTest {
         val result = MediaGroupHelper.findCosAuthorForMedia(media, authorMedia, authors)
         assertEquals("其他", result)
     }
+
+    // === CosAuthorIndex 测试 ===
+
+    @Test
+    fun cosAuthorIndex_buildsRecordKeyToAuthorName() {
+        val authorMedia = listOf(
+            createAuthorMedia("cos_a1", "rk1"),
+            createAuthorMedia("cos_a1", "rk2"),
+            createAuthorMedia("cos_a2", "rk3")
+        )
+        val authors = listOf(
+            createAuthor("cos_a1", "作者A"),
+            createAuthor("cos_a2", "作者B")
+        )
+        val index = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+        assertEquals("作者A", index.authorNameOf("rk1"))
+        assertEquals("作者A", index.authorNameOf("rk2"))
+        assertEquals("作者B", index.authorNameOf("rk3"))
+    }
+
+    @Test
+    fun cosAuthorIndex_unknownRecordKeyReturnsOther() {
+        val index = MediaGroupHelper.CosAuthorIndex.build(
+            listOf(createAuthorMedia("cos_a1", "rk1")),
+            listOf(createAuthor("cos_a1", "作者A"))
+        )
+        assertEquals("其他", index.authorNameOf("not_exist"))
+    }
+
+    @Test
+    fun cosAuthorIndex_ignoresNonCosAuthor() {
+        val authorMedia = listOf(createAuthorMedia("regular_a1", "rk1"))
+        val authors = listOf(createAuthor("regular_a1", "普通作者"))
+        val index = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+        assertEquals("其他", index.authorNameOf("rk1"))
+    }
+
+    @Test
+    fun cosAuthorIndex_keepsFirstMatchWhenMultipleCosAuthors() {
+        // 同一 recordKey 关联多个 cos_ 作者，取首条（等价于旧 find 语义）
+        val authorMedia = listOf(
+            createAuthorMedia("cos_a1", "rk1"),
+            createAuthorMedia("cos_a2", "rk1")
+        )
+        val authors = listOf(
+            createAuthor("cos_a1", "作者A"),
+            createAuthor("cos_a2", "作者B")
+        )
+        val index = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+        assertEquals("作者A", index.authorNameOf("rk1"))
+    }
+
+    @Test
+    fun cosAuthorIndex_skipsAuthorNotInAuthorsTable() {
+        // crossRef 指向的作者已被删除（不在 authors 表），跳过，等价于旧 authors.find 返回 null
+        val authorMedia = listOf(createAuthorMedia("cos_deleted", "rk1"))
+        val authors = listOf(createAuthor("cos_a1", "作者A"))
+        val index = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+        assertEquals("其他", index.authorNameOf("rk1"))
+    }
+
+    @Test
+    fun cosAuthorIndex_emptyInputsReturnsEmpty() {
+        val index = MediaGroupHelper.CosAuthorIndex.build(emptyList(), emptyList())
+        assertEquals("其他", index.authorNameOf("rk1"))
+    }
+
+    // === CosWorkIndex 测试 ===
+
+    @Test
+    fun cosWorkIndex_buildsAuthorToWorks() {
+        val cosWorks = listOf(
+            createCosWork("作者A", "作品1"),
+            createCosWork("作者A", "作品2"),
+            createCosWork("作者B", "作品3")
+        )
+        val index = MediaGroupHelper.CosWorkIndex.build(cosWorks)
+        assertEquals(listOf("作品1", "作品2"), index.worksOf("作者A"))
+        assertEquals(listOf("作品3"), index.worksOf("作者B"))
+    }
+
+    @Test
+    fun cosWorkIndex_unknownAuthorReturnsEmpty() {
+        val index = MediaGroupHelper.CosWorkIndex.build(emptyList())
+        assertEquals(emptyList<String>(), index.worksOf("不存在"))
+    }
+
+    // === 索引版 findCosAuthorForMedia / findCosCharacterForMedia 测试 ===
+
+    @Test
+    fun findCosAuthorForMedia_indexVersionFindsAuthor() {
+        val media = createMedia("photo.jpg", recordKey = "rk1")
+        val index = MediaGroupHelper.CosAuthorIndex.build(
+            listOf(createAuthorMedia("cos_a1", "rk1")),
+            listOf(createAuthor("cos_a1", "作者A"))
+        )
+        assertEquals("作者A", MediaGroupHelper.findCosAuthorForMedia(media, index))
+    }
+
+    @Test
+    fun findCosCharacterForMedia_indexVersionFindsWork() {
+        val media = createMedia("photo.jpg", recordKey = "rk1", folderName = "作品1")
+        val authorIndex = MediaGroupHelper.CosAuthorIndex.build(
+            listOf(createAuthorMedia("cos_a1", "rk1")),
+            listOf(createAuthor("cos_a1", "作者A"))
+        )
+        val workIndex = MediaGroupHelper.CosWorkIndex.build(
+            listOf(createCosWork("作者A", "作品1"))
+        )
+        assertEquals("作品1", MediaGroupHelper.findCosCharacterForMedia(media, authorIndex, workIndex))
+    }
+
+    @Test
+    fun findCosCharacterForMedia_indexVersionWorkNameEqualsAuthorNameGoesToOther() {
+        // 结构1：作品名=作者名，归入"其他"
+        val media = createMedia("photo.jpg", recordKey = "rk1", folderName = "作者A")
+        val authorIndex = MediaGroupHelper.CosAuthorIndex.build(
+            listOf(createAuthorMedia("cos_a1", "rk1")),
+            listOf(createAuthor("cos_a1", "作者A"))
+        )
+        val workIndex = MediaGroupHelper.CosWorkIndex.build(
+            listOf(createCosWork("作者A", "作者A"))
+        )
+        assertEquals("其他", MediaGroupHelper.findCosCharacterForMedia(media, authorIndex, workIndex))
+    }
+
+    @Test
+    fun findCosCharacterForMedia_indexVersionNoAuthorGoesToOther() {
+        val media = createMedia("photo.jpg", recordKey = "rk1", folderName = "作品1")
+        val authorIndex = MediaGroupHelper.CosAuthorIndex.build(emptyList(), emptyList())
+        val workIndex = MediaGroupHelper.CosWorkIndex.build(emptyList())
+        assertEquals("其他", MediaGroupHelper.findCosCharacterForMedia(media, authorIndex, workIndex))
+    }
+
+    // === 索引版与旧签名结果一致性测试 ===
+
+    @Test
+    fun groupByCosAuthor_indexAndLegacyProduceSameResult() {
+        val media = listOf(
+            createMedia("p1.jpg", recordKey = "rk1", isCosFile = true),
+            createMedia("p2.jpg", recordKey = "rk2", isCosFile = true),
+            createMedia("p3.jpg", recordKey = "rk3", isCosFile = true)
+        )
+        val authorMedia = listOf(
+            createAuthorMedia("cos_a1", "rk1"),
+            createAuthorMedia("cos_a1", "rk2"),
+            createAuthorMedia("cos_a2", "rk3"),
+            createAuthorMedia("regular_x", "rk1") // 常规作者应被忽略
+        )
+        val authors = listOf(
+            createAuthor("cos_a1", "作者A"),
+            createAuthor("cos_a2", "作者B"),
+            createAuthor("regular_x", "普通作者")
+        )
+        val groups = MediaGroupHelper.groupByCosAuthor(media, authorMedia, authors)
+        assertEquals(2, groups.size)
+        assertEquals(2, groups["作者A"]?.size)
+        assertEquals(1, groups["作者B"]?.size)
+    }
 }

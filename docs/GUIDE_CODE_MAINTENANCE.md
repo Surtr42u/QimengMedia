@@ -325,6 +325,21 @@
 | ObsoleteDep/NewerVersionAvailable/GradleDependency | 24 | 依赖版本升级，属单独大动作，不在代码审查范围 |
 | ClickableViewAccessibility 等 | 6 | 自定义 View onTouchEvent 缺 performClick，改动需逐个评估手势逻辑 |
 
+### 性能优化（2026-06-21）：COS 分组索引化
+
+修复"点击 COS 作者/相册进列表时主线程卡顿、相同文件数量也卡"的问题。根因：COS 路径的作者/作品查找依赖 `authorMedia.find { recordKey == ... && startsWith("cos_") }`，对每个 COS 文件线性扫描整个关联表，复杂度 O(N×M) 且在主线程 `collect` 内执行。卡顿与"当前作者文件数"无关，只取决于全库 COS 规模（数千文件 × 数千关联 ≈ 数千万次比较，`AuthorFilesFragment` 还连续 filter 两次翻倍）。常规路径不卡：作者页常规用 `authorFiles`（crossRef 精确集合 O(1)），相册常规用 `SourceMatcher.match`（遍历~130 内置变体，常量级），均无 N×M 嵌套。
+
+| 文件/方法 | 优化前 | 优化后 | 说明 |
+|---|---|---|---|
+| `MediaGroupHelper`（新增 `CosAuthorIndex`） | — | O(关联数+作者数) 构建，O(1) 查找 | `recordKey → 作者显示名`，仅收录 `cos_` 前缀作者，"取首条匹配"语义等价于旧 `find` |
+| `MediaGroupHelper`（新增 `CosWorkIndex`） | — | O(作品数) 构建，O(1) 取作品集 | `作者名 → 作品名列表`，依赖 `cos_works` 表 `(authorName, workName)` 唯一约束 |
+| `groupByCosAuthor` / `groupByCosWork` | O(文件数×关联数) / O(文件数×关联数+文件数×作品数) | O(关联数+作者数+文件数) / O(关联数+作品数+文件数×单作者作品数) | 内部先建索引再遍历，全部页/收藏页/历史页走 groupBy 零改动自动受益 |
+| `AuthorFilesFragment` collect 段 | 主线程对全库 cosMedia 连续 filter 两次，各调一次 findCosAuthorForMedia | 建索引一次 + 单次 filter O(1) 查找 | 用户反馈的 COS 作者点击卡顿入口 |
+| `AlbumDetailFragment` collect 段 | 主线程对全库 cosMedia filter 调 findCosAuthorForMedia | 建索引一次 + filter O(1) 查找 | 用户反馈的 COS 相册点击卡顿入口 |
+| `SearchFragment.buildNameIndex`/`buildSearchContextFromData` | 两个独立 for 循环各嵌套线性扫描 cosMedia | 合并为一个 for 循环 + 索引 O(1) 查找 | 搜索索引构建性能，同根因一并修 |
+
+**行为等价性**：索引"取首条匹配"等价于旧 `find`；仅收录 `cos_` 前缀作者；`CosWorkIndex` 依赖唯一约束保证无重复作品名。旧签名 `findCosAuthorForMedia(media, authorMedia, authors)` / `findCosCharacterForMedia(media, authorMedia, authors, cosWorks)` 保留供单次查询与现有测试，**批量/循环场景禁用**。新增 14 个索引单元测试覆盖正确性/边界/语义等价（`MediaGroupHelperTest`）。构建验证：`assembleDebug` + `testDebugUnitTest` 全过。
+
 ### Detekt 配置
 
 - 配置文件：`detekt.yml`（项目根目录）
@@ -366,7 +381,7 @@
 
 | 组件 | 路径 | 职责 | 使用者 |
 |------|------|------|--------|
-| `MediaGroupHelper` | `ui/browser/MediaGroupHelper.kt` | 出处/角色/COS 分组计算 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
+| `MediaGroupHelper` | `ui/browser/MediaGroupHelper.kt` | 出处/角色/COS 分组计算 + COS 作者/作品索引（`CosAuthorIndex`/`CosWorkIndex`，批量场景 O(1) 查找替代 O(N×M) 嵌套扫描） | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment, SearchFragment |
 | `MediaPillsHelper` | `ui/browser/MediaPillsHelper.kt` | 出处/角色/分区/类型药丸渲染 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
 | `MediaRenderHelper` | `ui/browser/MediaRenderHelper.kt` | 渲染共享计算（applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建） | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AuthorFilesFragment（AlbumDetailFragment 仅用 applyTypeFilter/computeDisplayed，不用 buildFingerprint） |
 | `TimelineTagHelper` | `ui/detail/TimelineTagHelper.kt` | 视频时间轴标签弹窗交互 | MediaDetailFragment |
@@ -547,4 +562,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-06-20
+> 最后更新：2026-06-21

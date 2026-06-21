@@ -203,16 +203,18 @@ class AuthorFilesFragment : Fragment() {
                     cachedAuthors = authors
                     cachedAuthorMediaKeys = authorFiles.map { it.recordKey }.toSet()
 
-                    // COS 作者的文件
+                    // COS 作者的文件：用索引 O(1) 查找，替代对全库 cosMedia 的 O(N×M) 嵌套扫描
+                    // （旧实现对每个 COS 文件线性扫描整个 authorMedia，且连续 filter 两次，全库数千文件时主线程卡顿）
                     if (isCosAuthor) {
-                        cachedCosAuthorMediaKeys = cosMedia
-                            .filter { m -> MediaGroupHelper.findCosAuthorForMedia(m, authorMedia, authors) != "其他" }
-                            .filter { m ->
-                                val authorName = MediaGroupHelper.findCosAuthorForMedia(m, authorMedia, authors)
-                                val author = authors.find { it.authorId == authorId }
-                                author != null && authorName == author.displayName
-                            }
-                            .map { it.recordKey }.toSet()
+                        val author = authors.find { it.authorId == authorId }
+                        val displayName = author?.displayName
+                        val index = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+                        cachedCosAuthorMediaKeys = if (displayName != null) {
+                            cosMedia.filter { m -> index.authorNameOf(m.recordKey) == displayName }
+                                .map { it.recordKey }.toSet()
+                        } else {
+                            emptySet()
+                        }
                     }
 
                     val fp = "${media.size}|${authorFiles.size}|${cosMedia.size}|${media.firstOrNull()?.recordKey.orEmpty()}"

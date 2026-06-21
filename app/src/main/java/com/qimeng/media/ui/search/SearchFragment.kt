@@ -559,20 +559,19 @@ class SearchFragment : Fragment() {
             for (source in allSources) { result.add(SearchSuggestItem("出处", source)) }
             for ((source, char) in sourceCharPairs) { result.add(SearchSuggestItem("角色", "$source $char")) }
 
-            // COS作者
+            // COS作者 + COS作品：建索引一次，遍历一遍 cosMedia 同时提取作者和作品
+            // （旧实现两个独立 for 循环各对全库 cosMedia 做嵌套线性扫描，此处合并并改 O(1) 查找）
+            val cosAuthorIndex = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+            val cosWorkIndex = MediaGroupHelper.CosWorkIndex.build(cosWorks)
             val cosAuthors = mutableSetOf<String>()
-            for (m in cosMedia) {
-                val name = MediaGroupHelper.findCosAuthorForMedia(m, authorMedia, authors)
-                if (name != "其他") cosAuthors.add(name)
-            }
-            for (name in cosAuthors) { result.add(SearchSuggestItem("COS作者", name)) }
-
-            // COS作品
             val cosWorkNames = mutableSetOf<String>()
             for (m in cosMedia) {
-                val name = MediaGroupHelper.findCosCharacterForMedia(m, authorMedia, authors, cosWorks)
-                if (name != "其他") cosWorkNames.add(name)
+                val authorName = MediaGroupHelper.findCosAuthorForMedia(m, cosAuthorIndex)
+                if (authorName != "其他") cosAuthors.add(authorName)
+                val workName = MediaGroupHelper.findCosCharacterForMedia(m, cosAuthorIndex, cosWorkIndex)
+                if (workName != "其他") cosWorkNames.add(workName)
             }
+            for (name in cosAuthors) { result.add(SearchSuggestItem("COS作者", name)) }
             for (name in cosWorkNames) { result.add(SearchSuggestItem("COS作品", name)) }
 
             return result
@@ -591,10 +590,13 @@ class SearchFragment : Fragment() {
             val sourceMap = mutableMapOf<String, String?>()
             val characterMap = mutableMapOf<String, String?>()
 
+            // 建索引一次，循环内 O(1) 查找替代 O(N×M) 嵌套扫描
+            val cosAuthorIndex = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+            val cosWorkIndex = MediaGroupHelper.CosWorkIndex.build(cosWorks)
             for (m in cosMedia) {
-                val authorName = MediaGroupHelper.findCosAuthorForMedia(m, authorMedia, authors)
+                val authorName = MediaGroupHelper.findCosAuthorForMedia(m, cosAuthorIndex)
                 if (authorName != "其他") cosAuthorMap[m.recordKey] = authorName
-                val workName = MediaGroupHelper.findCosCharacterForMedia(m, authorMedia, authors, cosWorks)
+                val workName = MediaGroupHelper.findCosCharacterForMedia(m, cosAuthorIndex, cosWorkIndex)
                 if (workName != "其他") cosWorkMap[m.recordKey] = workName
             }
             for (m in media) {

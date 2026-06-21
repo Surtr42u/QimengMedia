@@ -178,10 +178,11 @@ class AlbumDetailFragment : Fragment() {
                     cachedAuthors = authors
 
                     if (isCosAlbum) {
-                        // COS 相册：按作者名过滤
-                        cachedAlbumMedia = cosMedia.filter { mediaFile ->
-                            val authorName = MediaGroupHelper.findCosAuthorForMedia(mediaFile, authorMedia, authors)
-                            authorName == name
+                        // COS 相册：按作者名过滤，用索引 O(1) 查找替代 O(N×M) 嵌套扫描
+                        // （旧实现对每个 COS 文件线性扫描整个 authorMedia，全库数千文件时主线程卡顿）
+                        val cosAuthorIndex = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
+                        cachedAlbumMedia = cosMedia.filter { m ->
+                            cosAuthorIndex.authorNameOf(m.recordKey) == name
                         }
                     } else {
                         // 常规相册：按出处名过滤
