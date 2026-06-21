@@ -9,7 +9,7 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3-purple.svg)](https://kotlinlang.org)
 [![Target SDK: 36](https://img.shields.io/badge/Target%20SDK-36-orange.svg)](https://developer.android.com/about/versions/16)
 
-[功能特性](#-功能特性) · [截图预览](#-截图预览) · [技术架构](#-技术架构) · [快速开始](#-快速开始) · [贡献指南](#-贡献指南)
+[功能特性](#-功能特性) · [技术架构](#-技术架构) · [快速开始](#-快速开始) · [贡献指南](#-贡献指南)
 
 </div>
 
@@ -29,7 +29,7 @@
 
 ### 智能浏览
 
-- **首页推荐** — 基于本地浏览习惯的多维度推荐算法（10 维评分权重可自定义）
+- **首页推荐** — 基于本地浏览习惯的多维度推荐算法（10 维评分，9 维权重可自定义）
 - **排行榜** — 日榜 / 周榜 / 月榜 / 年榜，按浏览次数和点赞数排序
 - **搜索** — 按出处、角色、作者、作品名快速检索，输入即补全
 
@@ -68,16 +68,6 @@
 
 ---
 
-## 📸 截图预览
-
-> 以下截图来自实际运行效果
-
-| 首页推荐 | 全部文件 | 相册 | 详情页 |
-|:---:|:---:|:---:|:---:|
-| *首页推荐与排行榜* | *胶囊筛选与双指缩放* | *按出处分组虚拟相册* | *原图查看与视频播放* |
-
----
-
 ## 🏗️ 技术架构
 
 | 类别 | 技术 | 说明 |
@@ -85,7 +75,7 @@
 | 语言 | Kotlin | 100% Kotlin |
 | 架构 | 单 Activity + 多 Fragment + MVVM | ViewModel → Repository → DAO 分层 |
 | UI | 原生 View + ViewBinding | 不使用 Compose，纯传统视图 |
-| 数据库 | Room | 9 个 DAO，KSP 编译 |
+| 数据库 | Room | 10 个 DAO，KSP 编译 |
 | 图片加载 | Coil 3.4 | 自定义 LargeImageDecoder + libspng 加速 PNG |
 | 视频播放 | Media3 ExoPlayer | 自定义 BiliPlayerView 控制器 |
 | 文件访问 | SAF + MediaStore | 双引擎扫描，兼容 .nomedia |
@@ -198,7 +188,7 @@ app/src/main/java/com/qimeng/media/
 | `AI_README_FIRST.md` | AI 接手强制阅读规则 |
 | `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` | 不同 AI 工具的接手入口 |
 | `.github/copilot-instructions.md` | GitHub Copilot 指令 |
-| `docs/GUIDE_*.md` | 各模块详细开发指南（15+ 篇） |
+| `docs/GUIDE_*.md` | 各模块详细开发指南（13 篇） |
 | `docs/GUIDE_USAGE_MATRIX.md` | 任务触发词与指南映射 |
 | `docs/PROJECT_GUIDE.md` | 项目总览与架构说明 |
 

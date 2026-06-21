@@ -6,8 +6,8 @@
 
 ## 本项目工程约束
 
-- 推荐分层：ui/、data/、scan/、algorithm/、backup/、core/、animation/
-- data 不依赖 ui；algorithm 不直接依赖 Fragment；backup 不直接操作原始媒体文件
+- 推荐分层：ui/、data/、scan/、domain/、backup/、core/
+- data 不依赖 ui；推荐算法（`MediaBrowserLogic`，位于 `ui/browser`）不直接依赖 Fragment；backup 不直接操作原始媒体文件
 - ViewModel 暴露 UI state，不暴露数据库 Entity 给 UI 直接修改
 - Repository 负责协调 DAO、扫描结果和备份同步
 - Repository 方法命名表达业务动作，例如 recordVideoPlay、assignAuthorToMedia

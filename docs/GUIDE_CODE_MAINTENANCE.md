@@ -81,6 +81,9 @@
 - 纯逻辑优先：`MediaBrowserLogic`、`SourceMatcher`、`RecordKeyFactory` 不依赖 Android 框架，最容易测试
 - ViewModel 测试：使用 `InstantTaskExecutorRule` + `Turbine`（Flow 测试）
 - DAO 测试：使用 Room in-memory database
+- 测试优先级：核心算法和解析器用 JVM 测试，DAO 用内存数据库测试
+- 涉及 SAF、真实 Uri、视频播放、图片缩放时需真机验证
+- 协程测试使用 test dispatcher
 
 ### 运行测试
 

@@ -14,8 +14,8 @@
 - 开发语言：Kotlin
 - UI：原生 View + ViewBinding；视频播放器使用 Media3 ExoPlayer + 自定义 BiliPlayerView 控制器
 - 架构目标：单 Activity + 多 Fragment + MVVM
-- 推荐分层：ui/、data/、scan/、algorithm/、backup/、core/、animation/
-- data 不依赖 ui；algorithm 不直接依赖 Fragment；backup 不直接操作原始媒体文件
+- 推荐分层：ui/、data/、scan/、domain/、backup/、core/
+- data 不依赖 ui；推荐算法（`MediaBrowserLogic`，位于 `ui/browser`）不直接依赖 Fragment；backup 不直接操作原始媒体文件
 - ViewModel 暴露 UI state，不暴露数据库 Entity 给 UI 直接修改
 - Repository 负责协调 DAO、扫描结果和备份同步
 - Repository 方法命名表达业务动作
@@ -54,7 +54,7 @@
 - 已实现首页推荐/排行榜、日周月年榜、搜索、筛选、1/2 列切换、横滑切 tab。
 - 已实现全部页日期分组、默认 3 列、双指缩放 2-5 列、筛选、类型筛选。
 - 已实现筛选面板 `MediaFilterSheet.kt`（排序/升降序/观看次数/文件大小/榜单周期/时间范围/标签）。
-- 已实现推荐引擎和浏览器逻辑 `MediaBrowserLogic.kt`（多维度推荐算法、排行榜、日期分组、筛选、排序）。推荐算法 10 维评分：tagRelevance(0.22) + engagement(0.10) + tagCollection(0.15) + recency(0.15) + discovery(0.20) + freshness(0.05) + likeScore(0.05) + mediaTypeBalance(0.05) + browseDepth(0.03) + randomFactor(0~0.30)，每次刷新结果不同。评分排序后 `balanceVideoImage()` 视频图片自然混合（按比例随机取，不做连续分组）。排行榜排序=浏览次数+点赞次数。
+- 已实现推荐引擎和浏览器逻辑 `MediaBrowserLogic.kt`（多维度推荐算法、排行榜、日期分组、筛选、排序）。推荐算法 10 维评分：tagRelevance(0.22) + engagement(0.10) + tagCollection(0.15) + recency(0.15) + discovery(0.20) + freshness(0.05) + likeScore(0.05) + browseDepth(0.03) + randomFactor(0~0.30)（固定权重合计 0.95）+ dailyPenalty（每日去重惩罚，已展示文件 -0.8f，未展示 0f，不计入固定权重），每次刷新结果不同。评分排序后 `balanceVideoImage()` 视频图片自然混合（按比例随机取，不做连续分组）。排行榜排序=浏览次数+点赞次数。
 - 已实现排序缓存机制：`cachedSortedItems` + `sortFingerprint`，只在 tab/period/filter/query 变化时重排，增量加载只从缓存取。
 - 已实现详情页 `add` 叠加模式：列表 fragment view 不销毁，返回零闪烁。
 - 已实现 `GroupedMediaAdapter` 日期分组 RecyclerView 适配器，复用 `MediaThumbnailAdapter.Holder`。
@@ -85,9 +85,9 @@
 - 已实现视频时间轴标签（BiliPlayerView 时间轴标签图标按钮 + 标签芯片），用户可在视频播放时添加/删除时间点标记，点击标签跳转到标记位置，长按弹出操作菜单（跳转/删除）。
 - 已实现 `recommendation_prefs.json` 和 `timeline_tags.json` 备份导入导出，JSON 文件清单 10 个全部已实现。
 - 已修复详情页点击 chrome/系统栏显隐时图片和视频跳动：详情页始终 edge-to-edge 全屏布局，`syncSystemBars()` 保持 `setDecorFitsSystemWindows(false)` 不变，仅通过 `WindowInsetsControllerCompat` 控制系统栏显隐，不触发布局变化；`MainActivity.setDetailMode()` 在详情页激活时清除主容器系统栏 padding，退出时恢复。
-- 已修复超大图 HARDWARE 层渲染 matrix 缩放失效（2026-06-21，真机调试发现根因）：2026-06-20 的智能分层渲染方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，实测 Adreno 750=16384）作层类型阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap 无法正确应用 MATRIX 缩放——实测 8000x8000（256MB）走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。修复：`ZoomImageView` 新增 `HARDWARE_RENDER_SAFE_SIZE=4096` 常量替代 `maxTextureSize()` 作渲染层判断阈值，`applyOptimalLayerType()` 和 `shouldUseHardwareForCurrent()` 同步改用 4096——长边>4096 走 SOFTWARE（CPU 正确应用 matrix），≤4096 走 HARDWARE（GPU 直渲快）。4096 是业界公认稳定值（Glide/Fresco 默认上限，与 GpuInfo 探测失败回退值一致）。**不降采样，保留原图像素**（不动 LargeImageDecoder 解码链和 Coil maxBitmapSize 配置）。注意区分两个独立阈值：①渲染安全阈值 4096（HARDWARE/SOFTWARE 分层）②Coil maxBitmapSize=gpuMax（解码降采样上限，放开原图）。trade-off：超大图 SOFTWARE 渲染比 HARDWARE 慢（保正确性优先于速度）。
-- 已补充详情页渲染诊断日志并修复日志噪音（2026-06-20，真机调试发现）：① `MediaDetailFragment.showImage` 补缓存命中/未命中/解码完成(含耗时)/回退Coil 日志、`preloadAround` 补范围日志、`LargeImageDecoder` 补各回退路径（libspng/fileDescriptor）日志，消除 GUIDE_DEBUG 承诺但代码缺失的观察盲区（现可统计原图缓存命中率）；② `AnrWatchdog` 新增 idle 识别（栈顶为 nativePollOnce/next/Looper.loop 跳过）+ 冻结自检（实际 sleep 远超预期则跳过并重置时间戳），修复设备息屏/后台守护线程被冻结产生的 `主线程阻塞 128317ms` 递增误报；③ `HomeFragment.render` 日志从短路判断前移到 fingerprint 变化块内，消除详情页切换时底层 Home 无关 Flow emit 触发的日志噪音（双重短路本身健全，零开销）；④ `ZoomImageView.containsAnimatedDrawable` 对 NoSuchFieldException 静默（非 Coil ScaleDrawable 无 child 字段是预期），消除每张图 `checkAnimatedDrawable failed` warning 刷屏。
-- 已优化详情页大图绘制性能 + 放开超大图原图显示（2026-06-20，真机调试发现根因）：① 新增 `core/GpuInfo.kt`——运行时创建临时 EGL14 context 探测 `GL_MAX_TEXTURE_SIZE`（实测 Adreno 750=16384），探测失败回退 4096，供智能分层 + ImageLoader 配置用；② `ZoomImageView` 智能分层渲染替代原"纯软件渲染"——`applyOptimalLayerType()` 按图尺寸选层：GIF→HARDWARE，普通图长边≤GPU上限→HARDWARE（GPU 直渲，4096 图绘制 ~50ms→~5ms，消除来回切大图卡顿），超限→SOFTWARE 回退；手势期间用 `shouldUseHardwareForCurrent()` 保护超大图不切 HARDWARE；③ 放开 Coil3 默认 `maxBitmapSize=4096` 到 GPU 上限——原默认值会把图库 15 张超大图（最大 8192×4608）降采样到 4096 显示，偏离"始终显示原图"决策；`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 后 8192/7680 等超大图显示原图；④ `MediaDetailFragment.preloadAround` 超大图收紧——当前图长边>4096 时预渲染范围从 2前3后 收紧到 1前1后，防超大图原图（~150MB/张）预渲染过多 OOM。代价：浏览多张超大原图 Native Heap 峰值 ~900MB（原降采样时 ~200MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制，旗舰机不崩；低运存设备超大图仍走 SOFTWARE 回退保底。
+- 已修复超大图 HARDWARE 层渲染 matrix 缩放失效（2026-06-21）：`ZoomImageView` 渲染层判断阈值从 `GpuInfo.maxTextureSize()` 改用常量 `HARDWARE_RENDER_SAFE_SIZE=4096`（厂商 GPU 驱动对超大 bitmap 的 HARDWARE 层 matrix 会失效，4096 是业界公认稳定值）。长边>4096 走 SOFTWARE 保正确性，≤4096 走 HARDWARE。不降采样，保留原图像素。详见 `GUIDE_UI.md`「智能分层渲染」。
+- 已补充详情页渲染诊断日志并修复日志噪音（2026-06-20）：`showImage`/`preloadAround`/`LargeImageDecoder` 补缓存命中/解码耗时/回退路径日志（可统计原图缓存命中率）；`AnrWatchdog` 新增 idle 识别 + 冻结自检 + 推进识别，修复设备息屏/后台守护线程被冻结产生的 `主线程阻塞 128317ms` 递增误报；`HomeFragment.render` 日志前移消除详情页切换时的无关 Flow emit 噪音；`ZoomImageView.containsAnimatedDrawable` 对 NoSuchFieldException 静默消除 warning 刷屏。详见 `GUIDE_DEBUG.md`「ANR 监控」。
+- 已优化详情页大图绘制性能 + 放开超大图原图显示（2026-06-20）：新增 `core/GpuInfo.kt`（EGL14 探测 GPU 纹理上限，供智能分层 + ImageLoader 配置用）；`ZoomImageView` 智能分层渲染替代纯软件渲染（GIF→HARDWARE，普通图≤GPU上限→HARDWARE GPU 直渲，超限→SOFTWARE）；放开 Coil3 默认 `maxBitmapSize=4096` 到 GPU 上限让超大图显示原图；超大图预渲染范围收紧（长边>4096 时 1前1后）。代价：浏览多张超大原图 Native Heap 峰值 ~900MB，靠 Coil LRU 35% + onTrimMemory + 预渲染收紧控制。详见 `GUIDE_UI.md`「智能分层渲染」、`GUIDE_DEBUG.md`「性能指标」。
 - 已修复详情页退后台再回来显示外面 tab：`MainActivity.onResume()` 新增 `syncBottomNavVisibilityWithBackStack()` 调用，根据 BackStack 栈顶 Fragment 类型同步 `bottomNavigation` 可见性；该方法与 `addOnBackStackChangedListener` 共用同一逻辑。背景：App 从后台恢复时 BackStack 未变化、`BackStackChangedListener` 不触发，但 `bottomNavigation.visibility` 可能被系统重置为 `VISIBLE`，导致详情页等覆盖页面上层显示外面 tab。
 - 已修复点击主题色彩闪退：回退到原始方案（v1.10 设计决策），`ProfileFragment.themeRow` 点击只显示 Toast "已跟随手机明暗模式"，不弹窗、不调用 `setDefaultNightMode()`；删除 `showThemeModeDialog()` 和 `updateThemeModeSelection()` 方法；`MainActivity.applyStoredTheme()` 只调用 `setTheme()` 不调用 `setDefaultNightMode()`。项目仅跟随手机系统明暗模式，`AppPrefs.themeMode` 字段保留用于备份 JSON 兼容性但无 UI 入口修改。
 - 详情页 chrome 已改为四层结构：纯背景层、透明居中文件层、上下轻量图标操作层、沉浸隐藏层；白天显示浅底深色图标，夜间显示黑底浅色图标，沉浸后系统栏和上下操作层消失且文件不移动。视频先显示同步背景的预览层和 ▶ 播放按钮，单击预览区切换 chrome（与图片一致），点击播放按钮才启动 BiliPlayerView 播放器 UI。

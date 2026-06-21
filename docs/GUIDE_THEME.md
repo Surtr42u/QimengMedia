@@ -6,9 +6,9 @@
 - 主题样式定义：`res/values/themes.xml`、`res/values-night/themes.xml`
 - 颜色资源：`res/values/colors.xml`（白天）、`res/values-night/colors.xml`（夜间）
 - 运行时解析：`ThemeHelper.kt`（直接从 `?attr` 解析，跟随系统明暗模式）
-- 明暗模式持久化：`AppPrefsManager.kt`（`themeMode` 字段：system/light/dark）
-- 明暗模式应用：`MainActivity.applyStoredTheme()`（启动时调用 `AppCompatDelegate.setDefaultNightMode()`）
-- 明暗模式切换 UI：`ProfileFragment.showThemeModeDialog()`（BottomSheet 三选一：跟随系统/浅色/深色）
+- 明暗模式持久化：`AppPrefsManager.kt`（`themeMode` 字段：system/light/dark，字段保留用于备份兼容性，v1.10 起无 UI 入口修改，始终为 "system"）
+- 明暗模式应用：`MainActivity.applyStoredTheme()`（启动时仅调用 `setTheme()`，**不调用 `setDefaultNightMode()`**，由系统 DayNight 自动选择 `values` / `values-night`）
+- 明暗模式切换 UI：**无**（v1.10 设计决策：`ProfileFragment.themeRow` 不可点击，仅跟随手机系统明暗模式）
 - MainActivity 主题应用：`MainActivity.kt`（`applyThemeColors()` 更新状态栏/导航栏颜色）
 - 视频播放器：使用 Media3 ExoPlayer + 自定义 `BiliPlayerView`（B站风格控制器），详情页顶部栏/底部栏/倍速按钮/系统栏已统一使用项目主题色 `?attr/qmColor*`。
 

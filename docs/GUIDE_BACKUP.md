@@ -189,8 +189,6 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - `viewStats` 新增 `mediaType` 和 `isCosFile` 字段
 - `cosWorks` 扩展了统计字段（viewCount/playCount/totalBrowseSeconds/likeCount/favoriteCount/tags/files）
 
-## 验收清单
-
 ## 修改注意事项
 
 - 新增数据库字段时，JSON 格式必须在 `docs/GUIDE_DATA.md` 中同步定义，本文件只关注读写流程是否有变。
@@ -198,4 +196,4 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-06-17
+> 最后更新：2026-06-20（修正时间戳，正文已含 2026-06-20 安全审查）

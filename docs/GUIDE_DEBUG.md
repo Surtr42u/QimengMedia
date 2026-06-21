@@ -191,20 +191,19 @@ cd <项目根目录>; .\gradlew.bat assembleDebug
 ### 读取日志
 
 ```powershell
-# 方式1：通过 ProcessStartInfo（推荐，避免 PowerShell 编码问题）
+# 方式1：通过 ProcessStartInfo（推荐，避免 PowerShell CLIXML 编码问题导致中文乱码）
 $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-$pinfo.FileName = "C:\Users\<用户名>\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+$pinfo.FileName = "$adbPath"                       # adb.exe 绝对路径
 $pinfo.Arguments = "-s $serial shell run-as com.qimeng.media cat files/app_log.txt"
-$pinfo.RedirectStandardOutput = $true
+$pinfo.RedirectStandardOutput = $true              # 必须配 UseShellExecute=$false + CreateNoWindow=$true
 $pinfo.RedirectStandardError = $true
 $pinfo.UseShellExecute = $false
 $pinfo.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($pinfo)
-$stdout = $p.StandardOutput.ReadToEnd()
+[System.IO.File]::WriteAllText("$outDir\app_log.txt", $p.StandardOutput.ReadToEnd(), [System.Text.Encoding]::UTF8)
 $p.WaitForExit()
-[System.IO.File]::WriteAllText("<项目根目录>\app_log.txt", $stdout, [System.Text.Encoding]::UTF8)
 
-# 方式2：直接输出（注意 PowerShell CLIXML 编码问题，中文可能乱码）
+# 方式2：直接输出（中文可能乱码，仅供快速查看）
 & $adb -s $serial shell "run-as com.qimeng.media cat files/app_log.txt"
 ```
 
@@ -360,9 +359,5 @@ while ($true) {
 - `docs/PROJECT_GUIDE.md`（如新增文件）
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
-
-- 测试优先级：核心算法和解析器用 JVM 测试，DAO 用内存数据库测试
-- 涉及 SAF、真实 Uri、视频播放、图片缩放时需真机验证
-- 协程测试使用 test dispatcher
 
 > 最后更新：2026-06-20
