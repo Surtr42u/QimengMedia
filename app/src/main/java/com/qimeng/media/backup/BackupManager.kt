@@ -334,7 +334,8 @@ class BackupManager(private val context: Context) {
         // 从 JSON 读 exportedAtMillis 并更新最近备份时间
         fun updateLatestExportedAt(json: JSONObject?) {
             json?.optLong("exportedAtMillis", 0L)?.takeIf { it > 0 }?.let { ts ->
-                if (latestExportedAt == null || ts > latestExportedAt!!) latestExportedAt = ts
+                val current = latestExportedAt
+                if (current == null || ts > current) latestExportedAt = ts
             }
         }
 

@@ -7,7 +7,7 @@
 
 complexity:
   LongMethod:
-    threshold: 120  # 当前最大152行，逐步收紧
+    threshold: 120  # 当前最大约280行(BackupManager.exportPersonalPrefs，数据汇总已备案)，逐步收紧
   CyclomaticComplexMethod:
     threshold: 20   # 当前最大43，逐步收紧
   NestedBlockDepth:

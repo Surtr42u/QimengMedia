@@ -213,28 +213,31 @@
 
 | 指标 | 目标 | 当前状态 | 检查方式 |
 |------|------|----------|----------|
-| 方法长度 | 绿色区 | 阈值 120（detekt.yml），黄色区已备案 | Detekt LongMethod |
+| 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法约 280 行（`BackupManager.exportPersonalPrefs`，数据汇总合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
 | 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 5 个核心测试类 | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
-### 当前已备案的黄色区项（基于 detekt 实证数据 2026-06-17）
+### 当前已备案的黄色区项（基于三档警戒线人工对照 + detekt 实证，2026-06-22 更新）
 
 | 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
-| `MediaDetailFragment` | LargeClass | 黄色（类总行数） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay |
-| `ProfileFragment` | LargeClass | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
+| `MediaDetailFragment` | 1160 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可 |
+| `ProfileFragment` | 822 行 | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
+| `StatsDetailFragment` | 760 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 辅助图表 + Top 20 排行榜/分布对比，四种模式 + 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
+| `BiliPlayerView` | 755 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度 |
 | `MediaLibraryViewModel` | 32 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
 | `ScanUseCase.scanCosMedia` | 22 | 黄色（合理复杂度） | COS 扫描编排，同上 |
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
+| `BackupManager` | 1294 行 | 红色（类总行数，合理复杂度备案） | 备份管理天然多方法：10 个 export + 10 个 import + 14 个 appendXxxSection 报告子方法 + 4 个公开入口（export/import/autoSync/fullSync），各方法职责单一。`exportPersonalPrefs` 见下行单独备案。强行拆分（如按 export/import 分两个类）会割裂 companion 常量、私有辅助方法、BackupSummary 内部类的共享，增加跨类耦合，按 §8「合理复杂度」认可 |
 | `BackupManager.exportPersonalPrefs` | ~280 行 | 黄色（方法行数） | 报告生成汇总 23 个数据源，天然复杂，已封装 PersonalPrefsReportData + 章节子方法 |
-| `SourceGroupsData` | ~1664 行 | 绿色（纯数据声明） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑 |
+| `SourceGroupsData` | 1664 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 已完成重构项（本次 2026-06-17）
 
@@ -357,6 +360,21 @@
 - ThumbnailCache 批量过滤：保留并发解码前的二次检查（预过滤与解码间可能被其他线程预生成），未改变解码逻辑。
 
 **构建验证**：`assembleDebug` + `testDebugUnitTest` 全过（含 `SourceMatcherTest` 18 个测试、`MediaGroupHelperTest` 等现有测试无回归）。
+
+### 全项目代码体检与文档备案补全（2026-06-22）
+
+基于全项目代码审查（源码行数扫描 + `!!`/`runBlocking`/`GlobalScope`/空catch/死代码残留扫描 + 文档-代码一致性对照），修复发现的所有维护性瑕疵。**本次审查未发现屎山、未发现功能性 bug、未发现死代码残留**，问题均为规范执行的最后一公里。
+
+| 类别 | 文件/项 | 处理 |
+|---|---|---|
+| 空安全规范违规 | `BackupManager.updateLatestExportedAt` 的 `latestExportedAt!!` | 改写为局部变量 `val current = latestExportedAt; if (current == null || ts > current)`。原逻辑正确（`\|\|` 短路保护），但违反 §6「禁止 `!!`（除 `_binding!!` 豁免）」规范 |
+| 备案表遗漏（红色区） | `BackupManager`（1294 行）、`SourceGroupsData`（1664 行，原标"绿色"措辞不准） | 补备案，标注红色区合理复杂度理由（备份管理天然多方法 / 纯数据声明 CC=0） |
+| 备案表遗漏（黄色区） | `StatsDetailFragment`（760 行）、`BiliPlayerView`（755 行整体，原仅备案 `onTouchEvent` 方法） | 补备案，标注合理复杂度理由 |
+| 备案表措辞不准 | `MediaDetailFragment`/`ProfileFragment` 原标"LargeClass"无具体行数 | 补实际行数（1160/822），`MediaDetailFragment` 升为红色区并补合理复杂度理由 |
+| 文档-配置不一致 | `detekt.yml` LongMethod 注释"当前最大152行"与实际 `exportPersonalPrefs ~280 行` 不符 | 更新注释为"当前最大约280行(BackupManager.exportPersonalPrefs，数据汇总已备案)" |
+| 备案数据来源措辞误导 | §8 标题"基于 detekt 实证数据"但 `detekt.yml` 未配置 LargeClass 规则 | 改为"基于三档警戒线人工对照 + detekt 实证" |
+| 状态对照表信息不足 | "方法长度"行仅写"黄色区已备案"未说明实际最大值 | 补"当前最大方法约 280 行（exportPersonalPrefs，已备案）" |
+| 技术债记录 | 8 个 Fragment 的 `combine + UNCHECKED_CAST` 多 Flow 合并模式重复 | 记入 `DEVELOPMENT_PLAN.md`「技术债」子节，非阻断，待下次涉及这些 Fragment 较大改动时重构（引入 `CombinedMediaData` 数据类 + 共享 combine 工厂） |
 
 ### Detekt 配置
 

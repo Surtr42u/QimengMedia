@@ -54,6 +54,10 @@
 
 - APK 正式打包发布（阶段 8）。
 
+### 技术债（非阻断，后续重构时处理）
+
+- **多 Flow 合并的 UNCHECKED_CAST 模式重复（2026-06-22 记录）**：8 个 Fragment（AllFiles/Favorite/BrowseHistory/AlbumDetail/AuthorFiles/Home/Search/StatsDetail）的 collect 块用 `combine(...).combine(...) { arr1, arr2 -> arr1 + arr2 }.collect @Suppress("UNCHECKED_CAST") { arr -> arr[N] as? List<XxxEntity> }` 模式合并 5-9 个 Flow，存在 9 次强转 + 8 处重复 + 类型不安全。当前工作正常，重构需引入共享 Flow 合并组件（如 `CombinedMediaData` 数据类 + 共享 `combine` 工厂方法），成本较高。记入技术债，不强制立即修，待下次涉及这些 Fragment 的较大改动时一并处理。
+
 ### 维护规则
 
 - 功能做完后必须把对应待办项改为"已完成"或删除。过时的待办比没有待办更危险。
