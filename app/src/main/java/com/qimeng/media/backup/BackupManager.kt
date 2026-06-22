@@ -503,6 +503,7 @@ class BackupManager(private val context: Context) {
                 put("uriString", source.uriString)
                 put("displayName", source.displayName)
                 put("isBackupDirectory", source.isBackupDirectory)
+                put("isCosDirectory", source.isCosDirectory)
                 put("addedAtMillis", source.addedAtMillis)
                 put("lastScannedAtMillis", source.lastScannedAtMillis)
             })
@@ -589,6 +590,7 @@ class BackupManager(private val context: Context) {
     private suspend fun importTags(json: JSONObject, db: AppDatabase) {
         val data = json.optJSONObject("data") ?: return
         val tags = data.optJSONArray("tags") ?: return
+        // 1. 导入标签定义（INSERT OR IGNORE，按 name 唯一约束去重）
         for (i in 0 until tags.length()) {
             val obj = tags.optJSONObject(i) ?: continue
             val tag = com.qimeng.media.data.db.entity.TagEntity(
@@ -597,6 +599,31 @@ class BackupManager(private val context: Context) {
                 createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
             )
             db.tagDao().insert(tag)
+        }
+        // 2. 恢复文件-标签关联（mediaTags）
+        // 导出端写的是 tagName（不是 tagId），导入时按 name 查本地真实 tagId，
+        // 避开跨设备/重装后 tagId 漂移导致的关联错位。
+        // recordKey 仅当本地 media_files 存在时才建关联，跳过孤儿（与 importAuthors 一致）。
+        val mediaTags = data.optJSONArray("mediaTags") ?: return
+        if (mediaTags.length() == 0) return
+        val mediaMap = db.mediaFileDao().getAll().associateBy { it.recordKey }
+        for (i in 0 until mediaTags.length()) {
+            val obj = mediaTags.optJSONObject(i) ?: continue
+            val recordKey = obj.optString("recordKey", "")
+            val tagName = obj.optString("tagName", "")
+            if (recordKey.isBlank() || tagName.isBlank()) continue
+            // 跳过本地不存在的媒体文件，避免孤儿关联
+            if (recordKey !in mediaMap) continue
+            val fileName = mediaMap[recordKey]?.fileName ?: recordKey
+            // 按 name 查本地真实 tagId（备份里的 tagId 是旧库的，可能已漂移）
+            val localTag = db.tagDao().getByName(tagName) ?: continue
+            db.tagDao().upsertCrossRef(
+                com.qimeng.media.data.db.entity.MediaTagCrossRef(
+                    recordKey = recordKey,
+                    tagId = localTag.tagId,
+                    fileName = fileName
+                )
+            )
         }
     }
 
@@ -662,6 +689,7 @@ class BackupManager(private val context: Context) {
                     uriString = obj.optString("uriString", ""),
                     displayName = obj.optString("displayName", ""),
                     isBackupDirectory = obj.optBoolean("isBackupDirectory", false),
+                    isCosDirectory = obj.optBoolean("isCosDirectory", false),
                     addedAtMillis = obj.optLong("addedAtMillis", System.currentTimeMillis()),
                     lastScannedAtMillis = if (obj.has("lastScannedAtMillis") && !obj.isNull("lastScannedAtMillis")) obj.optLong("lastScannedAtMillis") else null
                 )

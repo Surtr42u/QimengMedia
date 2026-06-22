@@ -114,7 +114,8 @@
 | 文件 | 当前版本 | 变更说明 |
 |---|---|---|
 | `authors.json` | 2 | v1→v2：files 数组从空改为填入关联的 recordKey 列表，导入时恢复 AuthorMediaCrossRef；向后兼容 v1（files 为空或缺失时跳过） |
-| 其余9个JSON | 1 | 无变更 |
+| `scan_sources.json` | 1 | 2026-06-22 新增导出 `isCosDirectory` 字段（旧备份缺失时导入默认 false，向后兼容，不升版本）；同时修复 `importTags` 漏读 `mediaTags` 数组导致文件-标签关联整体丢失的 bug |
+| 其余8个JSON | 1 | 无变更 |
 
 ## 个人偏好导出
 
@@ -200,4 +201,4 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-06-22（新增恢复提示 + 空库覆盖防护）
+> 最后更新：2026-06-22（修复 importTags 漏读 mediaTags + scan_sources 补 isCosDirectory + 新增恢复提示 + 空库覆盖防护）

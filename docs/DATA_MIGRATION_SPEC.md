@@ -75,6 +75,7 @@
 
 > schemaVersion 变更记录：
 > - **1** → **2**：viewStats 新增 `mediaType`/`isCosFile`；新增 `cosWorks`/`followedAuthorIds` 部分；authors 新增 `viewCount`/`followed`/`tags`
+> - **app数据/ scan_sources.json** schemaVersion 保持 1，2026-06-22 新增导出 `isCosDirectory` 字段（旧备份缺失时导入默认 false，向后兼容）
 
 ## 4. data 区域 — 8 个部分
 
@@ -378,7 +379,7 @@ mediaTags 部分：
 ### scan_sources.json
 
 ```json
-{ "schemaVersion": 1, "exportedAtMillis": ..., "data": { "sources": [{ "uriString": "content://...", "displayName": "示例扫描目录A", "isBackupDirectory": false, "addedAtMillis": ..., "lastScannedAtMillis": ... }] } }
+{ "schemaVersion": 1, "exportedAtMillis": ..., "data": { "sources": [{ "uriString": "content://...", "displayName": "示例扫描目录A", "isBackupDirectory": false, "isCosDirectory": false, "addedAtMillis": ..., "lastScannedAtMillis": ... }] } }
 ```
 
 | 字段 | 类型 | 说明 |
@@ -386,6 +387,7 @@ mediaTags 部分：
 | uriString | String | SAF 目录 URI |
 | displayName | String | 显示名 |
 | isBackupDirectory | Boolean | 是否备份目录 |
+| isCosDirectory | Boolean | 是否 COS 扫描目录（2026-06-22 新增导出，旧备份缺失时默认 false） |
 | addedAtMillis | Long | 添加时间戳 |
 | lastScannedAtMillis | Long | 最近扫描时间戳 |
 
@@ -478,11 +480,11 @@ favorites 部分：
 | 文件 | 导入方式 | 冲突处理 |
 |---|---|---|
 | authors.json | upsert 作者 + 重建 AuthorMediaCrossRef | 重复 authorId 合并关联文件（取并集） |
-| tags.json | upsert 标签 + 重建 MediaTagCrossRef | 按 name 合并，tagId 不保留 |
+| tags.json | upsert 标签定义（按 name 去重）+ 恢复 MediaTagCrossRef | tag 定义按 name 合并（INSERT OR IGNORE，不覆盖现有）；mediaTags 按 tagName 查本地真实 tagId 建关联，recordKey 本地不存在则跳过 |
 | album_rules.json | upsert 规则 | 按 sourceName 合并 |
 | media_stats.json | upsert 统计 | 按 recordKey，取更新时间较新者或较大值 |
 | history.json | upsert 历史 | 按 recordKey，保留最新一条 |
-| scan_sources.json | upsert 扫描源 | 按 uriString 合并 |
+| scan_sources.json | upsert 扫描源 | 按 uriString 合并，含 isCosDirectory 标志（2026-06-22 修复：此前导出导入两端均漏写该字段，导致 COS 目录恢复后身份丢失） |
 | likes.json | 写入 SharedPreferences | 按 recordKey 累加/覆盖点赞计数 |
 | recommendation_prefs.json | 写入 AppPrefs | 直接覆盖 9 维权重 |
 | timeline_tags.json | upsert 时间轴标签 | 按 recordKey+timeMillis+name 合并 |
@@ -500,4 +502,4 @@ favorites 部分：
 3. **空库防护**：若新 App 也有"自动同步写入备份"功能，建议在本地数据库为空时暂停写入，避免空数据覆盖旧备份
 4. **schemaVersion 兼容**：导入时按 schemaVersion 分支处理，缺失字段用默认值，未知字段忽略
 
-最后更新时间：2026-06-22
+最后更新时间：2026-06-22（修复 importTags 漏读 mediaTags + scan_sources 补 isCosDirectory）
