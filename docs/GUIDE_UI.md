@@ -140,6 +140,7 @@
 - 每个作品/角色独立显示药丸，不合并单文件作品到"其他"；"其他"药丸始终排在列表最下面（不参与数量排序），位于"收起 ▲"之前
 - 日期分组 RecyclerView（`GroupedMediaAdapter` + `GridLayoutManager` + `SpanSizeLookup`）
 - **异步渲染**：`render()` 只做编排（立即隐藏药丸栏 + 启动协程），耗时计算在 `computeAllGroupsAsync()` 的 `Dispatchers.Default` 中执行（类型筛选 `MediaRenderHelper.applyTypeFilter` + 缓存键判定 + 出处/角色分组 `MediaGroupHelper.groupBySource/groupByCharacter/groupByCosAuthor/groupByCosWork` + `MediaBrowserLogic.applyFilter`），协程外 `updateAllUI()` 只做 UI 更新（药丸渲染 + `MediaRenderHelper.buildFingerprint` 指纹判定 + adapter 提交）；收起胶囊时在协程外立即隐藏 scroller 避免旧UI残留
+- **collect 块不重复 render**（2026-06-22 修复）：数据变化 collect 回调中只调用一次 `render()`（经 fingerprint 检查），不再先调 `computeSourceGroups()` 再调 `render()`——`computeSourceGroups()` 已退化为 `render()` 的空壳委托，两者连调会导致同一 fingerprint 的 render 执行两次（实测全部页首次进入浪费 210ms，每次数据更新浪费 ~47ms）。`computeSourceGroups()` 保留供分区药丸点击回调（`renderPartitionPills` 内）触发 render
 - **分组缓存**：`cachedSourceGroups`/`cachedCharGroups` 通过缓存键（`sourceGroupsKey`/`charGroupsKey`，由 partition+filterType+dataVersion+selectedSources 组成）判断是否需要重算。点击胶囊项只更新选中状态+filter，不重新 groupBy；仅数据变化（`dataVersion++`）、filterType 变化、selectedSources 变化时才重算分组。COS 5518 文件场景下首次 groupBy 约 600-800ms，缓存命中后 render 降至 <50ms
 - 双指缩放列数 2-5 列（`ScaleGestureDetector`）
 - 筛选面板（`MediaFilterSheet`）：标签区域支持选择/取消选择标签、长按删除标签（从数据库删除标签选项及所有关联）、"+ 添加标签"按钮创建新标签

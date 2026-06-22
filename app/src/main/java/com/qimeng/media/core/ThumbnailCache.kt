@@ -164,7 +164,6 @@ object ThumbnailCache {
         onProgress: ((Int, Int) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         val total = mediaFiles.size
-        var count = 0
         val skipped = java.util.concurrent.atomic.AtomicInteger(0)
         val generated = java.util.concurrent.atomic.AtomicInteger(0)
         val failed = java.util.concurrent.atomic.AtomicInteger(0)
@@ -182,16 +181,33 @@ object ThumbnailCache {
         // GIF 不需要预生成静态缓存，直接计入已完成
         if (gifs.isNotEmpty()) {
             skipped.addAndGet(gifs.size)
-            count += gifs.size
-            onProgress?.invoke(count, total)
+            onProgress?.invoke(skipped.get(), total)
         }
 
+        // 批量预过滤已缓存文件：autoRefresh 等场景常出现"全部已缓存"（skipped=total, generated=0），
+        // 旧实现仍走完整 coroutineScope + chunked(concurrency) + async 调度，每个文件一次 isThumbnailCached。
+        // 此处先批量过滤，全量缓存时直接返回跳过并发池调度开销；部分缓存时只对未缓存文件走并发池。
+        val uncached = workItems.filterNot { isThumbnailCached(context, it.recordKey) }
+        val preSkipped = workItems.size - uncached.size
+        if (preSkipped > 0) {
+            skipped.addAndGet(preSkipped)
+        }
+
+        if (uncached.isEmpty()) {
+            // 全量缓存命中：无需启动并发池，直接完成
+            onProgress?.invoke(total, total)
+            AppLog.d("ThumbCache", "pregenerateThumbnails: done, $total/$total processed (skipped=${skipped.get()}, generated=0, failed=0) [全量缓存命中，跳过并发池]")
+            return@withContext
+        }
+
+        var count = skipped.get()
         // 统一并发池：图片视频共享，图片优先排列确保快任务先完成
         coroutineScope {
-            workItems.chunked(concurrency).forEach { batch ->
+            uncached.chunked(concurrency).forEach { batch ->
                 batch.map { media ->
                     async {
                         try {
+                            // 二次检查：预过滤与实际解码间可能被其他线程预生成
                             if (isThumbnailCached(context, media.recordKey)) {
                                 skipped.incrementAndGet()
                                 return@async
@@ -220,14 +236,14 @@ object ThumbnailCache {
                     }
                 }.awaitAll()
                 count += batch.size
-                if (count % 200 == 0 || count == total) {
+                if (count % 200 == 0 || count >= total) {
                     AppLog.d("ThumbCache", "pregenerate: progress $count/$total (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
                 }
                 onProgress?.invoke(count, total)
             }
         }
 
-        AppLog.d("ThumbCache", "pregenerateThumbnails: done, $count/$total processed (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
+        AppLog.d("ThumbCache", "pregenerateThumbnails: done, $total/$total processed (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
     }
 
     // ===== 缓存管理 =====

@@ -340,6 +340,24 @@
 
 **行为等价性**：索引"取首条匹配"等价于旧 `find`；仅收录 `cos_` 前缀作者；`CosWorkIndex` 依赖唯一约束保证无重复作品名。旧签名 `findCosAuthorForMedia(media, authorMedia, authors)` / `findCosCharacterForMedia(media, authorMedia, authors, cosWorks)` 保留供单次查询与现有测试，**批量/循环场景禁用**。新增 14 个索引单元测试覆盖正确性/边界/语义等价（`MediaGroupHelperTest`）。构建验证：`assembleDebug` + `testDebugUnitTest` 全过。
 
+### 性能优化（2026-06-22）：真机性能监测三项开销修复
+
+基于真机性能监测（AppLog 文件日志 + `dumpsys gfxinfo/meminfo` + `am start -W`）发现的三项可优化开销，全部修复。监测数据见下方"优化前后对照"。
+
+| 文件/方法 | 优化前 | 优化后 | 说明 |
+|---|---|---|---|
+| `AllFilesFragment` collect 块 | 先调 `computeSourceGroups()`（内部 render）再调 `render()`，同一 fingerprint render 两次 | 只调一次 `render()`（经 fingerprint 检查） | `computeSourceGroups()` 已退化为 render 空壳委托，collect 块两者连调导致重复 render。实测全部页首次进入 415ms→210ms，每次数据更新 ~95ms→~47ms。分区药丸点击回调（renderPartitionPills 内）仍通过 `computeSourceGroups()` 触发 render，保留 |
+| `SourceMatcher.matchAll` | 每次调用重新匹配出处+角色，同文件名被多页面/多轮重复匹配（实测 5816 文件每文件 2-3 次） | 按 fileName 缓存到 `matchAllCache`（`ConcurrentHashMap`，容量上限 8192 超限清空重建），命中 O(1) | `updateCustomSources`/`updateTxtWorks` 时清空缓存保证一致性。批量遍历（groupBySource 对数千文件）消除重复匹配 CPU |
+| `SourceMatcher` charMiss 日志 | 每次未命中记 1 条，批量匹配时 50 条/轮刷屏（占启动日志 60%） | 计数器采样，每 50 次记 1 条 `charMiss(N): ...`（N 为累计总数） | 既防日志刷屏（2MB 上限过快触发）又保留诊断计数。`logCharMiss()` 集中处理 |
+| `ThumbnailCache.pregenerateThumbnails` | 全量缓存命中时仍走完整 `coroutineScope` + `chunked(concurrency)` + `async` 调度，每文件一次 `isThumbnailCached` | 入口批量预过滤已缓存文件，全量命中直接返回跳过并发池；部分命中只对未缓存文件走并发池（解码前二次检查防竞态） | autoRefresh 触发的预生成常出现 `skipped=total, generated=0`，旧实现遍历 726 文件仍调度并发池。优化后全量缓存时只做批量 `File.exists()` 检查 |
+
+**行为等价性**：
+- AllFiles render 重复修复：collect 块少调一次 `computeSourceGroups()`，但 fingerprint 检查后的 `render()` 保留，数据变化仍正确触发渲染。分区药丸点击回调不受影响。
+- matchAll 缓存：缓存的是纯函数结果（`matchAllSources` + `matchCharacters` 组合），`match()` 不修改状态；customSources/txtWorks 变化时清空，等价于"数据版本内不变"语义。
+- ThumbnailCache 批量过滤：保留并发解码前的二次检查（预过滤与解码间可能被其他线程预生成），未改变解码逻辑。
+
+**构建验证**：`assembleDebug` + `testDebugUnitTest` 全过（含 `SourceMatcherTest` 18 个测试、`MediaGroupHelperTest` 等现有测试无回归）。
+
 ### Detekt 配置
 
 - 配置文件：`detekt.yml`（项目根目录）
@@ -562,4 +580,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-06-21
+> 最后更新：2026-06-22

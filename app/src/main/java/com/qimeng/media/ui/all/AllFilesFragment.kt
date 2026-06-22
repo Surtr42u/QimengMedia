@@ -195,8 +195,9 @@ class AllFilesFragment : Fragment() {
                     cachedHistory = history
                     dataVersion++  // 数据变化，标记分组缓存失效
 
-                    computeSourceGroups()
-
+                    // 注：此处不再调用 computeSourceGroups()——它已退化为 render() 的空壳委托，
+                    // 与下方 render() 重复执行（fingerprint 相同时白白浪费 45-210ms 主线程时间）。
+                    // 分区药丸点击回调（renderPartitionPills 内）仍通过 computeSourceGroups() 触发 render。
                     val fp = "${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}"
                     if (fp != mediaFingerprint || !observeStarted) {
                         mediaFingerprint = fp

@@ -60,6 +60,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | `GpuInfo` | GPU 纹理上限探测（`GPU纹理上限=N 设备=xxx GPU=xxx`，启动时记录一次） |
 | `LargeImage` | 大图解码逐级回退路径（libspng/decodeFileDescriptor/decodeStream 命中或回退 Coil） |
 | `Zoom` | ZoomImageView 反射检测异常（仅非预期异常才记录，正常 NoSuchField 静默） |
+| `SourceMatcher` | 出处/角色匹配未命中采样日志（`charMiss(N): file=...`，每 50 次未命中记 1 条，N 为累计未命中总数） |
 
 #### 添加日志的原则
 
@@ -68,7 +69,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 3. **分支路径**加日志：MediaStore hit/miss、SAF fallback
 4. **异常捕获**加日志：catch 块中用 `AppLog.e(tag, msg, exception)`
 5. **避免高频日志**：循环内部不加日志，避免 2MB 限制过快触发
-6. **采样日志**：大量数据取前 3 条样本（如 `allSafMedia.take(3).forEach { AppLog.d(...) }`）
+6. **采样日志**：大量数据取前 3 条样本（如 `allSafMedia.take(3).forEach { AppLog.d(...) }`）；高频未命中事件用计数器采样（如 `SourceMatcher.charMiss` 每 50 次记 1 条 `charMiss(N): ...`，N 为累计总数，既防刷屏又保留诊断计数）
 
 ---
 
@@ -361,4 +362,4 @@ while ($true) {
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
 
-> 最后更新：2026-06-20
+> 最后更新：2026-06-22
