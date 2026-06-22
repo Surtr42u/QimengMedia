@@ -12,6 +12,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.edit
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
@@ -167,6 +168,10 @@ class ProfileFragment : Fragment() {
                         cachedAutoSync = prefs.autoSync
                     }
                 }
+                launch {
+                    // 空库覆盖防护信号：true 时数据备份弹层显示"建议先导入恢复"提示
+                    viewModel.restoreSuggestion.collect { _ -> }
+                }
             }
         }
     }
@@ -209,11 +214,68 @@ class ProfileFragment : Fragment() {
                             Toast.makeText(requireContext(), "偏好导出失败：${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
+                    // 检测备份目录是否已有可恢复数据，有则提示用户导入恢复
+                    // 用途：卸载重装后选了旧备份目录，App 主动提示合并旧数据，避免画像断档
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val summary = viewModel.peekBackupSummary(qmDir.uri)
+                        if (summary != null && summary.existingFileCount > 0) {
+                            // 防重复：同一目录只提示一次（取消也算知情，不再打扰）
+                            val prefs = requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
+                            val hintKey = "hint_shown_${qmDir.uri}"
+                            if (!prefs.getBoolean(hintKey, false)) {
+                                withContext(Dispatchers.Main) { showRestoreConfirmDialog(summary, hintKey) }
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Toast.makeText(requireContext(), "设置失败：${e.message}", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * 恢复确认弹窗：检测到备份目录有可恢复数据时弹出，提示用户是否导入恢复。
+     * 用户确认或取消后都标记 hintKey 已展示，避免同一目录重复打扰。
+     * 卸载重装后 SharedPreferences 清空，重新选择目录会重新提示。
+     */
+    private fun showRestoreConfirmDialog(
+        summary: com.qimeng.media.backup.BackupSummary,
+        hintKey: String
+    ) {
+        val dateText = summary.exportedAtMillis?.let {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(it))
+        } ?: "未知时间"
+        val message = "该目录已有备份数据（最近备份：$dateText）：\n" +
+            "${summary.authorCount} 位作者 / ${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
+            "是否导入恢复到本地？\n\n" +
+            "（取消则只作为新的备份位置，不恢复旧数据）"
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("检测到备份数据")
+            .setMessage(message)
+            .setPositiveButton("导入恢复") { _, _ ->
+                // 标记已展示（即使用户确认，也不再重复弹）
+                requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit { putBoolean(hintKey, true) }
+                viewLifecycleOwner.lifecycleScope.launch {
+                    Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
+                    viewModel.importFromBackupDirectory { count ->
+                        if (count > 0) {
+                            Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消") { _, _ ->
+                // 取消也标记已展示，表示用户知情，不再重复打扰
+                requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit { putBoolean(hintKey, true) }
+            }
+            .show()
     }
 
     private fun showDataManagementDialog() {
@@ -329,6 +391,25 @@ class ProfileFragment : Fragment() {
         container.addView(SheetUiHelper.sheetTitle(ctx, "数据备份"))
         container.addView(SheetUiHelper.sheetSubText(ctx, "选择文件夹后，将创建「绮梦影库」目录\n├ 个人偏好/（偏好JSON+报告TXT）\n└ app数据/（自动同步的数据库JSON）"))
 
+        // 空库覆盖防护提示：本地数据为空时自动同步已暂停，建议先导入恢复
+        if (viewModel.restoreSuggestion.value) {
+            container.addView(SheetUiHelper.sheetSubText(ctx, "⚠ 本地数据为空，已暂停自动同步\n建议先导入恢复，避免空数据覆盖旧备份"))
+            container.addView(SheetUiHelper.sheetActionButton(ctx, "导入恢复") {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
+                    viewModel.importFromBackupDirectory { count ->
+                        if (count > 0) {
+                            Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
+                            viewModel.clearRestoreSuggestion()
+                            dialog.dismiss()
+                        } else {
+                            Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            })
+        }
+
         val currentName = cachedBackupName
         if (currentName != null) {
             container.addView(SheetUiHelper.sheetLabel(ctx, "当前备份位置"))
@@ -347,10 +428,14 @@ class ProfileFragment : Fragment() {
                     val success = withContext(Dispatchers.IO) {
                         app.appContainer.autoSyncUseCase.triggerManualSync()
                     }
-                    Toast.makeText(requireContext(),
-                        if (success) "同步完成" else "同步失败，请检查备份目录",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    // 空库时 triggerManualSync 返回 false 且置 restoreSuggestion=true，
+                    // 此时提示"数据为空已暂停"而非"同步失败"，避免误导用户
+                    val msg = when {
+                        success -> "同步完成"
+                        viewModel.restoreSuggestion.value -> "本地数据为空，已暂停同步以防覆盖旧备份，建议先导入恢复"
+                        else -> "同步失败，请检查备份目录"
+                    }
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                 }
             })
         } else {

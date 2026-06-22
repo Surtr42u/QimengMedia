@@ -455,4 +455,49 @@ favorites 部分：
 10. mediaType 区分图片视频：影响热度分计算公式
 11. isCosFile 区分 COS 文件：COS 文件有独立的 cosWorks 数据
 
-最后更新时间：2026-06-13
+## 10. 恢复流程（写回绮梦影库）
+
+这些 JSON 双向可用：既能读出来做分析（其他 App），也能写回绮梦影库恢复数据。本节说明绮梦影库的恢复机制，供其他 App 开发者参考实现"写回恢复"。
+
+### 恢复触发方式
+
+绮梦影库在两种场景下主动提示用户恢复：
+
+1. **选择备份目录后检测**：用户在"数据管理 → 数据备份 → 选择文件夹"选定目录后，App 自动扫描 `app数据/` 子目录，检测到已有备份数据时弹窗提示"检测到备份数据：X 位作者 / Y 个标签 / Z 条统计，是否导入恢复？"，用户确认后调用 `BackupManager.importFromDirectory` 恢复。
+   - 同一目录只提示一次（用设备本地 SharedPreferences 记录，卸载重装后清空，重新选择会再提示）
+   - 用户取消表示知情，不再重复打扰
+
+2. **空库覆盖防护**：检测到本地数据库 `media_files` 表为空时，自动同步和手动同步都会被拦截，暂停向备份目录写入，并在数据备份弹层显示"本地数据为空，已暂停自动同步，建议先导入恢复"提示。
+   - 防护目的：避免卸载重装后空数据库反向覆盖旧备份，造成数据永久丢失
+   - 判定阈值：`media_files` 表为空即触发（EXISTS + LIMIT 1 查询）
+
+### 导入语义
+
+`importFromDirectory` 从 `app数据/` 读取 9 个 JSON 文件（settings.json 只导出不导入）并写入 Room 数据库：
+
+| 文件 | 导入方式 | 冲突处理 |
+|---|---|---|
+| authors.json | upsert 作者 + 重建 AuthorMediaCrossRef | 重复 authorId 合并关联文件（取并集） |
+| tags.json | upsert 标签 + 重建 MediaTagCrossRef | 按 name 合并，tagId 不保留 |
+| album_rules.json | upsert 规则 | 按 sourceName 合并 |
+| media_stats.json | upsert 统计 | 按 recordKey，取更新时间较新者或较大值 |
+| history.json | upsert 历史 | 按 recordKey，保留最新一条 |
+| scan_sources.json | upsert 扫描源 | 按 uriString 合并 |
+| likes.json | 写入 SharedPreferences | 按 recordKey 累加/覆盖点赞计数 |
+| recommendation_prefs.json | 写入 AppPrefs | 直接覆盖 9 维权重 |
+| timeline_tags.json | upsert 时间轴标签 | 按 recordKey+timeMillis+name 合并 |
+
+**跨引用安全**：authors.json 的 files[] recordKey 仅当本地 `media_files` 表中存在时才建立 AuthorMediaCrossRef，不存在的 key 静默跳过，不会注入无效关联。
+
+**向后兼容**：导入时先解析 schemaVersion，对缺失字段使用默认值，对未知字段忽略。v1 导出的 authors.json files 为空数组时跳过关联重建，不崩溃。
+
+### 给其他 App 开发者的提示
+
+如果新 App 也要支持"写回绮梦影库恢复"或"从绮梦影库备份导入"：
+
+1. **读取侧**：照本规范的字段定义读取 JSON，recordKey 是关联键
+2. **写入侧（恢复到绮梦影库）**：复用上述导入语义——按 recordKey/authorId/name 合并，不删除现有数据，统计取较大值
+3. **空库防护**：若新 App 也有"自动同步写入备份"功能，建议在本地数据库为空时暂停写入，避免空数据覆盖旧备份
+4. **schemaVersion 兼容**：导入时按 schemaVersion 分支处理，缺失字段用默认值，未知字段忽略
+
+最后更新时间：2026-06-22

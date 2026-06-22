@@ -7,6 +7,9 @@ import com.qimeng.media.core.AppLog
 import com.qimeng.media.data.db.AppDatabase
 import com.qimeng.media.data.prefs.AppPrefsManager
 import com.qimeng.media.data.repository.LocalMediaRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * 自动同步 UseCase：负责在数据变化时自动写入备份目录。
@@ -17,6 +20,10 @@ import com.qimeng.media.data.repository.LocalMediaRepository
  * - 退出详情页 → triggerAutoSyncForDetailExit()（只写 app数据/）
  * - App 进入后台 → triggerFullSync()（写 app数据/ + 个人偏好/）
  * - 手动同步 → triggerManualSync()（写 app数据/ + 个人偏好/，无视防抖）
+ *
+ * 空库覆盖防护：三个写入点在调用 BackupManager 前检测 media_files 是否为空，
+ * 空库时跳过写入并置 [restoreSuggestion] 为 true，通知 UI 提示用户先导入恢复，
+ * 避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。
  */
 class AutoSyncUseCase(
     private val repository: LocalMediaRepository,
@@ -26,6 +33,15 @@ class AutoSyncUseCase(
 ) {
     private var lastAutoSyncTime = 0L
     private var lastFullSyncTime = 0L
+
+    /**
+     * "建议恢复"信号：空库时自动同步/手动同步被拦截后置 true，UI 据此显示提示。
+     * 用户导入恢复后调 [clearRestoreSuggestion] 清除。
+     */
+    private val _restoreSuggestion = MutableStateFlow(false)
+    val restoreSuggestion: StateFlow<Boolean> = _restoreSuggestion.asStateFlow()
+
+    fun clearRestoreSuggestion() { _restoreSuggestion.value = false }
 
     /** 扫描/刷新后触发：只写 app数据/，30秒防抖 */
     suspend fun triggerAutoSyncIfNeeded() {
@@ -59,6 +75,13 @@ class AutoSyncUseCase(
         val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
         if (backupUri.isNullOrBlank()) return
 
+        // 空库覆盖防护：media_files 为空时跳过写入，避免空数据覆盖旧备份
+        if (!database.mediaFileDao().hasAny()) {
+            AppLog.w("AutoSync", "数据库为空，跳过全量同步以防覆盖旧备份")
+            _restoreSuggestion.value = true
+            return
+        }
+
         lastFullSyncTime = now
         lastAutoSyncTime = now
         try {
@@ -74,6 +97,13 @@ class AutoSyncUseCase(
     suspend fun triggerManualSync(): Boolean {
         val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
         if (backupUri.isNullOrBlank()) return false
+
+        // 空库覆盖防护：手动同步空库也会覆盖备份，拦截并提示用户先恢复
+        if (!database.mediaFileDao().hasAny()) {
+            AppLog.w("AutoSync", "数据库为空，手动同步被拦截以防覆盖旧备份")
+            _restoreSuggestion.value = true
+            return false
+        }
 
         lastFullSyncTime = System.currentTimeMillis()
         lastAutoSyncTime = System.currentTimeMillis()
@@ -93,6 +123,13 @@ class AutoSyncUseCase(
         try {
             val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
             if (backupUri.isNullOrBlank()) return
+
+            // 空库覆盖防护：media_files 为空时跳过写入，避免空数据覆盖旧备份
+            if (!database.mediaFileDao().hasAny()) {
+                AppLog.w("AutoSync", "数据库为空，跳过自动同步以防覆盖旧备份")
+                _restoreSuggestion.value = true
+                return
+            }
 
             val manager = BackupManager(application)
             manager.autoSyncToDirectory(backupUri.toUri(), database, appPrefsManager)

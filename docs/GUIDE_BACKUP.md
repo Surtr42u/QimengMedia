@@ -49,6 +49,7 @@
 - 写入时使用临时文件再替换，避免半写入损坏。
 - 导出失败提示用户，不影响数据库主数据。
 - 写入后立即回读校验（round-trip test），确保 JSON 可被正常解析。校验失败则删除该文件并记录 `AppLog.e`，防止备份损坏导致导入时静默丢数据。
+- **空库覆盖防护**：自动同步（`syncAppDataOnly`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
 
 ## 导入原则
 
@@ -57,6 +58,7 @@
 - 对未知字段忽略但保留兼容空间。
 - 找不到媒体文件时保留未匹配记录。
 - 导入前可提示是否覆盖、合并或跳过冲突。
+- **选目录后自动检测恢复**：用户在数据管理弹层选择备份目录后，`ProfileFragment.saveBackupLocation` 调用 `BackupManager.peekBackupSummary`（只读，不写数据库）检测 `app数据/` 子目录是否已有备份数据。检测到数据则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"，用户确认后调 `importFromDirectory` 恢复。同一目录只提示一次（用独立 SharedPreferences `restore_hint_prefs` 记录，key 为 `hint_shown_<完整URI>`，卸载重装后清空会重新提示）。
 
 ### 导入安全加固（2026-06-20 审查新增）
 
@@ -88,7 +90,9 @@
   - 防抖：app数据/ 30秒防抖，全量同步 60秒防抖
   - 前提：需先设置备份保存位置
   - 实现：`AutoSyncUseCase` → `BackupManager.autoSyncToDirectory()` / `BackupManager.fullSyncToDirectory()`
-- 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。
+- 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。空库时被拦截返回 false，Toast 提示"本地数据为空，已暂停同步"。
+- 恢复提示：选择备份目录后，App 用 `BackupManager.peekBackupSummary`（只读）检测目录是否已有备份数据，有则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"。用户确认后调 `importFromDirectory` 恢复；取消也标记已展示，同一目录不重复打扰。用途：卸载重装后选了旧目录，主动提示合并旧数据，避免个人画像断档。
+- 空库覆盖防护：数据备份弹层在 `AutoSyncUseCase.restoreSuggestion` 为 true 时，顶部显示"⚠ 本地数据为空，已暂停自动同步，建议先导入恢复"提示行 + "导入恢复"按钮。用户点"导入恢复"调 `importFromBackupDirectory`，成功后清除提示。防护阈值：`media_files` 表为空即触发。
 - 自动同步状态展示。
 - 常规目录：从数据管理弹层添加媒体目录，并和已授权扫描目录一起重新索引。
 - 清空历史记录。
@@ -196,4 +200,4 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-06-20（修正时间戳，正文已含 2026-06-20 安全审查）
+> 最后更新：2026-06-22（新增恢复提示 + 空库覆盖防护）

@@ -4,9 +4,11 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qimeng.media.QimengApplication
+import com.qimeng.media.backup.BackupSummary
 import com.qimeng.media.core.AppLog
 import com.qimeng.media.core.ThumbnailCache
 import com.qimeng.media.data.db.entity.AuthorEntity
@@ -24,6 +26,7 @@ import com.qimeng.media.domain.ThumbnailSource
 import com.qimeng.media.domain.ThumbnailUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,6 +70,9 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 
     // 缩略图预生成进度（委托 ThumbnailUseCase）
     val thumbnailProgress = thumbnailUseCase.progress
+
+    // "建议恢复"信号（委托 AutoSyncUseCase）：空库时自动同步被拦截后置 true，UI 据此提示用户先导入恢复
+    val restoreSuggestion = autoSyncUseCase.restoreSuggestion
 
     init {
         // 启动时清理孤立文件（扫描源已删除但文件仍残留）
@@ -363,6 +369,45 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     suspend fun getBackupDirectoryUri(): String? = withContext(Dispatchers.IO) {
         repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
     }
+
+    /**
+     * 轻量检测备份目录是否已有可恢复数据（只读，不写数据库）。
+     * 供 ProfileFragment 在用户选目录后调用，检测到数据则提示"是否导入恢复"。
+     * @param uri 备份根目录 URI（绮梦影库/）
+     * @return 备份数据量摘要，目录无备份数据时返回 null
+     */
+    suspend fun peekBackupSummary(uri: Uri): BackupSummary? = withContext(Dispatchers.IO) {
+        appContainer.backupManager.peekBackupSummary(uri)
+    }
+
+    /**
+     * 从已设置的备份目录导入恢复数据。
+     * 供 ProfileFragment 确认恢复后调用，复用 BackupManager.importFromDirectory。
+     * @param onComplete 回调，参数为成功导入的 JSON 文件数（0 表示无数据或失败）
+     */
+    fun importFromBackupDirectory(onComplete: (Int) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val uriStr = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
+            if (uriStr.isNullOrBlank()) {
+                withContext(Dispatchers.Main) { onComplete(0) }
+                return@launch
+            }
+            val count = try {
+                appContainer.backupManager.importFromDirectory(
+                    uriStr.toUri(), appContainer.database, appContainer.appPrefsManager
+                )
+            } catch (e: Exception) {
+                AppLog.e("ViewModel", "importFromBackupDirectory failed", e)
+                0
+            }
+            // 导入成功后清除"建议恢复"提示
+            if (count > 0) autoSyncUseCase.clearRestoreSuggestion()
+            withContext(Dispatchers.Main) { onComplete(count) }
+        }
+    }
+
+    /** 清除"建议恢复"提示信号（用户已知情或已恢复后调用） */
+    fun clearRestoreSuggestion() = autoSyncUseCase.clearRestoreSuggestion()
 
     // ===== 标签管理（保留在 ViewModel）=====
 

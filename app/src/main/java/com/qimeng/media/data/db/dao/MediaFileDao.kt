@@ -81,6 +81,13 @@ interface MediaFileDao {
     @Query("SELECT recordKey FROM media_files")
     suspend fun getAllRecordKeys(): List<String>
 
+    /**
+     * 轻量空库检测：EXISTS + LIMIT 1 命中首行即短路返回，不物化任何行/列。
+     * 用于 AutoSyncUseCase 空库覆盖防护，比 getAllRecordKeys().isEmpty() 更省内存。
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM media_files LIMIT 1)")
+    suspend fun hasAny(): Boolean
+
     @Query("UPDATE media_files SET width = :width, height = :height, durationMillis = :durationMillis WHERE recordKey = :recordKey")
     suspend fun updateMetadata(recordKey: String, width: Int?, height: Int?, durationMillis: Long?)
 }

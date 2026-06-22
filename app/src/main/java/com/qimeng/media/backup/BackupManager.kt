@@ -133,6 +133,25 @@ data class ReportSectionOptions(
     ).count { it }
 }
 
+/**
+ * 备份目录数据量检测结果（只读，不写数据库）。
+ *
+ * 由 [BackupManager.peekBackupSummary] 在用户选择备份目录后调用，
+ * 用于"检测到备份数据，是否导入恢复"的提示文案。
+ * - [existingFileCount]：app数据/ 目录下 10 个 JSON 中存在几个
+ * - [authorCount]/[tagCount]/[statsCount]：3 个关键文件 parse 后的顶层条目数
+ * - [exportedAtMillis]：所有存在文件中最近的 exportedAtMillis（用于提示"最近备份时间"）
+ *
+ * 只 parse 3 个关键文件，其余只检查存在性，比 importFromDirectory 轻量。
+ */
+data class BackupSummary(
+    val existingFileCount: Int,
+    val authorCount: Int,
+    val tagCount: Int,
+    val statsCount: Int,
+    val exportedAtMillis: Long?
+)
+
 class BackupManager(private val context: Context) {
 
     suspend fun autoSyncToDirectory(dirUri: Uri, database: AppDatabase, appPrefsManager: AppPrefsManager): Boolean = withContext(Dispatchers.IO) {
@@ -257,6 +276,94 @@ class BackupManager(private val context: Context) {
         readJson(BackupFileNames.RECOMMENDATION_PREFS)?.let { importRecommendationPrefs(it, appPrefsManager); count++ }
         readJson(BackupFileNames.TIMELINE_TAGS)?.let { importTimelineTags(it, database); count++ }
         count
+    }
+
+    /**
+     * 轻量检测备份目录是否已有可恢复数据（只读，不写数据库）。
+     *
+     * 用途：用户选择备份目录后，检测该目录是否已含备份数据，若有则提示"是否导入恢复"，
+     * 避免卸载重装后选了旧目录却不合并数据的问题。
+     *
+     * 实现：
+     * - 用 findSubDirectory("app数据") 定位子目录（只读，不创建）
+     * - 遍历 [BackupFileNames.all] 用 DocumentFile.findFile 检查存在性，统计 existingFileCount
+     * - 对 authors/tags/media_stats 三个关键文件完整 parse 取 data.<key>.length() 作为条目数
+     * - 其余文件只检查存在性不 parse（轻量）
+     * - 读 exportedAtMillis 取所有存在文件中的最近备份时间
+     * - 全部文件不存在 → 返回 null；有任意文件 → 返回 BackupSummary
+     *
+     * 复用 importFromDirectory 内 readJson 的 64MB 安全上限校验逻辑。
+     */
+    suspend fun peekBackupSummary(dirUri: Uri): BackupSummary? = withContext(Dispatchers.IO) {
+        val appDataDirUri = findSubDirectory(dirUri, "app数据") ?: dirUri
+        val dir = DocumentFile.fromTreeUri(context, appDataDirUri) ?: return@withContext null
+
+        // 统计 10 个文件中存在的数量
+        var existingFileCount = 0
+        var latestExportedAt: Long? = null
+        for (name in BackupFileNames.all) {
+            val file = dir.findFile(name)
+            if (file != null && file.isFile) existingFileCount++
+        }
+        if (existingFileCount == 0) return@withContext null
+
+        // 只读 JSON 的辅助：带 64MB 上限校验，异常返回 null
+        val maxBytes = 64L * 1024 * 1024
+        suspend fun readJsonSafe(name: String): JSONObject? {
+            val file = dir.findFile(name)?.takeIf { it.isFile } ?: return null
+            val declaredLen = file.length()
+            if (declaredLen in 1..Long.MAX_VALUE && declaredLen > maxBytes) {
+                AppLog.w("Backup", "peekBackupSummary 跳过 $name：文件 ${declaredLen / 1024}KB 超过上限")
+                return null
+            }
+            return try {
+                context.contentResolver.openInputStream(file.uri)?.use { stream ->
+                    val bytes = stream.readBytes()
+                    if (bytes.size > maxBytes) {
+                        AppLog.w("Backup", "peekBackupSummary 跳过 $name：实际读取 ${bytes.size / 1024}KB 超过上限")
+                        return@use null
+                    }
+                    JSONObject(String(bytes))
+                }
+            } catch (e: Exception) {
+                AppLog.w("Backup", "peekBackupSummary parse failed for $name: ${e.message}")
+                null
+            }
+        }
+
+        // 从 JSON 读 exportedAtMillis 并更新最近备份时间
+        fun updateLatestExportedAt(json: JSONObject?) {
+            json?.optLong("exportedAtMillis", 0L)?.takeIf { it > 0 }?.let { ts ->
+                if (latestExportedAt == null || ts > latestExportedAt!!) latestExportedAt = ts
+            }
+        }
+
+        // 三个关键文件 parse 取条目数，同时读 exportedAtMillis
+        val authorsJson = readJsonSafe(BackupFileNames.AUTHORS)
+        updateLatestExportedAt(authorsJson)
+        val authorCount = authorsJson?.optJSONObject("data")?.optJSONArray("authors")?.length() ?: 0
+
+        val tagsJson = readJsonSafe(BackupFileNames.TAGS)
+        updateLatestExportedAt(tagsJson)
+        val tagCount = tagsJson?.optJSONObject("data")?.optJSONArray("tags")?.length() ?: 0
+
+        val statsJson = readJsonSafe(BackupFileNames.MEDIA_STATS)
+        updateLatestExportedAt(statsJson)
+        val statsCount = statsJson?.optJSONObject("data")?.optJSONArray("items")?.length() ?: 0
+
+        // 其余存在文件也尝试读 exportedAtMillis（只读顶层时间戳，不 parse 数组）
+        for (name in BackupFileNames.all) {
+            if (name == BackupFileNames.AUTHORS || name == BackupFileNames.TAGS || name == BackupFileNames.MEDIA_STATS) continue
+            updateLatestExportedAt(readJsonSafe(name))
+        }
+
+        BackupSummary(
+            existingFileCount = existingFileCount,
+            authorCount = authorCount,
+            tagCount = tagCount,
+            statsCount = statsCount,
+            exportedAtMillis = latestExportedAt
+        )
     }
 
     private suspend fun exportSettings(db: AppDatabase, now: Long): JSONObject {
