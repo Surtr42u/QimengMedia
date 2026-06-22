@@ -456,13 +456,23 @@ class MediaDetailFragment : Fragment() {
         // 保留当前画面直到视频帧加载完成，减少切换空白
         videoPreviewJob?.cancel()
         AppLog.d("Detail", "showVideo: key=${media.recordKey} uri=${media.uriString}")
+        // 主线程同步检查 Coil 内存缓存：预加载已将视频帧写入缓存时命中可零延迟显示，
+        // 跳过 MediaMetadataRetriever 的 IO 开销，消除"图片滑到视频卡一下"（与 showImage 同策略）
+        if (isCoilMemoryCacheHit(media.recordKey)) {
+            AppLog.d("Detail", "showVideo: 命中内存缓存 key=${media.recordKey}")
+            loadVideoFrameWithCoil(media)
+            binding.videoTouchOverlay.isVisible = true
+            updateVideoPlayButtonVisibility()
+            return
+        }
+        // 缓存未命中，异步 MediaMetadataRetriever 取首帧，失败回退 Coil
         videoPreviewJob = viewLifecycleOwner.lifecycleScope.launch {
             val startMs = SystemClock.uptimeMillis()
             val bitmap = loadVideoFrame(media.uriString)
             val costMs = SystemClock.uptimeMillis() - startMs
             if (bitmap != null && !bitmap.isRecycled && currentRecordKey == media.recordKey) {
                 AppLog.d("Detail", "showVideo: 首帧截取成功 key=${media.recordKey} 耗时=${costMs}ms 尺寸=${bitmap.width}x${bitmap.height}")
-                binding.detailImageView.setBackgroundColor(Color.BLACK)
+                binding.detailImageView.setBackgroundColor(0)
                 binding.detailImageView.setImageBitmap(bitmap)
             } else if (currentRecordKey == media.recordKey) {
                 // 回退到 Coil VideoFrameDecoder，placeholder 保留当前画面
@@ -476,7 +486,7 @@ class MediaDetailFragment : Fragment() {
 
     /** 通过 Coil 加载视频帧（统一封装，placeholder 保留当前画面，videoFrameMillis(0) 取首帧） */
     private fun loadVideoFrameWithCoil(media: MediaFileEntity) {
-        binding.detailImageView.setBackgroundColor(Color.BLACK)
+        binding.detailImageView.setBackgroundColor(0)
         binding.detailImageView.load(media.uriString.toUri()) {
             placeholder(binding.detailImageView.drawable)
             crossfade(false)
@@ -556,7 +566,7 @@ class MediaDetailFragment : Fragment() {
         }
         binding.detailVideoPlayer.isVisible = false
         binding.detailImageView.isVisible = true
-        binding.detailImageView.setBackgroundColor(Color.BLACK)
+        binding.detailImageView.setBackgroundColor(0)
         binding.videoTouchOverlay.isVisible = true
         updateVideoPlayButtonVisibility()
         val media = currentMedia ?: return
