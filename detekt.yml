@@ -1,6 +1,9 @@
 # Detekt 配置 - 绮梦影库
 # 对已有代码适度宽容，对新代码严格
 # 后续逐步收紧阈值
+#
+# CI 注意：gradlew 必须保持 git 可执行权限 100755（git update-index --chmod=+x gradlew），
+# 否则 Linux CI 执行 ./gradlew 时报 exit code 126（command not executable）。
 
 complexity:
   LongMethod:

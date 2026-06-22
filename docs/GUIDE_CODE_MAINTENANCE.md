@@ -378,11 +378,12 @@
 
 ### detekt CI 集成
 
-- **GitHub Actions**：`.github/workflows/detekt.yml`，push/PR 到 main 时自动运行 detekt + 单元测试
+- **GitHub Actions**：`.github/workflows/detekt.yml`，push/PR 到 main/master 时自动运行 detekt + 单元测试（path 过滤器：`app/**/*.kt` + 根目录 `detekt.yml`，仅 Kotlin 代码或 detekt 配置变更才触发）
 - **本地 pre-commit hook**：`.githooks/pre-commit`，提交前自动运行 detekt
   - 启用方式：`git config core.hooksPath .githooks`
   - 跳过方式：`git commit --no-verify`（不推荐）
 - detekt 配置 `ignoreFailures=true`，仅警告不阻断构建
+- **gradlew 可执行权限**（2026-06-22 修复）：`gradlew` 和 `.githooks/pre-commit` 在 git 中必须保持 `100755` 模式（`git update-index --chmod=+x gradlew`）。Windows 提交时若丢失可执行位，Linux CI 执行 `./gradlew` 会报 `exit code 126`（command not executable），detekt 和 unit-test 两个 job 均失败。根目录 `detekt.yml` 顶部已加注释提醒
 
 ## 共享逻辑与组合组件模式
 
