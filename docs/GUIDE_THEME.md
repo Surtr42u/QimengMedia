@@ -18,14 +18,15 @@
 
 不管：页面布局（见 GUIDE_UI.md）、动效实现（见 GUIDE_ANIMATION.md）
 
-## 设计理念：温暖极简主义
+## 设计理念：中性极简主义
 
-采用"温暖极简主义"设计语言：
-- **暖色调**：与木纹雕刻图标（#DDBC98）同色系，告别冷灰感
-- **层次感**：通过 bg/surface/surfaceSoft 三层色差制造深度，不依赖描边
-- **强调色**：`qmColorAccent`（琥珀色），用于进度条/数据可视化/选中高亮
+采用"中性极简主义"设计语言（v1.11 起从"温暖极简主义"改为中性灰度方案）：
+- **中性灰度**：告别暖色调，采用主流 App 的白/灰/黑中性对比，克制不刺眼
+- **低对比分层**：通过 bg/surface/surfaceSoft 三层很小色差制造深度，不依赖描边
+- **强调色**：`qmColorAccent`（中灰），用于进度条/数据可视化/选中高亮
 - **无描边**：所有卡片去掉 1dp 描边，纯色填充 + 色差分层
 - **统一圆角**：卡片 16dp / 统计卡 20dp / 胶囊 100dp / 底部 Sheet 28dp
+- **应用图标独立**：图标背景仍保留木纹色 `#DDBC98` 作为品牌识别，与 App 内主题色无关
 
 ## 明暗模式系统
 
@@ -62,19 +63,19 @@
 
 | 属性名 | 用途 | 白天示例 / 夜间示例 |
 |---|---|---|
-| `qmColorBg` | 页面/bar 背景（暖白/暖黑） | `#F2F1ED` / `#0F0E0D` |
-| `qmColorSurface` | 卡片/底栏/弹层背景（纯白/深灰） | `#FFFFFF` / `#1C1A17` |
-| `qmColorSurfaceSoft` | 统计卡背景（暖灰） | `#E8E6E0` / `#262320` |
-| `qmColorPrimary` | 主强调色（图标/按钮/选中） | `#5D544A` / `#DDBC98` |
-| `qmColorPrimarySoft` | 主色半透明（选中指示器背景） | `#1A5D544A` / `#26DDBC98` |
-| `qmColorAccent` | 强调色（进度条/数据可视化） | `#A0734A` / `#DDBC98` |
-| `qmColorAccentSoft` | 强调色半透明 | `#1AA0734A` / `#26DDBC98` |
-| `qmColorTextPrimary` | 主文字（暖黑/暖白） | `#2A2520` / `#F2EDE5` |
-| `qmColorTextSecondary` | 次文字/hint（暖灰） | `#7A7068` / `#B0A69A` |
-| `qmColorChipBg` | 胶囊背景（暖灰） | `#E5E1D9` / `#2A2622` |
-| `qmColorDivider` | 分割线（暖灰） | `#D5D0C6` / `#332E28` |
+| `qmColorBg` | 页面/bar 背景（微灰白/深灰） | `#FAFAFA` / `#1A1A1A` |
+| `qmColorSurface` | 卡片/底栏/弹层背景（纯白/深灰） | `#FFFFFF` / `#242424` |
+| `qmColorSurfaceSoft` | 统计卡背景（浅灰） | `#F2F2F4` / `#2E2E2E` |
+| `qmColorPrimary` | 主强调色（图标/按钮/选中） | `#3A3A3A` / `#C8C8C8` |
+| `qmColorPrimarySoft` | 主色半透明（选中指示器背景） | `#123A3A3A` / `#1AC8C8C8` |
+| `qmColorAccent` | 强调色（进度条/数据可视化） | `#6A6A6A` / `#A8A8A8` |
+| `qmColorAccentSoft` | 强调色半透明 | `#1A6A6A6A` / `#1AA8A8A8` |
+| `qmColorTextPrimary` | 主文字（深灰/浅灰） | `#3A3A3A` / `#C8C8C8` |
+| `qmColorTextSecondary` | 次文字/hint（中灰） | `#9A9A9A` / `#808080` |
+| `qmColorChipBg` | 胶囊背景（浅灰/深灰） | `#F0F0F2` / `#2E2E2E` |
+| `qmColorDivider` | 分割线（浅灰/深灰） | `#ECECEE` / `#383838` |
 
-颜色由 `values/colors.xml` 和 `values-night/colors.xml` 静态定义，系统 DayNight 自动选择。
+颜色由 `values/colors.xml` 和 `values-night/colors.xml` 静态定义，系统 DayNight 自动选择。应用图标背景 `ic_launcher_background.xml` 保留木纹色 `#DDBC98` 作为品牌识别，与 App 内主题色体系完全独立。
 
 ## 使用方式
 
@@ -145,4 +146,4 @@ context.isNightMode()
 - **强调色使用场景**：`qmColorAccent` 仅用于数据可视化（进度条、图表高亮）、选中态强调，不用于普通文字或背景。
 - **明暗模式切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。
 
-> 最后更新：2026-06-19（主题色彩行改为不可点击，仅跟随手机系统明暗模式）
+> 最后更新：2026-06-22（主题色从中性暖灰改为中性灰度方案，应用图标木纹色保留不变）

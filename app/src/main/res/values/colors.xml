@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 温暖极简主义：暖白背景 + 纯白卡片 + 暖灰统计卡，拉大层次差 -->
-    <color name="qm_bg">#F2F1ED</color>
+    <!-- 中性极简：微灰白背景 + 纯白卡片 + 浅灰统计卡，靠小色差分层 -->
+    <color name="qm_bg">#FAFAFA</color>
     <color name="qm_surface">#FFFFFF</color>
-    <color name="qm_surface_soft">#E8E6E0</color>
-    <!-- 主色保持灰度但加入微暖，与木纹图标同色系 -->
-    <color name="qm_primary">#5D544A</color>
-    <color name="qm_primary_soft">#1A5D544A</color>
-    <!-- 强调色：温暖琥珀，用于进度条/选中高亮/关键数字，呼应木纹图标 -->
-    <color name="qm_accent">#A0734A</color>
-    <color name="qm_accent_soft">#1AA0734A</color>
-    <!-- 文字色加入微暖，避免冷灰感 -->
-    <color name="qm_text_primary">#2A2520</color>
-    <color name="qm_text_secondary">#7A7068</color>
-    <!-- 胶囊和分割线加入微暖 -->
-    <color name="qm_chip_bg">#E5E1D9</color>
-    <color name="qm_divider">#D5D0C6</color>
-    <color name="qm_placeholder">#E0DCD4</color>
+    <color name="qm_surface_soft">#F2F2F4</color>
+    <!-- 主色中性深灰，不引入暖色 -->
+    <color name="qm_primary">#3A3A3A</color>
+    <color name="qm_primary_soft">#123A3A3A</color>
+    <!-- 强调色中灰，用于进度条/选中高亮/关键数字 -->
+    <color name="qm_accent">#6A6A6A</color>
+    <color name="qm_accent_soft">#1A6A6A6A</color>
+    <!-- 文字色中性灰，不用纯黑避免刺眼 -->
+    <color name="qm_text_primary">#3A3A3A</color>
+    <color name="qm_text_secondary">#9A9A9A</color>
+    <!-- 胶囊和分割线浅灰 -->
+    <color name="qm_chip_bg">#F0F0F2</color>
+    <color name="qm_divider">#ECECEE</color>
+    <color name="qm_placeholder">#F0F0F2</color>
 </resources>

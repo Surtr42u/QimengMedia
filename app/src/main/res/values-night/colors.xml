@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 夜间模式：暖黑而非纯黑，与木纹图标的暖色调一致 -->
-    <color name="qm_bg">#0F0E0D</color>
-    <color name="qm_surface">#1C1A17</color>
-    <color name="qm_surface_soft">#262320</color>
-    <!-- 夜间主色用木纹色，与图标一致 -->
-    <color name="qm_primary">#DDBC98</color>
-    <color name="qm_primary_soft">#26DDBC98</color>
-    <!-- 夜间强调色：明亮琥珀 -->
-    <color name="qm_accent">#DDBC98</color>
-    <color name="qm_accent_soft">#26DDBC98</color>
-    <!-- 夜间文字暖白 -->
-    <color name="qm_text_primary">#F2EDE5</color>
-    <color name="qm_text_secondary">#B0A69A</color>
-    <!-- 夜间胶囊和分割线暖灰 -->
-    <color name="qm_chip_bg">#2A2622</color>
-    <color name="qm_divider">#332E28</color>
-    <color name="qm_placeholder">#2A2622</color>
+    <!-- 夜间模式：深灰而非纯黑，略抬起避免压迫感 -->
+    <color name="qm_bg">#1A1A1A</color>
+    <color name="qm_surface">#242424</color>
+    <color name="qm_surface_soft">#2E2E2E</color>
+    <!-- 夜间主色浅灰，不引入暖色 -->
+    <color name="qm_primary">#C8C8C8</color>
+    <color name="qm_primary_soft">#1AC8C8C8</color>
+    <!-- 夜间强调色中灰 -->
+    <color name="qm_accent">#A8A8A8</color>
+    <color name="qm_accent_soft">#1AA8A8A8</color>
+    <!-- 夜间文字浅灰，不用纯白避免刺眼 -->
+    <color name="qm_text_primary">#C8C8C8</color>
+    <color name="qm_text_secondary">#808080</color>
+    <!-- 夜间胶囊和分割线深灰 -->
+    <color name="qm_chip_bg">#2E2E2E</color>
+    <color name="qm_divider">#383838</color>
+    <color name="qm_placeholder">#2E2E2E</color>
 </resources>
