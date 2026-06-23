@@ -56,7 +56,7 @@
 
 ### 数据安全
 
-- **完整备份** — 11 类数据 JSON 导出，包含偏好、统计、标签、作者等
+- **完整备份** — 10 类数据 JSON 导出，包含偏好、统计、标签、作者等
 - **自动同步** — 指定备份目录后自动写入，支持增量同步
 - **导入恢复** — 从备份目录一键恢复所有数据
 
@@ -127,7 +127,7 @@ app/src/main/java/com/qimeng/media/
 
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/QimengMedia/QimengMedia.git
+   git clone https://github.com/Surtr42u/QimengMedia.git
    cd QimengMedia
    ```
 
