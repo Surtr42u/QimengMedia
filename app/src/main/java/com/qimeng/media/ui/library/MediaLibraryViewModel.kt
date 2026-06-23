@@ -227,12 +227,14 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     fun deleteScanSource(uriString: String) {
         viewModelScope.launch(Dispatchers.IO) {
             scanUseCase.deleteScanSource(uriString)
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
     fun deleteCosScanSource(uriString: String) {
         viewModelScope.launch(Dispatchers.IO) {
             scanUseCase.deleteCosScanSource(uriString)
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -428,15 +430,22 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                     fileName = media.fileName
                 )
             )
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
     fun removeTag(recordKey: String, tagId: Long) {
-        viewModelScope.launch(Dispatchers.IO) { repository.removeTagFromMedia(recordKey, tagId) }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.removeTagFromMedia(recordKey, tagId)
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
+        }
     }
 
     fun deleteTagById(tagId: Long) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteTagById(tagId) }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteTagById(tagId)
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
+        }
     }
 
     fun createTag(tagName: String) {
@@ -444,6 +453,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             val existingTag = repository.getTagByName(tagName)
             if (existingTag == null) {
                 repository.insertTag(TagEntity(name = tagName, createdAtMillis = System.currentTimeMillis()))
+                autoSyncUseCase.triggerAutoSyncIfNeeded()
             }
         }
     }
@@ -463,12 +473,14 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 name = name,
                 createdAtMillis = System.currentTimeMillis()
             ))
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
     fun deleteTimelineTag(timelineTagId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteTimelineTag(timelineTagId)
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -486,6 +498,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                     updatedAtMillis = now
                 )
             )
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -507,6 +520,8 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             true
         }
         prefs.edit { putStringSet(KEY_FOLLOWED_AUTHORS, followed) }
+        // 关注状态存 SharedPreferences，不走详情页/扫描流程，需主动触发同步避免丢失
+        viewModelScope.launch(Dispatchers.IO) { autoSyncUseCase.triggerAutoSyncIfNeeded() }
         return isFollowed
     }
 
@@ -527,11 +542,16 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     fun observeHistory() = repository.observeLatestHistory()
 
     fun clearHistory() {
-        viewModelScope.launch(Dispatchers.IO) { repository.clearHistory() }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.clearHistory()
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
+        }
     }
 
     fun addCustomAlbumSource(name: String) {
         appContainer.appPrefsManager.addCustomAlbumSource(name)
+        // 自定义相册源属于推荐偏好，修改后触发同步
+        viewModelScope.launch(Dispatchers.IO) { autoSyncUseCase.triggerAutoSyncIfNeeded() }
     }
 
     companion object {

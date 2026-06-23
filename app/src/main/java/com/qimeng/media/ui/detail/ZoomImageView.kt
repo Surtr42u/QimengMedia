@@ -185,10 +185,8 @@ class ZoomImageView @JvmOverloads constructor(
     }
 
     override fun setImageBitmap(bm: Bitmap?) {
-        // 按图尺寸智能选层（BitmapDrawable 包装后与 setImageDrawable 走同一判断）
-        if (!isGestureActive) {
-            applyOptimalLayerType(bm?.let { BitmapDrawable(resources, it) })
-        }
+        // 不在此处调 applyOptimalLayerType：super.setImageBitmap 内部会调 setImageDrawable，
+        // 由 setImageDrawable 统一负责选层，避免同一 BitmapDrawable 被判断两次（切图时冗余 ~0.3ms）
         super.setImageBitmap(bm)
     }
 

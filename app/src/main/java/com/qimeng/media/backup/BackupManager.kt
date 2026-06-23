@@ -1105,7 +1105,7 @@ class BackupManager(private val context: Context) {
             appendAllTagsSection(sb, data.tagList, data.tagFreq)
         }
         if (options.favorites) {
-            appendFavoritesSection(sb, data.favSet)
+            appendFavoritesSection(sb, data)
         }
         appendRankingNotes(sb)
 
@@ -1258,11 +1258,36 @@ class BackupManager(private val context: Context) {
         sb.appendLine()
     }
 
-    /** 9.【收藏的文件】 */
-    private fun appendFavoritesSection(sb: StringBuilder, favSet: Set<String>) {
+    /**
+     * 9.【收藏的文件】
+     *
+     * 常规文件逐个列出（文件名可读）；COS 文件按所属文件夹聚合显示（COS 文件名多为序号无意义，
+     * 文件夹名=作品名更易识别），同文件夹多个收藏显示「文件夹名 × N」。
+     */
+    private fun appendFavoritesSection(sb: StringBuilder, data: PersonalPrefsReportData) {
+        val favSet = data.favSet
         sb.appendLine("───────────────────────────────────────")
         sb.appendLine("【收藏的文件】（共 ${favSet.size} 个）")
-        favSet.sorted().forEach { sb.appendLine("  · $it") }
+        // 按是否 COS 分组
+        val normalFavs = favSet.filter { it !in data.cosRecordKeys }.sorted()
+        val cosFavs = favSet.filter { it in data.cosRecordKeys }
+        if (normalFavs.isNotEmpty()) {
+            sb.appendLine("  常规：")
+            normalFavs.forEach { sb.appendLine("  · $it") }
+        }
+        if (cosFavs.isNotEmpty()) {
+            // COS 文件按 folderName（作品文件夹）聚合，同文件夹多个收藏合并计数
+            val folderCounts = cosFavs.mapNotNull { key -> data.mediaFileMap[key]?.folderName?.takeIf { it.isNotBlank() } }
+                .groupingBy { it }.eachCount()
+            sb.appendLine("  COS作品：")
+            folderCounts.entries.sortedByDescending { it.value }.forEach { (folder, count) ->
+                if (count > 1) {
+                    sb.appendLine("  · $folder × $count")
+                } else {
+                    sb.appendLine("  · $folder")
+                }
+            }
+        }
         sb.appendLine()
     }
 

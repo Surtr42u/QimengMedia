@@ -84,7 +84,8 @@
 - 自动同步开关：我的页提供自动同步开关（`AppPrefs.autoSync`），开启后数据变化自动写入备份目录。
   - 触发时机：
     - 扫描完成/增量刷新/TXT导入后 → `triggerAutoSyncIfNeeded()`（只写 app数据/）
-    - 退出详情页 → `triggerAutoSyncForDetailExit()`（只写 app数据/，JSON 快）
+    - 退出详情页 → `triggerAutoSyncForDetailExit()`（只写 app数据/，JSON 快；覆盖详情页内的点赞/收藏/标签/时间轴标签修改）
+    - 标签增删改（addTag/removeTag/deleteTagById/createTag）、时间轴标签增删（addTimelineTag/deleteTimelineTag）、作者关注切换（toggleAuthorFollow）、清空历史（clearHistory）、手动添加作者（addAuthor）、删除扫描源（deleteScanSource/deleteCosScanSource）、自定义相册源（addCustomAlbumSource）→ `triggerAutoSyncIfNeeded()`（只写 app数据/，2026-06-23 补全：这些操作不走详情页流程，此前仅靠 App 进后台全量同步覆盖，存在被杀丢数据风险）
     - App 进入后台 → `triggerFullSync()`（写 app数据/ + 个人偏好/，60秒防抖）
     - 手动同步 → `triggerManualSync()`（写 app数据/ + 个人偏好/，无视防抖）
   - 防抖：app数据/ 30秒防抖，全量同步 60秒防抖
@@ -169,7 +170,7 @@ JSON 可完整还原 TXT 报告（viewStats 含 mediaType 和 isCosFile，可区
 - 【关注的作者】全部列出
 - 【标签 Top 20】按关联文件数降序
 - 【所有标签】全部列出（名称 + 关联文件数）
-- 【收藏的文件】全部列出
+- 【收藏的文件】常规文件逐个列出（文件名可读）；COS 文件按所属文件夹（作品名）聚合显示，同文件夹多个收藏合并为「文件夹名 × N」（COS 文件名多为序号无意义，文件夹名更易识别）
 - 排行说明
 
 热度分计算：
@@ -201,4 +202,4 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-06-22（修复 importTags 漏读 mediaTags + scan_sources 补 isCosDirectory + 新增恢复提示 + 空库覆盖防护）
+> 最后更新：2026-06-23（补全标签/关注/时间轴标签/清空历史/删除扫描源等操作的即时同步触发 + 收藏列表报告 COS 按文件夹聚合）

@@ -25,3 +25,10 @@ perf_monitor/
 *.keystore
 keystore.properties
 /app/release/
+
+# Windows 保留设备名（bash 误用 2>nul 会创建名为 nul 的文件，cmd.exe 里是空设备）
+# 避免在 bash 环境误用 Windows 重定向语法导致脏文件混入
+nul
+CON
+PRN
+AUX
