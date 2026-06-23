@@ -133,3 +133,13 @@ tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
         txt.required.set(false)
     }
 }
+
+// FORMAT_SPEC.md 单源维护：docs/DATA_MIGRATION_SPEC.md 为唯一源文件，
+// 构建时自动复制到 app/src/main/assets/FORMAT_SPEC.md 供 BackupManager 打包到备份目录。
+// 避免两份 505 行文件字节级镜像维护漂移。
+val copyFormatSpec by tasks.registering(Copy::class) {
+    from("$rootDir/docs/DATA_MIGRATION_SPEC.md")
+    into("src/main/assets")
+    rename { "FORMAT_SPEC.md" }
+}
+tasks.named("preBuild") { dependsOn(copyFormatSpec) }

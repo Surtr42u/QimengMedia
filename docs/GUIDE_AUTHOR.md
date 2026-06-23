@@ -16,7 +16,7 @@
 
 管理作者列表、作者详情、作者编辑、作者与媒体文件关联、作者 TXT 导入。
 
-不管：数据实体定义（见 GUIDE_DATA.md）、备份 JSON 格式（见 GUIDE_BACKUP.md）
+不管：数据实体定义（详见 GUIDE_DATA.md「目标实体」）、备份 JSON 格式（详见 GUIDE_BACKUP.md「JSON 文件」）
 
 ## UI 入口
 
@@ -375,4 +375,4 @@ COS根目录/
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_BACKUP.md`
 
-> 最后更新：2026-06-21
+> 最后更新：2026-06-23

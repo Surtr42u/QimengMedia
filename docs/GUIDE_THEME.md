@@ -16,7 +16,7 @@
 
 管理 App 主题颜色属性、明暗模式切换（跟随系统/浅色/深色）。
 
-不管：页面布局（见 GUIDE_UI.md）、动效实现（见 GUIDE_ANIMATION.md）
+不管：页面布局（详见 GUIDE_UI.md）、动效实现（详见 GUIDE_ANIMATION.md「已实现动效」）
 
 ## 设计理念：中性极简主义
 
@@ -146,4 +146,4 @@ context.isNightMode()
 - **强调色使用场景**：`qmColorAccent` 仅用于数据可视化（进度条、图表高亮）、选中态强调，不用于普通文字或背景。
 - **明暗模式切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。
 
-> 最后更新：2026-06-22（主题色从中性暖灰改为中性灰度方案，应用图标木纹色保留不变）
+> 最后更新：2026-06-23

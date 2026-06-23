@@ -25,6 +25,8 @@
 | `GUIDE_ANDROID_COMPAT.md` | Android 16+ 兼容策略、新系统 10 项检查清单 | SAF 持久授权、targetSdk 升级流程 |
 | `GUIDE_DEBUG.md` | 真机调试流程、AppLog 文件日志、ADB 诊断模式 | Android 16 logcat 不可读、run-as 读取日志、闪退/卡死诊断 |
 | `GUIDE_CODE_MAINTENANCE.md` | 代码阅读策略、静态分析工具、单元测试、重构指南、编码规范 | Grep+精准读取、Detekt、10维评分测试、UseCase 拆分规范 |
+| `GUIDE_USAGE_MATRIX.md` | 任务触发词与指南映射矩阵（唯一权威触发来源） | 27 个任务模块的触发词、必读指南、复合触发示例 |
+| `CHANGELOG.md` | 历次代码审查、重构、性能优化的归档记录 | 2026-06-17 重构 / 06-20 审查 / 06-21 COS 索引化 / 06-22 性能修复 |
 
 ## 你想做什么？（快速导航）
 
@@ -72,4 +74,4 @@
 
 所有人（AI 或程序员）改代码前请先读 `AGENTS.md` 和 `AI_README_FIRST.md`。
 
-> 最后更新：2026-06-21
+> 最后更新：2026-06-23

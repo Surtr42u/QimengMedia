@@ -8,7 +8,7 @@
 
 记录绮梦影库在 Android 16 及未来系统上的兼容策略，方便换新手机、新系统、新 AI 时快速适配。
 
-不管：扫描逻辑（见 GUIDE_SCAN.md）、备份流程（见 GUIDE_BACKUP.md）
+不管：扫描逻辑（详见 GUIDE_SCAN.md「两套扫描体系」）、备份流程（详见 GUIDE_BACKUP.md「导入导出流程」）
 
 ## 当前基准
 
@@ -81,4 +81,4 @@
 - `docs/GUIDE_SCAN.md`
 - `docs/GUIDE_BACKUP.md`
 
-> 最后更新：2026-06-21
+> 最后更新：2026-06-23

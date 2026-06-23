@@ -40,7 +40,7 @@
 
 管理 App UI 布局、页面结构、交互逻辑和组件规范。
 
-不管：数据实体定义（见 GUIDE_DATA.md）、推荐算法细节（见 GUIDE_ALGORITHM.md）、主题颜色定义（见 GUIDE_THEME.md）
+不管：数据实体定义（详见 GUIDE_DATA.md「目标实体」）、推荐算法细节（详见 GUIDE_ALGORITHM.md「推荐算法」）、主题颜色定义（详见 GUIDE_THEME.md「颜色字段」）
 
 ## 导航结构
 
@@ -280,7 +280,7 @@
 - 数据备份：点击后弹出子弹层，显示目录结构说明（绮梦影库/个人偏好+app数据），当前备份位置，"+ 选择文件夹"设置新位置。选择文件夹后自动创建「绮梦影库」目录，内含「个人偏好」（偏好JSON+报告TXT）和「app数据」（自动同步的数据库JSON）两个子文件夹，并立即导出偏好数据。支持"自定义导出"入口，可勾选 9 个章节导出报告（详见 GUIDE_BACKUP.md）。
 - TXT导入作者：点击后弹出子弹层，上方显示已导入的TXT文件名列表（每行显示文件名+🔄刷新按钮+×删除按钮），下方格式说明 + "+ 选择 TXT 文件"按钮。
 - 数据管理弹层禁止使用系统默认列表对话框，必须使用 `?attr/qmColor*` 或 `resolveThemeColor()` 保持主题一致。
-- 主题色彩：`themeRow` **不可点击**（v1.10 设计决策：仅跟随手机系统明暗模式，无 App 内切换入口）。`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`，点击无任何反应。详见 `GUIDE_THEME.md`「明暗模式系统」
+- 主题色彩：`themeRow` **不可点击**（仅跟随手机系统明暗模式，无 App 内切换入口）。`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`，点击无任何反应。详见 GUIDE_THEME.md「明暗模式系统」
 
 ## 详情页沉浸浏览
 
@@ -325,7 +325,7 @@
 - **按下反馈动画**：可点击的图标按钮和胶囊切换按钮统一使用 `View.addPressAnimation()` 添加按下缩放反馈（0.92→1.0），增强触控感知。已在详情页 6 按钮、首页 3 胶囊启用。
 - **渐变遮罩**：详情页顶部/底部操作栏使用 `bg_detail_top_gradient` / `bg_detail_bottom_gradient` 渐变遮罩替代纯色背景，与媒体内容层一体无分割感。
 - **SwipeRefreshLayout**：根布局**不要**设置 `android:fitsSystemWindows="true"`，系统栏 padding 由 `MainActivity` 主容器统一处理，避免重复下沉。
-- **主题切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。系统明暗模式变化时，`MainActivity.onConfigurationChanged` 检测 `uiMode` 变化并 `recreate()`，让所有 `?attr` 颜色和 `resolveThemeColor()` 调用重新生效。
+- **主题切换**：无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。系统明暗模式变化时，`MainActivity.onConfigurationChanged` 检测 `uiMode` 变化并 `recreate()`，让所有 `?attr` 颜色和 `resolveThemeColor()` 调用重新生效。详见 GUIDE_THEME.md「明暗模式系统」。
 
 ## 万能筛选组件
 
@@ -463,7 +463,7 @@ COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出
 - Fragment 不直接访问数据库，不直接执行长耗时扫描
 - 不把业务逻辑写进 Adapter
 - 导航事件集中处理，不在多个点击事件里散落写跳转
-- 页面颜色和文字颜色不硬编码，使用主题系统（见 GUIDE_THEME.md）
+- 页面颜色和文字颜色不硬编码，使用主题系统（详见 GUIDE_THEME.md「颜色字段」）
 - 媒体卡片只绑定当前 item 数据，不做数据库查询
 
 - 性能约束：媒体列表分页加载，不在 onBindViewHolder 做数据库查询或文件 IO
@@ -472,7 +472,7 @@ COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出
 - 视频播放页优先保证播放流畅
 
 - UI 设计原则：先保证信息层级再做装饰；媒体内容是主角，按钮和卡片不能喧宾夺主
-- 多主题要有明显差异，不只是换主色（见 GUIDE_THEME.md）
+- 多主题要有明显差异，不只是换主色（详见 GUIDE_THEME.md「设计理念」）
 - 毛玻璃、胶囊、渐变、贴纸风格要统一，不要每页一套
 - 禁止只做"白底列表 + 默认按钮"的普通工具 UI
 - 禁止为了美观牺牲文件名、作者、统计等核心信息可读性
@@ -481,7 +481,7 @@ COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-06-22
+> 最后更新：2026-06-23
 
 ## 应用图标
 

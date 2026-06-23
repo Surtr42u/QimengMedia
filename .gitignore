@@ -30,5 +30,8 @@ keystore.properties
 # 避免在 bash 环境误用 Windows 重定向语法导致脏文件混入
 nul
 CON
+
+# FORMAT_SPEC.md 由构建 task 从 docs/DATA_MIGRATION_SPEC.md 复制生成，不提交
+app/src/main/assets/FORMAT_SPEC.md
 PRN
 AUX
