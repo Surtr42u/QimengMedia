@@ -255,6 +255,18 @@ while ($true) {
    - `SAF rootDocumentId` — 确认根路径
 3. 如果 authors=0，检查 SAF 路径解析算法是否正确处理了 URL 编码
 
+### COS 作品/角色分组"其他"诊断
+
+当 COS 文件在全部页/收藏页等页面的角色/作品药丸中显示为"其他"时，搜索 `CosScan` 标签中的 `groupByCosWork 诊断`：
+
+1. 打开对应页面（全部页/收藏页等），触发分组渲染
+2. 读取日志，搜索 `groupByCosWork 诊断`：
+   - `落「其他」N个文件，采样前3条` — 显示采样文件的 `fileName`、`author`、`folderName`、`works`（该作者所有注册作品名）
+3. 按采样信息判定根因：
+   - **folderName 不在 works 列表中**（如 `folderName="p1"`，`works=[作品名A, 作品名B]`）→ **结构3 子文件夹 bug**：文件放在作品目录的子文件夹 (p1/p2) 下，直接父文件夹名匹配不上作品名。需修复分组逻辑。
+   - **works 只有作者名且等于 folderName**（如 `author="蠢沫沫" folderName="蠢沫沫" works=[蠢沫沫]`）→ **结构1 设计行为**：文件直接放在作者目录下，workName==authorName 被归入"其他"。
+   - **author="其他"** → **作者关联失败**：该文件的 recordKey 未关联任何 cos_ 前缀作者，扫描期路径解析失败或 crossRef 丢失。配合上方「COS 作者/相册不显示诊断」排查扫描侧。
+
 ### 缩略图/详情页不显示诊断
 
 1. 打开对应页面
@@ -362,4 +374,4 @@ while ($true) {
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
 
-> 最后更新：2026-06-23
+> 最后更新：2026-06-25

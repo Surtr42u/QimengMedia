@@ -79,6 +79,8 @@ class MediaStoreScanner(private val context: Context) {
         val rootPrefix = "$normalizedPath/"
         val authorFileMap = mutableMapOf<String, MutableList<MediaFileEntity>>()
         val works = mutableListOf<CosWorkInfo>()
+        // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
+        val workNameByUri = mutableMapOf<String, String>()
 
         // 先构建所有 entity
         val entities = ScanUtils.buildEntities(candidates, indexedAtMillis).map { it.copy(isCosFile = true) }
@@ -100,6 +102,7 @@ class MediaStoreScanner(private val context: Context) {
 
             // 判断作品名：如果 segments[1] 是目录（有 segments[2]），则作品名=segments[1]；否则作品名=作者名
             val workName = if (segments.size > 2) segments[1].trim() else authorName
+            workNameByUri[candidate.uriString] = workName
             val workPath = if (segments.size > 2) "$rootPrefix$authorName/$workName" else "$rootPrefix$authorName"
 
             // 去重添加作品
@@ -108,8 +111,14 @@ class MediaStoreScanner(private val context: Context) {
             }
         }
 
+        // 覆写 folderName 为 workName：修复结构3（作者/作品/p1/文件）中 folderName="p1" 匹配不上 workName 的问题
+        val updatedEntities = entities.map { entity ->
+            val wm = workNameByUri[entity.uriString]
+            if (wm != null) entity.copy(folderName = wm) else entity
+        }
+
         return CosScanResult(
-            mediaFiles = entities,
+            mediaFiles = updatedEntities,
             authorFileMap = authorFileMap,
             works = works
         )

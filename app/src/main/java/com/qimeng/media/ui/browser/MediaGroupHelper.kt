@@ -140,6 +140,21 @@ object MediaGroupHelper {
             val charName = findCosCharacterForMedia(m, authorIndex, workIndex)
             groups.getOrPut(charName) { mutableListOf() }.add(m)
         }
+
+        // 诊断日志：落「其他」的文件采样前3条，记录 folderName vs workNames 用于区分结构1/结构3/关联失败
+        val otherFiles = groups["其他"]
+        if (otherFiles != null && otherFiles.isNotEmpty()) {
+            val samples = otherFiles.take(3).joinToString(" | ") { m ->
+                val author = authorIndex.authorNameOf(m.recordKey)
+                val works = workIndex.worksOf(author)
+                "[${m.fileName}] author=\"$author\" folderName=\"${m.folderName}\" works=$works"
+            }
+            com.qimeng.media.core.AppLog.d(
+                "CosScan",
+                "groupByCosWork 诊断: 落「其他」${otherFiles.size}个文件，采样前3条 → $samples"
+            )
+        }
+
         return groups
     }
 
@@ -181,7 +196,9 @@ object MediaGroupHelper {
         val authorName = authorIndex.authorNameOf(media.recordKey)
         if (authorName == "其他") return "其他"
         val works = workIndex.worksOf(authorName)
-        val matched = works.find { it == media.folderName }
+        // folderName 来自文件系统路径可能带首尾空格，需 trim 对齐 workName（扫描期已 trim）
+        val folderName = media.folderName.trim()
+        val matched = works.find { it == folderName }
         // workName == authorName 时归入"其他"（结构1：作者文件夹下直接含文件，作品名=作者名）
         if (matched != null && matched != authorName) return matched
         return "其他"
@@ -200,7 +217,9 @@ object MediaGroupHelper {
         val authorName = findCosAuthorForMedia(media, authorMedia, authors)
         if (authorName == "其他") return "其他"
         val authorWorks = cosWorks.filter { it.authorName == authorName }
-        val matchedWork = authorWorks.find { it.workName == media.folderName }
+        // folderName 来自文件系统路径可能带首尾空格，需 trim 对齐 workName（扫描期已 trim）
+        val folderName = media.folderName.trim()
+        val matchedWork = authorWorks.find { it.workName == folderName }
         if (matchedWork != null && matchedWork.workName != matchedWork.authorName) {
             return matchedWork.workName
         }

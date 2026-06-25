@@ -288,10 +288,8 @@ class ScanUseCase(
 
                     val prefix = if (source.uriString.endsWith("/")) source.uriString else "${source.uriString}/"
                     val existingCosKeys = repository.getCosRecordKeysByUriPrefix(prefix).toSet()
-                    val newFiles = newCosMedia.filter { it.recordKey !in existingCosKeys }
-                    if (newFiles.isNotEmpty()) {
-                        newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-                    }
+                    // 全量 upsert 所有扫描到的媒体（不只是新增），以同步 folderName 变化（结构3修复等）
+                    newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
                     repository.upsertCosWorks(newCosWorks)
                     val authorNames = newCosWorks.map { it.authorName }.distinct()
                     val authorEntities = authorNames.map { authorName ->
@@ -465,6 +463,8 @@ class ScanUseCase(
         val safAuthorMap = mutableMapOf<String, MutableList<MediaFileEntity>>()
         val safWorks = mutableListOf<CosWorkEntity>()
         val seenWorks = mutableSetOf<String>()
+        // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
+        val safWorkNameByUri = mutableMapOf<String, String>()
 
         val rootDocumentId = try {
             android.provider.DocumentsContract.getTreeDocumentId(uri)
@@ -497,6 +497,7 @@ class ScanUseCase(
             safAuthorMap.getOrPut(authorName) { mutableListOf() }.add(file)
 
             val workName = if (segments.size > 1) segments[1].trim() else authorName
+            safWorkNameByUri[fileUri] = workName
             val workKey = "$authorName/$workName"
             if (seenWorks.add(workKey)) {
                 val workPath = if (segments.size > 1) {
@@ -513,10 +514,15 @@ class ScanUseCase(
                 ))
             }
         }
+        // 覆写 folderName 为 workName：修复结构3（作者/作品/p1/文件）中 folderName="p1/GIF" 匹配不上 workName 的问题
+        val updatedAllSafMedia = allSafMedia.map { file ->
+            val wm = safWorkNameByUri[file.uriString]
+            if (wm != null) file.copy(folderName = wm) else file
+        }
         val updatedWorks = safWorks.map { work ->
             work.copy(fileCount = safAuthorMap[work.authorName]?.size ?: 0)
         }
-        return Triple(allSafMedia, safAuthorMap, updatedWorks)
+        return Triple(updatedAllSafMedia, safAuthorMap, updatedWorks)
     }
 
     /** 生成 authorId */
