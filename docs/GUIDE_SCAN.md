@@ -28,7 +28,7 @@
 | **authorId 前缀** | 无前缀（如 `rioko凉凉子`） | `cos_` 前缀（如 `cos_rioko凉凉子`） |
 | **作者关联方式** | TXT 文件名前缀匹配 | 扫描时记录 author→files 映射，直接创建 crossRefs |
 | **相册分组** | 按出处（SourceMatcher 匹配文件名前缀） | 按作者（crossRefs 查询） |
-| **自动刷新** | MediaStoreObserver 实时监听 + App 启动时自动刷新 | App 启动时自动刷新（5 分钟防抖），无 ContentObserver |
+| **自动刷新** | MediaStoreObserver 实时监听 + App 启动/回前台时自动刷新（10 秒防抖） | App 启动/回前台时自动刷新（5 分钟防抖），无 ContentObserver |
 | **元数据解码** | 扫描时跳过，详情页按需解码 | 同左 |
 
 ## 双引擎扫描架构
@@ -53,7 +53,7 @@
 
 - `scanDirectory(uri, displayName?)`：首次添加目录
 - `refreshScanSource(uriString)`：增量刷新已有目录
-- `autoRefreshAllSources()`：App 启动后延迟 3 秒自动刷新所有常规目录（避免扫描写入数据库触发 Room Flow 导致 UI 闪烁）
+- `autoRefreshAllSources()`：App 启动（延迟 3 秒）和回前台（`MainActivity.onResume`）时自动刷新所有常规目录。防抖 10 秒（`AUTO_REFRESH_INTERVAL`），`isAutoRefreshing` AtomicBoolean 防重入，避免 onResume 频繁触发导致并发扫描
 
 ### 实时监听
 
@@ -63,6 +63,16 @@
 - 对每个已注册的常规扫描目录，用 MediaStoreScanner 重新查询
 - 增量 upsert 新文件，删除已移除的文件
 - **只监听常规目录**（`isCosDirectory=false`）
+
+### 回前台刷新（.nomedia 场景兜底）
+
+**关键限制**：目录中存在 `.nomedia` 文件时，MediaStore 完全忽略该目录及其子目录，`ContentObserver` 收不到变更通知，`MediaStoreObserver` 实时监听失效。此时所有扫描回退到 SAF `scanTreeFast`，实时性只能依赖 `autoRefreshAllSources`。
+
+**回前台刷新机制**（覆盖 .nomedia 场景）：
+- `MainActivity.onResume()` 调用 `ViewModel.autoRefreshAllSources()`，用户从文件管理器等切回 App 时立即触发增量刷新
+- 防抖：常规目录 10 秒（`AUTO_REFRESH_INTERVAL`）、COS 目录 5 分钟（`COS_AUTO_REFRESH_INTERVAL`，5000+ 文件扫描成本高，避免频繁刷新）
+- 防重入：`ScanUseCase.isAutoRefreshing`（AtomicBoolean）保证同一时刻只有一个自动刷新在跑，避免 onResume 频繁触发引发并发扫描和数据库锁竞争；实际执行逻辑在私有方法 `doAutoRefreshAllSources()`，外壳方法用 try-finally 确保异常时也释放标志位
+- 静默执行：不设置 `ScanStatus.Running`，不阻塞用户手动扫描，失败静默处理不弹 Toast
 
 ### URI 转换算法（`safUriToFilePath`）
 
@@ -89,7 +99,7 @@
 
 - `scanCosDirectory(uri, displayName?)`：首次添加 COS 目录
 - `refreshCosSource(uriString)`：增量刷新已有 COS 目录
-- `autoRefreshAllSources()`：App 启动时自动刷新所有 COS 目录（5 分钟防抖）
+- `autoRefreshAllSources()`：App 启动/回前台时自动刷新所有 COS 目录（5 分钟防抖，`COS_AUTO_REFRESH_INTERVAL`，5000+ 文件扫描成本高，避免频繁刷新）
 
 ### COS 路径解析算法（`queryCosFolder`）
 

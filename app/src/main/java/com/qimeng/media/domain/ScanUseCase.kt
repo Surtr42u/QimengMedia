@@ -14,6 +14,7 @@ import com.qimeng.media.data.repository.LocalMediaRepository
 import com.qimeng.media.scan.MediaStoreScanner
 import com.qimeng.media.scan.SafMediaScanner
 import kotlinx.coroutines.flow.firstOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 扫描调度 UseCase：负责目录扫描、增量刷新、COS 扫描、删除扫描源等操作。
@@ -27,6 +28,11 @@ class ScanUseCase(
     private val authorImportUseCase: AuthorImportUseCase
 ) {
     private var lastAutoRefreshTime = 0L
+
+    // 自动刷新防重入：onResume 触发回前台刷新后，可能上一次大目录扫描尚未完成，
+    // 若不拦截会导致两个并发扫描同时 upsert/delete 引发数据库锁竞争。
+    // 与 isPregenerating 一样使用 AtomicBoolean 保证线程安全。
+    private val isAutoRefreshing = AtomicBoolean(false)
 
     /** 扫描指定目录，返回扫描结果和扫描到的媒体文件列表 */
     suspend fun scanDirectory(uri: Uri, displayName: String? = null): ScanResult {
@@ -243,8 +249,27 @@ class ScanUseCase(
         }
     }
 
-    /** 自动增量刷新所有已添加目录（App启动/恢复时调用，带防抖） */
+    /**
+     * 自动增量刷新所有已添加目录（App启动/回前台时调用，带防抖 + 防重入）。
+     *
+     * 防抖：常规目录 [AUTO_REFRESH_INTERVAL] 内不重复刷新；COS 目录按各自 lastScannedAtMillis 判断 [COS_AUTO_REFRESH_INTERVAL]。
+     * 防重入：[isAutoRefreshing] 保证同一时刻只有一个自动刷新在跑，避免 onResume 频繁触发导致并发扫描。
+     */
     suspend fun autoRefreshAllSources(): List<MediaFileEntity> {
+        // 防重入：上一次自动刷新尚未完成则直接跳过（compareAndSet 原子操作，线程安全）
+        if (!isAutoRefreshing.compareAndSet(false, true)) {
+            AppLog.d("Scan", "autoRefresh skipped: already running")
+            return emptyList()
+        }
+        return try {
+            doAutoRefreshAllSources()
+        } finally {
+            isAutoRefreshing.set(false)
+        }
+    }
+
+    /** 自动刷新实际执行逻辑（由 [autoRefreshAllSources] 在防重入保护下调用） */
+    private suspend fun doAutoRefreshAllSources(): List<MediaFileEntity> {
         val now = System.currentTimeMillis()
         if (now - lastAutoRefreshTime < AUTO_REFRESH_INTERVAL) return emptyList()
         lastAutoRefreshTime = now
@@ -536,9 +561,9 @@ class ScanUseCase(
     }
 
     companion object {
-        /** 自动刷新防抖：常规目录 30 秒内不重复刷新 */
-        private const val AUTO_REFRESH_INTERVAL = 30_000L
-        /** 自动刷新防抖：COS 目录 5 分钟内不重复刷新 */
+        /** 自动刷新防抖：常规目录 10 秒内不重复刷新（原 30 秒，缩短以支持回前台热更新） */
+        private const val AUTO_REFRESH_INTERVAL = 10_000L
+        /** 自动刷新防抖：COS 目录 5 分钟内不重复刷新（5000+ 文件扫描成本高，频繁刷新得不偿失） */
         private const val COS_AUTO_REFRESH_INTERVAL = 300_000L
     }
 }
