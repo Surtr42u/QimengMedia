@@ -561,8 +561,8 @@ class ScanUseCase(
     }
 
     companion object {
-        /** 自动刷新防抖：常规目录 10 秒内不重复刷新（原 30 秒，缩短以支持回前台热更新） */
-        private const val AUTO_REFRESH_INTERVAL = 10_000L
+        /** 自动刷新防抖：常规目录 30 秒内不重复刷新 */
+        private const val AUTO_REFRESH_INTERVAL = 30_000L
         /** 自动刷新防抖：COS 目录 5 分钟内不重复刷新（5000+ 文件扫描成本高，频繁刷新得不偿失） */
         private const val COS_AUTO_REFRESH_INTERVAL = 300_000L
     }

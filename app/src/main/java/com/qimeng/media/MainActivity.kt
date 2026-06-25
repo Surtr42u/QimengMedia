@@ -158,9 +158,6 @@ class MainActivity : AppCompatActivity() {
         // 但 BackStackChangedListener 不会触发（BackStack 没变化），导致详情页上层显示外面 tab。
         // 这里主动同步一次 BackStack 状态，确保详情页等全屏 Fragment 在前台时 tab 隐藏。
         syncBottomNavVisibilityWithBackStack()
-        // 回前台自动刷新媒体索引：覆盖 .nomedia 场景（MediaStore ContentObserver 失效），
-        // 让用户切到文件管理器改文件后切回 App 能快速看到更新。防抖+防重入由 ScanUseCase 控制。
-        ViewModelProvider(this)[MediaLibraryViewModel::class.java].autoRefreshAllSources()
     }
 
     /** 根据 BackStack 栈顶 Fragment 类型同步 bottomNavigation 可见性 */
