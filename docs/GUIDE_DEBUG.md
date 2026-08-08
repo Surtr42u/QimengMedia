@@ -29,7 +29,7 @@ Android 16 上 `adb logcat -d` 对非 root 设备返回空缓冲区（`0 B reada
 #### 设计
 
 - 同时写 `android.util.Log`（logcat）和内部文件 `files/app_log.txt`
-- 文件大小限制 2MB，超限时保留最后 500 行
+- 文件大小限制 2MB，**v1.12 起超限时一次截断到限内（保留文件尾部约一半字节）再追加**——旧实现每次追加都触发全量重写（readLines+takeLast(500)+writeText），且截断后单行仍超限会反复读写；现改为仅超限时截断一次
 - 每行格式：`MM-dd HH:mm:ss.SSS LEVEL/TAG: message`
 - 全局 UncaughtExceptionHandler 将未捕获异常也写入文件
 - **线程安全**：`writeLog()` 使用 `synchronized` 锁保护，多线程并发写入不会丢失日志或损坏文件
@@ -374,4 +374,4 @@ while ($true) {
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
 
-> 最后更新：2026-06-25
+> 最后更新：2026-08-08

@@ -10,7 +10,8 @@
 |---|---|
 | `AuthorListFragment.kt` | 作者列表页，点击卡片跳转作者文件浏览页 |
 | `AuthorFilesFragment.kt` | 作者文件浏览页，日期分组网格，逻辑同全部页 |
-| `AuthorEditDialog.kt` | 作者编辑弹窗 |
+
+（`AuthorEditDialog.kt` 已于 v1.12 删除：全项目无调用点，属未接线死代码）
 
 ## 职责
 
@@ -375,4 +376,4 @@ COS根目录/
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_BACKUP.md`
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08
