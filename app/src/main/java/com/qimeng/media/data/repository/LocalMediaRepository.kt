@@ -58,6 +58,12 @@ interface LocalMediaRepository {
     suspend fun upsertAllAuthors(authors: List<AuthorEntity>)
     suspend fun upsertAuthorMedia(crossRef: AuthorMediaCrossRef)
     suspend fun upsertAllAuthorMedia(crossRefs: List<AuthorMediaCrossRef>)
+    /**
+     * v1.12：TXT 作者关联统一重建（单事务）。
+     * upsert 作者 → 删旧关联 → 插新关联三段写在同一个数据库事务内，
+     * 中途崩溃/被杀不会留下"作者已删、关联未重建"的半状态。
+     */
+    suspend fun rebuildAuthorAssociations(authorEntities: List<AuthorEntity>, crossRefs: List<AuthorMediaCrossRef>)
     suspend fun getScanSources(): List<ScanSourceEntity>
     suspend fun upsertScanSource(source: ScanSourceEntity)
     suspend fun deleteScanSource(uriString: String)

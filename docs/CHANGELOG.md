@@ -81,6 +81,20 @@
 
 > 最后更新：2026-08-08
 
+## 审查残留补修（2026-08-08）
+
+初轮修复后自查对照审查清单，补修 4 项当时遗漏的问题。
+
+| 类别 | 问题 | 修复方式 |
+|---|---|---|
+| 功能 | `MediaStoreObserver.updateSources` 从未被调用：会话内新增源不被监听、删除的源仍被持有并在刷新时 upsertScanSource 复活 | 每次刷新前从库重拉最新常规源列表（getScanSources 过滤），删除的源不再复活 |
+| 数据安全 | `AutoSyncUseCase.triggerAutoSyncForDetailExit` 与 `triggerAutoSyncIfNeeded` 共享防抖字段：扫描刚同步完、紧接的退出详情页同步被吞掉 | 退出详情页改用独立 `lastDetailExitSyncTime` 防抖字段 |
+| 偏好安全 | `AppPrefsManager.saveToDisk` writeText 截断写，进程被杀留下损坏 JSON、偏好静默丢失 | 原子写（tmp + rename，失败回退直接写） |
+| 崩溃（旧设备） | `deleteAuthorsByIds` 大批量 `DELETE IN(:大列表)` 超 SQLite 999 绑定参数上限抛异常回滚 | 按 500 分块 |
+| 数据一致性 | `rebuildAssociationsFromBlocks` 三段写（upsert 作者→删旧关联→插新关联）非同一事务，中途崩溃留下半状态 | Repository 新增 `rebuildAuthorAssociations` 单事务方法，UseCase 改调它 |
+
+> 最后更新：2026-08-08
+
 ## 已完成重构项（2026-06-17）
 
 | 文件/方法 | 重构前 CC | 重构后 CC | 重构方式 |

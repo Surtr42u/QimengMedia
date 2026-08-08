@@ -135,7 +135,15 @@ class AppPrefsManager(context: Context) {
         try {
             val dir = prefsFile.parentFile
             if (dir != null && !dir.exists()) dir.mkdirs()
-            prefsFile.writeText(prefsToJson(prefs).toString())
+            // v1.12：原子写（tmp + rename）——旧实现 writeText 截断写，进程在写入中
+            // 被杀会留下损坏的 JSON，下次启动 loadFromDisk 失败回退默认值、用户偏好静默丢失。
+            val tmpFile = File(dir, "$PREFS_FILE.tmp")
+            tmpFile.writeText(prefsToJson(prefs).toString())
+            if (!tmpFile.renameTo(prefsFile)) {
+                // rename 失败（极端情况）回退直接写，至少保证内容落盘
+                prefsFile.writeText(prefsToJson(prefs).toString())
+                tmpFile.delete()
+            }
         } catch (e: Exception) {
             AppLog.w("AppPrefs", "saveToDisk failed: ${e.message}")
         }

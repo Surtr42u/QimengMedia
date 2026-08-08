@@ -122,7 +122,12 @@ class MediaStoreObserver(
     }
 
     private suspend fun refreshAllSources(mergedChangeCount: Int = 1) {
-        val sources = registeredSources
+        // v1.12：每次刷新前从库重拉最新常规源——旧实现仅 register() 时冻结快照，
+        // 且 updateSources 从未被调用：会话内新增源不被监听、删除的源仍被持有并
+        // 在刷新时 upsertScanSource 复活。这里实时同步源列表，删除的源不再复活。
+        val sources = runCatching {
+            repository.getScanSources().filter { !it.isBackupDirectory && !it.isCosDirectory }
+        }.getOrElse { registeredSources }
         if (sources.isEmpty()) {
             pendingChangeCount.set(0)
             return

@@ -33,6 +33,10 @@ class AutoSyncUseCase(
 ) {
     private var lastAutoSyncTime = 0L
     private var lastFullSyncTime = 0L
+    // v1.12：退出详情页同步使用独立防抖字段——旧实现与 triggerAutoSyncIfNeeded 共享
+    // lastAutoSyncTime，任一入口同步成功即占用另一入口的 30s 窗口（如扫描刚同步完，
+    // 紧接着退出详情页的同步被防抖吞掉，个人偏好/统计延迟落盘）
+    private var lastDetailExitSyncTime = 0L
 
     /**
      * "建议恢复"信号：空库时自动同步/手动同步被拦截后置 true，UI 据此显示提示。
@@ -55,15 +59,15 @@ class AutoSyncUseCase(
         syncAppDataOnly()
     }
 
-    /** 退出详情页触发：只写 app数据/（JSON 快），30秒防抖 */
+    /** 退出详情页触发：只写 app数据/（JSON 快），30秒防抖（独立字段，v1.12） */
     suspend fun triggerAutoSyncForDetailExit() {
         val now = System.currentTimeMillis()
-        if (now - lastAutoSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
+        if (now - lastDetailExitSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
 
         val appPrefs = appPrefsManager.prefs.value
         if (!appPrefs.autoSync) return
 
-        lastAutoSyncTime = now
+        lastDetailExitSyncTime = now
         syncAppDataOnly()
     }
 

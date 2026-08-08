@@ -218,14 +218,9 @@ class AuthorImportUseCase(
             }
         }
 
-        if (authorEntities.isNotEmpty()) {
-            repository.upsertAllAuthors(authorEntities)
-            // 先删除这些作者的旧 crossRef，再插入新的（避免匹配规则变更后旧数据残留）
-            repository.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
-        }
-        if (crossRefs.isNotEmpty()) {
-            repository.upsertAllAuthorMedia(crossRefs)
-        }
+        // v1.12：三段写（upsert 作者→删旧关联→插新关联）由 Repository 在单一事务内完成——
+        // 旧实现分三次独立调用，中途崩溃/被杀会留下"作者已删、关联未重建"的半状态
+        repository.rebuildAuthorAssociations(authorEntities, crossRefs)
 
         AppLog.d("AuthorImport", "rebuild: done, authors=${authorEntities.size}, crossRefs=${crossRefs.size}")
     }

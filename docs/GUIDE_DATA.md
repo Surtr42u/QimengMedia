@@ -43,7 +43,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 - `SettingEntity`：设置项（运行数据）。
 - `ScanSourceEntity`：扫描源（SAF 授权目录，区分常规/COS）。
 - `CosWorkEntity`：COS 作者/作品层级关系。
-- `AppPrefs`：用户偏好（独立 JSON 文件，`AppPrefsManager` 管理）。
+- `AppPrefs`：用户偏好（独立 JSON 文件，`AppPrefsManager` 管理；**v1.12 起写入为原子写**——tmp 文件 + rename，避免进程被杀留下损坏 JSON 导致偏好静默丢失）。
 
 ## 数据库索引
 

@@ -93,7 +93,7 @@
     - 标签增删改（addTag/removeTag/deleteTagById/createTag）、时间轴标签增删（addTimelineTag/deleteTimelineTag）、作者关注切换（toggleAuthorFollow）、清空历史（clearHistory）、手动添加作者（addAuthor）、删除扫描源（deleteScanSource/deleteCosScanSource）、自定义相册源（addCustomAlbumSource）→ `triggerAutoSyncIfNeeded()`（只写 app数据/，2026-06-23 补全：这些操作不走详情页流程，此前仅靠 App 进后台全量同步覆盖，存在被杀丢数据风险）
     - App 进入后台 → `triggerFullSync()`（写 app数据/ + 个人偏好/，60秒防抖）
     - 手动同步 → `triggerManualSync()`（写 app数据/ + 个人偏好/，无视防抖）
-  - 防抖：app数据/ 30秒防抖，全量同步 60秒防抖
+  - 防抖：app数据/ 30秒防抖，全量同步 60秒防抖；**退出详情页同步使用独立防抖字段**（v1.12，不再与扫描后同步共享 30s 窗口，避免扫描刚同步完、紧接的详情页退出同步被吞掉）
   - 前提：需先设置备份保存位置
   - 实现：`AutoSyncUseCase` → `BackupManager.autoSyncToDirectory()` / `BackupManager.fullSyncToDirectory()`
 - 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。空库时被拦截返回 false，Toast 提示"本地数据为空，已暂停同步"。

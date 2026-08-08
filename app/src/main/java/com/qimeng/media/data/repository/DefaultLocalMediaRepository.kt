@@ -176,6 +176,22 @@ class DefaultLocalMediaRepository(
         authorDao.upsertAllAuthorMedia(crossRefs)
     }
 
+    override suspend fun rebuildAuthorAssociations(
+        authorEntities: List<AuthorEntity>,
+        crossRefs: List<AuthorMediaCrossRef>
+    ) {
+        database.withTransaction {
+            if (authorEntities.isNotEmpty()) {
+                authorDao.upsertAllAuthors(authorEntities)
+                // 先删除这些作者的旧 crossRef，再插入新的（避免匹配规则变更后旧数据残留）
+                authorDao.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
+            }
+            if (crossRefs.isNotEmpty()) {
+                authorDao.upsertAllAuthorMedia(crossRefs)
+            }
+        }
+    }
+
     override suspend fun getScanSources(): List<ScanSourceEntity> = scanSourceDao.getAllSources()
 
     override suspend fun upsertScanSource(source: ScanSourceEntity) {
@@ -254,9 +270,14 @@ class DefaultLocalMediaRepository(
     }
 
     override suspend fun deleteAuthorsByIds(authorIds: List<String>) {
+        if (authorIds.isEmpty()) return
         database.withTransaction {
-            authorDao.deleteCrossRefsByAuthorIds(authorIds)
-            authorDao.deleteAuthorsByIds(authorIds)
+            // v1.12：分块规避旧设备 SQLite 绑定参数上限（999），大批量删除作者时单条
+            // DELETE IN(:大列表) 会抛 SQLiteException 导致整体回滚
+            authorIds.chunked(500).forEach { chunk ->
+                authorDao.deleteCrossRefsByAuthorIds(chunk)
+                authorDao.deleteAuthorsByIds(chunk)
+            }
         }
     }
 
