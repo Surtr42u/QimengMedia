@@ -208,7 +208,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 4. 文件大小范围过滤
 5. 时间范围过滤
 6. 标签过滤（模糊/精确模式）
-7. 按 `comparatorFor(sortKey)` 排序，升序时取 reversed()
+7. 按 `comparatorFor(sortKey)` 排序，升序时取 reversed()（**v1.12 修复**：`comparatorFor(NAME)` 原用 `compareBy` 升序比较器、其余键均为 `compareByDescending`，导致 NAME+升序实际输出降序、与 UI 语义相反；已统一为 `compareByDescending`）
 
 ## 出处匹配引擎（SourceMatcher）
 

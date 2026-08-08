@@ -216,7 +216,7 @@
 | 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法约 280 行（`BackupManager.exportPersonalPrefs`，数据汇总合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
-| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 5 个核心测试类 | ./gradlew test |
+| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 6 个核心测试类（131+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个） | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
@@ -257,7 +257,8 @@
 |--------|----------|
 | `RecordKeyFactoryTest` | 主键生成逻辑（17 个测试） |
 | `MediaBrowserLogicTest` | formatSize/dateLabel/groupByDate（21 个测试） |
-| `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处/txt作品（23 个测试） |
+| `MediaBrowserLogicRecommendTest` | 推荐 recommend/排行 rank/筛选 applyFilter 核心算法（25 个测试，v1.12 新增；覆盖同 seed 可复现、每日惩罚递增、类型平衡、四档范围筛选、标签模糊/精确、关键词、排序稳定性） |
+| `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处（23 个测试） |
 | `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
 | `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
 

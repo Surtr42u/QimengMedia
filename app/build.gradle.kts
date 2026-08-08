@@ -16,8 +16,9 @@ android {
         applicationId = "com.qimeng.media"
         minSdk = 31
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.7"
+        // v1.12：构建版本号与功能版本同步（旧 versionName=1.7 长期未随功能迭代递增）
+        versionCode = 10
+        versionName = "1.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

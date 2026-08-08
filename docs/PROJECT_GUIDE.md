@@ -6,7 +6,7 @@
 
 ## 当前基准
 
-- 版本：v1.12（功能版本；注意 `app/build.gradle.kts` 中 `versionName="1.7"` / `versionCode=9` 与功能版本**不同步**，构建号长期未随功能迭代递增，文档统一以功能版本 v1.12 为准）
+- 版本：v1.12（`versionName=1.12` / `versionCode=10`，2026-08-08 已与功能版本同步）
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
@@ -20,9 +20,9 @@
 - Repository 负责协调 DAO、扫描结果和备份同步
 - Repository 方法命名表达业务动作
 - 列表、加载、空状态、错误状态统一建模，不用多个零散 Boolean
-- 数据库目标：Room
+- 数据库目标：Room 2.8.4
 - 图片加载目标：Coil 3.4.0
-- 视频播放目标：Media3 / ExoPlayer
+- 视频播放目标：Media3 1.8.0 / ExoPlayer
 - 文件访问目标：SAF 文件夹授权
 
 ## 当前实现进度
@@ -34,7 +34,7 @@
 - 单 Activity + 多 Fragment + MVVM，ViewModel → Repository → DAO 分层
 - Room + KSP，10 个 DAO、`AppDatabase`、`LocalMediaRepository`
 - ViewModel 按职责拆分为 4 个 UseCase（Scan/Thumbnail/AuthorImport/AutoSync）
-- Coil 3.4 图片加载 + Media3 ExoPlayer 视频 + libspng PNG 加速（NDK/CMake）
+- Coil 3.4 图片加载 + Media3 1.8.0 ExoPlayer 视频 + libspng PNG 加速（NDK/CMake）
 - SAF + MediaStore 双引擎扫描，常规扫描 + COS 扫描两套独立体系
 
 ### 页面与功能

@@ -95,6 +95,19 @@
 
 > 最后更新：2026-08-08
 
+## 遗留问题收尾（2026-08-08）：版本同步 + 依赖升级 + 详情页 + 算法测试
+
+| 类别 | 内容 |
+|---|---|
+| 版本号 | `versionName` 1.7→**1.12**、`versionCode` 9→10，与功能版本同步 |
+| 依赖升级 | Media3 1.4.1→**1.8.0**（落后 7 大版本→1.8 稳定线，媒体解析器安全修复）；androidx core-ktx 1.10.1→1.17.0、appcompat 1.6.1→1.7.1、material 1.10.0→1.13.0、activity-ktx 1.8.0→1.10.1、constraintlayout 2.1.4→2.2.1、lifecycle 2.9.4→2.10.0、Room 2.8.3→2.8.4；AGP 保持 9.2.1（9.3.0 需 Gradle 9.5.0，本环境 SSL 无法下载，toml 已注明） |
+| 详情页-分页索引错位 | 新增 `sourceIndexByKey` 映射 + `loadedEndIndex` 区段边界；向前/向后加载严格不重叠、空段推进、位置显示精确映射——打开期间文件被删不再错项/重复/卡死 |
+| 详情页-超大图预加载 | `isMemoryComfortable()` 加 native 堆判定（超大图走 native 堆，原 Java 堆度量失效）；窗口内超大图最多预载 1 张、内存紧张跳过全部；普通图预载数量不变 |
+| 算法单测 | 新增 `MediaBrowserLogicRecommendTest` 25 个测试（recommend/rank/applyFilter 零覆盖补齐：seed 可复现、惩罚递增、类型平衡、范围/标签/关键词筛选、排序稳定性）；项目测试 132 个全通过 |
+| 功能 bug | `comparatorFor(NAME)` 原用升序比较器导致 NAME 升/降序语义相反（其余键均 compareByDescending），统一为 compareByDescending 并更新对应测试 |
+
+> 最后更新：2026-08-08
+
 ## 已完成重构项（2026-06-17）
 
 | 文件/方法 | 重构前 CC | 重构后 CC | 重构方式 |

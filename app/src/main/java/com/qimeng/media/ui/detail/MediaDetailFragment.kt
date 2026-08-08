@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
 import android.os.Bundle
+import android.os.Debug
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
@@ -105,7 +106,13 @@ class MediaDetailFragment : Fragment() {
     // --- 分页加载（问题4）：详情页初始加载 PAGE_SIZE 个，滑动接近边界时增量加载 ---
     private var sourceKeys: List<String> = emptyList()
     private var sourceByKey: Map<String, MediaFileEntity> = emptyMap()
-    private var loadedStartIndex = 0   // mediaList[0] 在 sourceKeys 中的起始索引
+    // v1.12 修复：原实现用 loadedStartIndex + mediaList.size 推算已加载区段末尾，mapNotNull
+    // 过滤已删除 key 后 mediaList 长度小于源 key 数，导致向前加载区间重叠产生重复项。
+    // 改为显式维护已加载区段两端边界 [loadedStartIndex, loadedEndIndex)（均为 sourceKeys 下标）。
+    private var loadedStartIndex = 0   // 已加载区段在 sourceKeys 中的起始下标（含）
+    private var loadedEndIndex = 0     // 已加载区段在 sourceKeys 中的结束下标（不含）
+    // key → sourceKeys 下标映射，用于精确显示当前位置（源列表含已删除 key 时计数不漂移）
+    private var sourceIndexByKey: Map<String, Int> = emptyMap()
     private var totalSourceCount = 0   // 推荐列表总数（用于显示 "index/total"）
     private var hasPagination = false  // 是否启用分页（sourceKeys 非空时启用）
 
@@ -250,12 +257,14 @@ class MediaDetailFragment : Fragment() {
                 if (startIndex >= 0) {
                     loadedStartIndex = startIndex
                     val end = minOf(srcKeys.size, startIndex + PAGE_SIZE)
+                    loadedEndIndex = end
                     mediaList = srcKeys.subList(startIndex, end).mapNotNull { byKey[it] }
                 } else {
                     // key 不在 sourceKeys 中，回退为仅显示该项
                     mediaList = allMedia.find { it.recordKey == key }?.let { listOf(it) }.orEmpty()
                     sourceKeys = mediaList.map { it.recordKey }
                     loadedStartIndex = 0
+                    loadedEndIndex = sourceKeys.size
                     totalSourceCount = mediaList.size
                     hasPagination = false
                 }
@@ -264,6 +273,8 @@ class MediaDetailFragment : Fragment() {
                 sourceKeys = allMedia.map { it.recordKey }
                 totalSourceCount = allMedia.size
                 hasPagination = false
+                loadedStartIndex = 0
+                loadedEndIndex = sourceKeys.size
                 mediaList = allMedia
             }
 
@@ -271,9 +282,14 @@ class MediaDetailFragment : Fragment() {
                 mediaList = allMedia.find { it.recordKey == key }?.let { listOf(it) }.orEmpty()
                 sourceKeys = mediaList.map { it.recordKey }
                 loadedStartIndex = 0
+                loadedEndIndex = sourceKeys.size
                 totalSourceCount = mediaList.size
                 hasPagination = false
             }
+
+            // v1.12 修复：建立 key → sourceKeys 下标映射，位置显示不再依赖 loadedStartIndex 推算，
+            // 源列表含已删除 key 时计数不漂移、不显示错项
+            sourceIndexByKey = sourceKeys.withIndex().associate { (i, k) -> k to i }
 
             if (mediaList.isEmpty()) {
                 parentFragmentManager.popBackStack()
@@ -292,28 +308,34 @@ class MediaDetailFragment : Fragment() {
     /** 向后加载更多（追加到 mediaList 末尾） */
     private fun loadMoreForward() {
         if (!hasPagination) return
-        val loadedEnd = loadedStartIndex + mediaList.size
-        if (loadedEnd >= sourceKeys.size) return
-        val newEnd = minOf(sourceKeys.size, loadedEnd + PAGE_SIZE)
-        val newItems = sourceKeys.subList(loadedEnd, newEnd).mapNotNull { sourceByKey[it] }
+        if (loadedEndIndex >= sourceKeys.size) return
+        val newEnd = minOf(sourceKeys.size, loadedEndIndex + PAGE_SIZE)
+        val newItems = sourceKeys.subList(loadedEndIndex, newEnd).mapNotNull { sourceByKey[it] }
         if (newItems.isNotEmpty()) {
             mediaList = mediaList + newItems
-            AppLog.d("MediaDetail", "分页向后加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
         }
+        // v1.12 修复：无论本段是否映射到实体（文件被删），都推进已加载区段末尾，
+        // 防止下次加载与已加载区间重叠产生重复项（原实现按 mediaList.size 推算会少推）
+        loadedEndIndex = newEnd
+        AppLog.d("MediaDetail", "分页向后加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
     }
 
     /** 向前加载更多（插入到 mediaList 开头，需调整 currentIndex） */
     private fun loadMoreBackward() {
         if (!hasPagination || loadedStartIndex == 0) return
         val newStart = maxOf(0, loadedStartIndex - PAGE_SIZE)
-        val offset = loadedStartIndex - newStart
         val newItems = sourceKeys.subList(newStart, loadedStartIndex).mapNotNull { sourceByKey[it] }
         if (newItems.isNotEmpty()) {
             mediaList = newItems + mediaList
-            currentIndex += offset
-            loadedStartIndex = newStart
-            AppLog.d("MediaDetail", "分页向前加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
+            // v1.12 修复：currentIndex 须按实际插入项数调整。mapNotNull 过滤已删除 key 后
+            // newItems.size 可能小于源 key 数，原实现按源 key 数 offset 调整会导致
+            // currentIndex 越过 mediaList 末尾（overshoot）显示错项
+            currentIndex += newItems.size
         }
+        // v1.12 修复：空段（该 source 区段全为已删除 key）也推进已加载区段起点，
+        // 防止反复加载同一段导致向前导航在过滤区卡死、无法到达更早数据
+        loadedStartIndex = newStart
+        AppLog.d("MediaDetail", "分页向前加载: +${newItems.size}, 已加载 ${mediaList.size}/$totalSourceCount")
     }
 
     /** 检查是否需要加载更多数据（接近边界时触发） */
@@ -348,7 +370,10 @@ class MediaDetailFragment : Fragment() {
         loadMoreIfNeeded()
 
         // 显示 "实际位置/总数"（分页时 totalSourceCount 为推荐列表总数）
-        val displayIndex = loadedStartIndex + currentIndex + 1
+        // v1.12 修复：改用 key → sourceKeys 下标精确映射；原 loadedStartIndex + currentIndex
+        // 在源列表含已删除 key 时计数漂移，无法反映真实源位置
+        val displayIndex = sourceIndexByKey[currentRecordKey]?.plus(1)
+            ?: (loadedStartIndex + currentIndex + 1)
         binding.detailFileName.text = "%d/%d".format(displayIndex, totalSourceCount)
         updateLikeButton()
         updateFavoriteButton()
@@ -362,7 +387,9 @@ class MediaDetailFragment : Fragment() {
                 setupVideoTouchOverlay()
             }
         }
-        preloadAround(index)
+        // v1.12 修复：loadMoreBackward 向前加载会在 showMediaAt 内改动 currentIndex，
+        // 预加载须围绕当前实际显示项（currentIndex）而非入参 index，否则预加载窗口错位
+        preloadAround(currentIndex)
     }
 
     /** 显示图片（IMAGE/ANIMATED_IMAGE），LargeImageDecoder 优先 + Coil 回退 */
@@ -587,13 +614,23 @@ class MediaDetailFragment : Fragment() {
     private val preloadDisposables = mutableMapOf<String, coil3.request.Disposable>()
 
     /** 判断当前内存是否充裕，允许额外预渲染 */
+    @Suppress("DEPRECATION")
     private fun isMemoryComfortable(): Boolean {
         val runtime = Runtime.getRuntime()
         val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
         val maxMb = runtime.maxMemory() / 1024 / 1024
         // 已用内存低于堆上限 50% 视为充裕
-        return usedMb < maxMb * 0.5
+        if (usedMb >= maxMb * 0.5) return false
+        // v1.12 修复：超大图 Bitmap 分配在 native 堆，Java 堆占用不足以代表真实内存压力；
+        // native 堆已用比例过高时同样视为内存紧张，收紧预加载范围
+        val nativeAllocatedMb = Debug.getNativeHeapAllocatedSize() / 1024 / 1024
+        val nativeTotalMb = Debug.getNativeHeapSize() / 1024 / 1024
+        return nativeTotalMb <= 0 || nativeAllocatedMb < nativeTotalMb * 0.6
     }
+
+    /** 是否为超大图（长边超过阈值，原图体积大，预加载需限量防 OOM） */
+    private fun isHugeImage(media: MediaFileEntity): Boolean =
+        maxOf(media.width ?: 0, media.height ?: 0) > HUGE_IMAGE_THRESHOLD
 
     /**
      * 双向预加载：基础1前2后，内存充裕时+1每侧（2前3后）。
@@ -615,19 +652,27 @@ class MediaDetailFragment : Fragment() {
         // 超大图(长边>4096)原图体积大(8192≈150MB/张)，预渲染过多会 OOM。
         // 当前图是超大图时收紧预渲染范围（1前1后），否则维持基础 1前2后 / 内存充裕 2前3后。
         val currentLongside = mediaList.getOrNull(index)?.let { maxOf(it.width ?: 0, it.height ?: 0) } ?: 0
-        val isHugeImage = currentLongside > HUGE_IMAGE_THRESHOLD
-        val extra = if (memoryComfortable && !isHugeImage) 1 else 0
-        val backCount = if (isHugeImage) 1 else 1 + extra   // 超大图1前 / 普通1+充裕1
-        val forwardCount = if (isHugeImage) 1 else 2 + extra // 超大图1后 / 普通2+充裕1
+        val isHugeCurrent = currentLongside > HUGE_IMAGE_THRESHOLD
+        val extra = if (memoryComfortable && !isHugeCurrent) 1 else 0
+        val backCount = if (isHugeCurrent) 1 else 1 + extra   // 超大图1前 / 普通1+充裕1
+        val forwardCount = if (isHugeCurrent) 1 else 2 + extra // 超大图1后 / 普通2+充裕1
 
         val start = maxOf(0, index - backCount)
         val end = minOf(mediaList.lastIndex, index + forwardCount)
 
         var enqueued = 0
+        var hugeEnqueued = 0  // 本轮已入队的超大图数量
         for (i in start..end) {
             if (i == index) continue // 当前正在显示，不需要预加载
             if (i !in mediaList.indices) continue
             val media = mediaList[i]
+            // v1.12 修复：原实现仅按"当前图"是否超大图收紧，当前为小图、邻项为 8192
+            // 超大图时仍 2前3后 全量预载（5×约150MB≈750MB native，OOM 风险）。改为逐项判断：
+            // 邻项本身是超大图时限量预载（窗口内最多 1 张），内存紧张时跳过全部超大图预载
+            if (isHugeImage(media)) {
+                if (!memoryComfortable || hugeEnqueued >= MAX_PRELOAD_HUGE) continue
+                hugeEnqueued++
+            }
             val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
             val request = LargeImageDecoder.buildPreloadRequest(
                 requireContext(),
@@ -641,7 +686,7 @@ class MediaDetailFragment : Fragment() {
             enqueued++
         }
         // Coil 内部缓存去重：已命中的项 enqueue 会直接跳过不解码，enqueued 为本轮新入队数（不含命中的）
-        AppLog.d("Detail", "preload: 范围[$start..$end] 当前=$index 内存充裕=$memoryComfortable 超大图=$isHugeImage 入队=$enqueued")
+        AppLog.d("Detail", "preload: 范围[$start..$end] 当前=$index 内存充裕=$memoryComfortable 超大图=$isHugeCurrent 入队=$enqueued")
     }
 
     private suspend fun loadVideoFrame(uriString: String): Bitmap? = withContext(Dispatchers.IO) {
@@ -1283,6 +1328,8 @@ class MediaDetailFragment : Fragment() {
         private const val LOAD_MORE_THRESHOLD = 5
         /** 超大图阈值：长边超过此值视为超大图，预渲染范围收紧(1前1后)防 OOM */
         private const val HUGE_IMAGE_THRESHOLD = 4096
+        /** 预加载窗口内最多预载的超级大图张数（8192 原图 ≈150MB/张，超过 1 张易 OOM，v1.12 新增） */
+        private const val MAX_PRELOAD_HUGE = 1
 
         fun newInstance(recordKey: String) = MediaDetailFragment().apply {
             arguments = Bundle().apply { putString(ARG_RECORD_KEY, recordKey) }

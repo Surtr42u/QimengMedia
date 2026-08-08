@@ -437,7 +437,10 @@ object MediaBrowserLogic {
             stat?.playCount ?: 0
         }.thenByDescending { it.modifiedAtMillis }
         MediaSortKey.SIZE -> compareByDescending { it.sizeBytes }
-        MediaSortKey.NAME -> compareBy { it.fileName.lowercase(Locale.getDefault()) }
+        // v1.12：NAME 改为 compareByDescending——旧实现用 compareBy（升序），而其余所有
+        // sortKey 均为 compareByDescending；applyFilter 对 ASC 方向取 reversed()，导致
+        // NAME+ASC 实际输出降序、NAME+DESC 输出升序，与筛选面板"升序/降序"语义相反
+        MediaSortKey.NAME -> compareByDescending { it.fileName.lowercase(Locale.getDefault()) }
     }
 
     private fun matchesViewRange(count: Int, range: MediaViewRange): Boolean = when (range) {
