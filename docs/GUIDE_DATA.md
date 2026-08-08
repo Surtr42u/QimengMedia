@@ -306,7 +306,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - 删除 COS 扫描源时（`deleteCosScanSource`），在事务中级联删除 `author_media_cross_refs`、`media_tag_cross_refs`、`view_stats`、`view_history`、`timeline_tags`、`media_files`、`cos_works`，清理孤立 COS 作者；事务外清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存），与 `deleteMediaAndRefs` 级联范围一致。
 - **启动时孤立文件清理**：`ScanUseCase.cleanupOrphanFiles()` 在 ViewModel 初始化时自动执行，检测并删除没有对应扫描源的残留媒体文件（包括非COS和COS），修复历史遗留的孤立数据问题；同时调用 `cleanupStaleRefs()` 清理 view_stats/view_history/timeline_tags/SharedPreferences 中引用了已删除文件的残留数据。
 - **启动时一次性重建作者关联**：`AuthorImportUseCase.rebuildAssociationsOnceIfNeeded()` 在 ViewModel 初始化时自动执行，用 settings flag `author_rebuild_v2_done` 保证**仅升级后首次启动执行一次**，调用 `rebuildAssociationsFromBlocks` 从全部已导入 TXT 重建关联，修复 v2 统一重建之前的版本遗留的脏数据（跨 TXT 同名作者关联被单 TXT 导入覆盖清空为 0）。重建失败不标记 flag，下次启动自动重试。这样用户覆盖安装新版后首次打开即自动修复，无需卸载重装或手动重新扫描。
-- `deleteMediaAndRefs(recordKeys)` 在事务中依次删除作者关联、标签关联、观看统计、浏览历史、时间轴标签、媒体文件，保证数据一致性；事务外同步清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存）。
+- `deleteMediaAndRefs(recordKeys)` 在事务中依次删除作者关联、标签关联、观看统计、浏览历史、时间轴标签、媒体文件，保证数据一致性；**v1.12 起按 500 分块执行**（SQLite 绑定参数上限旧设备为 999，删除数千文件的扫描源时单条 `DELETE IN(:大列表)` 会抛 SQLiteException 导致整体回滚）；事务外同步清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存）。
 - `deleteOrphanAuthors()` 删除 `author_media_cross_refs` 中无记录的作者，防止作者列表出现空壳条目。
 - 轻量查询方法：`MediaFileDao.getNonCosKeysAndFileNames()` 返回 `NonCosKeyFileName(recordKey, fileName)`，用于作者导入匹配（`importAuthorsFromText`），避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getNonCosKeysAndFileNames()`。
 - `MediaFileDao.getCosKeysAndUris()` 返回 `KeyAndUri(recordKey, uriString)`，用于 `cleanupOrphanFiles()` 中检测 COS 孤立文件，避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getCosKeysAndUris()`。

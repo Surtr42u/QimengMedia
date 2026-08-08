@@ -30,6 +30,12 @@ object ThumbnailCache {
     private const val COMPRESS_QUALITY = 80
 
     /**
+     * v1.12：视频截帧并发上限。视频截帧每任务峰值持有 2 张原尺寸帧，
+     * 4K 源 12 并发可达约 800MB 原生堆；固定低并发控制峰值内存。
+     */
+    private const val VIDEO_CONCURRENCY = 2
+
+    /**
      * 根据设备性能动态计算并发数
      * CPU核数 + 运存大小 → 统一并发数
      *
@@ -174,9 +180,12 @@ object ThumbnailCache {
         val images = mediaFiles.filter { it.mediaType == MediaType.IMAGE }
         val videos = mediaFiles.filter { it.mediaType == MediaType.VIDEO }
         val gifs = mediaFiles.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-        // 图片优先（快），视频排后（慢），共用并发池
+        // 图片优先（快），视频排后（慢）
+        // v1.12：视频单独低并发——视频截帧每任务峰值持有 2 张原尺寸帧（getFrameAtTime +
+        // convertTo565 副本），4K 源 12 并发可达约 800MB，低端机 OOM 风险；
+        // 视频并发限制为 2，图片仍用全量并发
         val workItems = images + videos
-        AppLog.d("ThumbCache", "pregenerate: total=$total, images=${images.size}, videos=${videos.size}, gifs=${gifs.size}(skipped), concurrency=$concurrency")
+        AppLog.d("ThumbCache", "pregenerate: total=$total, images=${images.size}, videos=${videos.size}, gifs=${gifs.size}(skipped), concurrency=$concurrency, videoConcurrency=$VIDEO_CONCURRENCY")
 
         // GIF 不需要预生成静态缓存，直接计入已完成
         if (gifs.isNotEmpty()) {
@@ -201,52 +210,87 @@ object ThumbnailCache {
         }
 
         var count = skipped.get()
-        // 统一并发池：图片视频共享，图片优先排列确保快任务先完成
-        coroutineScope {
-            uncached.chunked(concurrency).forEach { batch ->
-                batch.map { media ->
-                    async {
-                        try {
-                            // 二次检查：预过滤与实际解码间可能被其他线程预生成
-                            if (isThumbnailCached(context, media.recordKey)) {
-                                skipped.incrementAndGet()
-                                return@async
-                            }
-                            val isVideo = media.mediaType == MediaType.VIDEO
-                            val bitmap = if (isVideo) {
-                                ThumbnailLoader.loadVideoThumbnail(context, media.uriString)
-                            } else {
-                                ThumbnailLoader.loadImageThumbnail(context, media.uriString)
-                            }
-                            if (bitmap != null) {
-                                writeThumbnail(context, media.recordKey, bitmap)
-                                generated.incrementAndGet()
-                            } else {
-                                failed.incrementAndGet()
-                                if (failed.get() <= 3) {
-                                    AppLog.w("ThumbCache", "${if (isVideo) "video" else "image"} thumbnail failed: ${media.fileName}")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            failed.incrementAndGet()
-                            if (failed.get() <= 3) {
-                                AppLog.e("ThumbCache", "thumbnail exception: ${media.fileName}", e)
-                            }
-                        }
-                    }
-                }.awaitAll()
-                count += batch.size
-                if (count % 200 == 0 || count >= total) {
-                    AppLog.d("ThumbCache", "pregenerate: progress $count/$total (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
+        // v1.12：图片与视频分离并发——图片全量并发（解码快、内存小），视频低并发
+        // （截帧峰值内存大）。旧实现共享并发池，视频任务混入全量并发导致 4K 源
+        // 批量预生成时原生堆峰值过高。
+        val uncachedImages = uncached.filter { it.mediaType == MediaType.IMAGE }
+        val uncachedVideos = uncached.filter { it.mediaType == MediaType.VIDEO }
+
+        suspend fun processBatch(media: MediaFileEntity) {
+            try {
+                // 二次检查：预过滤与实际解码间可能被其他线程预生成
+                if (isThumbnailCached(context, media.recordKey)) {
+                    skipped.incrementAndGet()
+                    return
                 }
-                onProgress?.invoke(count, total)
+                val isVideo = media.mediaType == MediaType.VIDEO
+                val bitmap = if (isVideo) {
+                    ThumbnailLoader.loadVideoThumbnail(context, media.uriString)
+                } else {
+                    ThumbnailLoader.loadImageThumbnail(context, media.uriString)
+                }
+                if (bitmap != null) {
+                    writeThumbnail(context, media.recordKey, bitmap)
+                    generated.incrementAndGet()
+                } else {
+                    failed.incrementAndGet()
+                    if (failed.get() <= 3) {
+                        AppLog.w("ThumbCache", "${if (isVideo) "video" else "image"} thumbnail failed: ${media.fileName}")
+                    }
+                }
+            } catch (e: Exception) {
+                failed.incrementAndGet()
+                if (failed.get() <= 3) {
+                    AppLog.e("ThumbCache", "thumbnail exception: ${media.fileName}", e)
+                }
             }
         }
+
+        suspend fun runPool(items: List<MediaFileEntity>, poolConcurrency: Int) {
+            coroutineScope {
+                items.chunked(poolConcurrency).forEach { batch ->
+                    batch.map { media -> async { processBatch(media) } }.awaitAll()
+                    count += batch.size
+                    if (count % 200 == 0 || count >= total) {
+                        AppLog.d("ThumbCache", "pregenerate: progress $count/$total (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
+                    }
+                    onProgress?.invoke(count, total)
+                }
+            }
+        }
+
+        runPool(uncachedImages, concurrency)
+        runPool(uncachedVideos, VIDEO_CONCURRENCY)
+
+        // v1.12：缓存容量治理——filesDir 缩略图缓存无上限只增不减，超限时按修改时间
+        // 淘汰最旧文件，避免长期使用占用用户存储数百 MB
+        enforceCacheLimit(context)
 
         AppLog.d("ThumbCache", "pregenerateThumbnails: done, $total/$total processed (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
     }
 
     // ===== 缓存管理 =====
+
+    /** 缩略图缓存文件数量上限（v1.12）。超出时淘汰最旧文件，防止 filesDir 只增不减。 */
+    private const val MAX_CACHE_FILES = 5000
+
+    /**
+     * v1.12：缓存容量治理——超过 [MAX_CACHE_FILES] 时按修改时间淘汰最旧文件，
+     * 确保 filesDir 下缩略图缓存（含 *_frame.webp 详情帧）有界。
+     */
+    private fun enforceCacheLimit(context: Context) {
+        try {
+            val dir = cacheDir(context)
+            val files = dir.listFiles()?.filter { it.isFile } ?: return
+            if (files.size <= MAX_CACHE_FILES) return
+            files.sortedBy { it.lastModified() }
+                .take(files.size - MAX_CACHE_FILES)
+                .forEach { it.delete() }
+            AppLog.d("ThumbCache", "enforceCacheLimit: ${files.size} -> $MAX_CACHE_FILES (淘汰 ${files.size - MAX_CACHE_FILES})")
+        } catch (e: Exception) {
+            AppLog.d("ThumbCache", "enforceCacheLimit failed: ${e.message}")
+        }
+    }
 
     /** 获取缓存目录大小（字节） */
     fun cacheSize(context: Context): Long {

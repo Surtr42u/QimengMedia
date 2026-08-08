@@ -74,13 +74,10 @@ object ThumbnailLoader {
         val retriever = MediaMetadataRetriever()
         try {
             val uri = uriString.toUri()
-            val pfd = context.contentResolver.openAssetFileDescriptor(uri, "r")
-            if (pfd != null) {
+            // v1.12：pfd 用 use{} 包裹——旧实现 setDataSource 抛异常时 pfd 不关闭泄漏 fd
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { pfd ->
                 retriever.setDataSource(pfd.fileDescriptor)
-                pfd.close()
-            } else {
-                retriever.setDataSource(context, uri)
-            }
+            } ?: retriever.setDataSource(context, uri)
             val coverBytes = retriever.embeddedPicture
             if (coverBytes != null) {
                 val raw = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size)
@@ -138,13 +135,10 @@ object ThumbnailLoader {
         val retriever = MediaMetadataRetriever()
         try {
             val uri = uriString.toUri()
-            val pfd = context.contentResolver.openAssetFileDescriptor(uri, "r")
-            if (pfd != null) {
+            // v1.12：pfd 用 use{} 包裹——旧实现 setDataSource 抛异常时 pfd 不关闭泄漏 fd
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { pfd ->
                 retriever.setDataSource(pfd.fileDescriptor)
-                pfd.close()
-            } else {
-                retriever.setDataSource(context, uri)
-            }
+            } ?: retriever.setDataSource(context, uri)
 
             // 固定时间策略 0ms→1s→2s→3s→5s→10s→20s→30s 递进原因：
             // 0ms取首帧（最快），但很多视频开头是黑屏过渡（淡入、logo淡出）；
@@ -272,11 +266,19 @@ object ThumbnailLoader {
     /**
      * 将 Bitmap 转为 RGB_565 格式，减少内存占用（缩略图不需要透明度）
      * 如果已经是 RGB_565 则直接返回
+     *
+     * v1.12：copy() 返回 null（OOM/分配失败）时不再 recycle 原图后再返回已回收的
+     * bitmap——旧实现先 recycle 再 `return converted ?: bitmap`，调用方拿到已回收的
+     * bitmap 继续 compress 会抛 IllegalStateException。改为转换失败直接返回原图。
      */
     private fun convertTo565(bitmap: Bitmap): Bitmap {
         if (bitmap.config == Bitmap.Config.RGB_565) return bitmap
         val converted = bitmap.copy(Bitmap.Config.RGB_565, false)
+        if (converted == null) {
+            AppLog.w("Thumb", "convertTo565: copy 失败（内存不足），保留原图")
+            return bitmap
+        }
         bitmap.recycle()
-        return converted ?: bitmap
+        return converted
     }
 }

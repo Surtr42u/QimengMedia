@@ -46,6 +46,14 @@ object LargeImageDecoder {
     private val largeDecodeSemaphore = Semaphore(2)
 
     /**
+     * 单张原图解码的像素预算上限（与 SpngDecoder 一致，v1.12）。
+     * decodeFileDescriptor/decodeStream 直解路径不经过 Coil 的 maxBitmapSize 约束，
+     * 超预算的图（如 16384² 级）直接拒绝直解，由调用方回退 Coil 走受控解码，
+     * 避免详情页原生堆 OOM 崩溃。
+     */
+    private const val MAX_DECODE_BYTES = 256L * 1024 * 1024
+
+    /**
      * 解码当前显示的图片。
      *
      * 最优路径：先查 Coil 内存缓存（预加载可能已放入），命中则 0ms 返回；
@@ -145,11 +153,26 @@ object LargeImageDecoder {
      * 使用 AssetFileDescriptor + decodeFileDescriptor 解码。
      * 比 decodeStream 更快，因为直接走文件描述符 mmap 读取，
      * 跳过 InputStream 中间层的拷贝开销。
+     *
+     * v1.12：解码前用 inJustDecodeBounds 先读尺寸，像素预算超 [MAX_DECODE_BYTES]
+     * 的直接返回 null（回退 Coil 受控解码），避免超大图直解导致原生堆 OOM。
      */
     private fun decodeWithFileDescriptor(context: Context, uri: Uri): Bitmap? {
         val afd = context.contentResolver.openAssetFileDescriptor(uri, "r") ?: return null
         try {
             val fd = afd.fileDescriptor ?: return null
+
+            // 预算检查：仅读取尺寸，不分配像素
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFileDescriptor(fd, null, bounds)
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                val estimated = bounds.outWidth.toLong() * bounds.outHeight * 4
+                if (estimated > MAX_DECODE_BYTES) {
+                    AppLog.w(TAG, "decodeFileDescriptor 超像素预算 (${estimated / 1024 / 1024}MB)，回退 Coil 受控解码")
+                    return null
+                }
+            }
+
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
                 inMutable = false

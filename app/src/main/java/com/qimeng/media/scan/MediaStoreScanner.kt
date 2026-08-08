@@ -94,7 +94,11 @@ class MediaStoreScanner(private val context: Context) {
         for (entity in entities) {
             // 从 filePath 中提取作者名
             val candidate = candidateByUri[entity.uriString] ?: continue
-            val relativePath = candidate.folderName.removePrefix(rootPrefix)
+            // v1.12：用完整目录路径做相对路径分割。旧版用 candidate.folderName（直接父目录
+            // leaf 名，如 "作品"、"p1"）removePrefix(rootPrefix) 恒不生效、split 恒得单段，
+            // 结构2/3（作者/作品/文件）下 segments[0] 取到的是作品/子目录名而非作者名，
+            // 导致 COS 作者/作品分组全部错乱；SAF 分支一直用 uriString document 段解析（正确）。
+            val relativePath = candidate.directoryPath.removePrefix(rootPrefix)
             val segments = relativePath.split("/")
 
             // segments[0] = 作者名, segments[1] = 作品名或文件名, segments[2+] = 子目录或文件名
@@ -245,6 +249,8 @@ class MediaStoreScanner(private val context: Context) {
                     mediaType = actualMediaType,
                     uriString = contentUri.toString(),
                     folderName = folderName.ifBlank { "Unknown" },
+                    // v1.12：存完整目录路径，供 COS 作者/作品相对路径解析
+                    directoryPath = filePath.substringBeforeLast('/', ""),
                     pathHash = ScanUtils.shortHash(filePath),
                     sizeBytes = cursor.getLong(sizeCol).coerceAtLeast(0L),
                     modifiedAtMillis = cursor.getLong(dateCol).let { if (it > 0) it * 1000L else 0L },

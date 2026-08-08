@@ -349,9 +349,10 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 - **视频**：`ThumbnailLoader.loadVideoThumbnail()` 三级策略 → `ThumbnailCache.writeThumbnail()` 保存为 WebP
 - **动态并发**：根据设备 CPU 核数和运存自动调整（`getConcurrency`）
   - 统一并发 = CPU 核数 × 1.5（上限 16）
-  - 图片视频共用并发池，图片优先排列确保快任务先完成
   - 设备总内存<4GB时减半（用`ActivityManager.MemoryInfo.totalMem`判断，非App堆上限`memoryClass`）
   - 高端 8 核设备实测：12 并发
+- **图片/视频分离并发（v1.12）**：图片走全量并发（解码快、内存小）；视频单独限制 2 并发——视频截帧每任务峰值持有 2 张原尺寸帧（`getFrameAtTime` + `convertTo565` 副本），4K 源 12 并发可达约 800MB 原生堆，低端机 OOM 风险
+- **缓存容量上限（v1.12）**：filesDir 缩略图缓存（含 `_frame.webp` 详情帧）超过 5000 个文件时按修改时间淘汰最旧文件，防止只增不减占用用户存储
 
 ### cache_version 机制
 
@@ -389,4 +390,4 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 
 ## 验收清单
 
-> 最后更新：2026-06-25
+> 最后更新：2026-08-08

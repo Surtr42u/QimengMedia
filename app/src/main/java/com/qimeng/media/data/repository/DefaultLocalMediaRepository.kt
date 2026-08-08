@@ -189,18 +189,31 @@ class DefaultLocalMediaRepository(
     override suspend fun deleteMediaAndRefs(recordKeys: List<String>) {
         if (recordKeys.isEmpty()) return
         // 1. 事务中删除数据库关联数据
+        // v1.12：SQLite 绑定参数上限旧设备为 999，删除数千文件的扫描源时单条
+        // DELETE IN(:list) 会抛 SQLiteException 导致整体回滚；按 500 分块（对齐
+        // upsert 的 chunked 模式）避免变量数超限，且保持在单个事务内保证原子性。
         database.withTransaction {
-            authorDao.deleteCrossRefsByRecordKeys(recordKeys)
-            database.tagDao().deleteCrossRefsByRecordKeys(recordKeys)
-            viewStatsDao.deleteByRecordKeys(recordKeys)
-            viewHistoryDao.deleteByRecordKeys(recordKeys)
-            database.timelineTagDao().deleteByRecordKeys(recordKeys)
-            mediaFileDao.deleteByRecordKeys(recordKeys)
+            deleteAllRefsChunked(recordKeys)
         }
         // 2. 清理 SharedPreferences（点赞、收藏）
         MediaDetailPrefsCleaner.cleanByRecordKeys(application, recordKeys)
         // 3. 清理 Coil 内存缓存 + 本地缩略图文件缓存
         MediaCacheCleaner.cleanByRecordKeys(application, recordKeys)
+    }
+
+    /**
+     * v1.12：分块级联删除（须在数据库事务内调用）。
+     * 规避旧设备 SQLite 绑定参数上限（999），DELETE IN(:大列表) 分块执行。
+     */
+    private suspend fun deleteAllRefsChunked(recordKeys: List<String>) {
+        recordKeys.chunked(500).forEach { chunk ->
+            authorDao.deleteCrossRefsByRecordKeys(chunk)
+            database.tagDao().deleteCrossRefsByRecordKeys(chunk)
+            viewStatsDao.deleteByRecordKeys(chunk)
+            viewHistoryDao.deleteByRecordKeys(chunk)
+            database.timelineTagDao().deleteByRecordKeys(chunk)
+            mediaFileDao.deleteByRecordKeys(chunk)
+        }
     }
 
     override suspend fun deleteOrphanAuthors() {
@@ -278,7 +291,10 @@ class DefaultLocalMediaRepository(
         val existingCosKeys = mediaFileDao.getAllCosRecordKeys()
         database.withTransaction {
             if (existingCosKeys.isNotEmpty()) {
-                authorDao.deleteCrossRefsByRecordKeys(existingCosKeys)
+                // v1.12：分块删除避免 SQLite 绑定参数超限
+                existingCosKeys.chunked(500).forEach { chunk ->
+                    authorDao.deleteCrossRefsByRecordKeys(chunk)
+                }
                 authorDao.deleteOrphanCosAuthors()
             }
             mediaFileDao.deleteCosMedia()
@@ -298,16 +314,12 @@ class DefaultLocalMediaRepository(
             val sourceWorks = database.cosWorkDao().getBySourceUri(uriString)
             database.cosWorkDao().deleteBySourceUri(uriString)
 
-            // 删除该源归属的媒体文件（含级联统计/历史/标签/关联）
+            // 删除该源归属的媒体文件（含级联统计/历史/标签/关联；v1.12 按 500 分块避免
+            // SQLite 绑定参数超限，旧设备 DELETE IN(:大列表) 会抛 SQLiteException）
             val orphanKeys = mediaFileDao.getCosRecordKeysBySourceUri(uriString)
             if (orphanKeys.isNotEmpty()) {
                 allOrphanKeys.addAll(orphanKeys)
-                authorDao.deleteCrossRefsByRecordKeys(orphanKeys)
-                database.tagDao().deleteCrossRefsByRecordKeys(orphanKeys)
-                viewStatsDao.deleteByRecordKeys(orphanKeys)
-                viewHistoryDao.deleteByRecordKeys(orphanKeys)
-                database.timelineTagDao().deleteByRecordKeys(orphanKeys)
-                mediaFileDao.deleteByRecordKeys(orphanKeys)
+                deleteAllRefsChunked(orphanKeys)
             }
 
             // 兼容旧版数据（sourceUri 为 null）：按 folderUri 前缀兜底清理
@@ -325,12 +337,7 @@ class DefaultLocalMediaRepository(
                 val orphanKeys = mediaFileDao.getCosRecordKeysByUriPrefixLight(prefix)
                 if (orphanKeys.isNotEmpty()) {
                     allOrphanKeys.addAll(orphanKeys)
-                    authorDao.deleteCrossRefsByRecordKeys(orphanKeys)
-                    database.tagDao().deleteCrossRefsByRecordKeys(orphanKeys)
-                    viewStatsDao.deleteByRecordKeys(orphanKeys)
-                    viewHistoryDao.deleteByRecordKeys(orphanKeys)
-                    database.timelineTagDao().deleteByRecordKeys(orphanKeys)
-                    mediaFileDao.deleteByRecordKeys(orphanKeys)
+                    deleteAllRefsChunked(orphanKeys)
                 }
             }
             if (legacyWorks.isNotEmpty()) {

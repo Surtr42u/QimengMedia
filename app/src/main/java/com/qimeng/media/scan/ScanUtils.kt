@@ -96,6 +96,11 @@ data class MediaCandidate(
     val mediaType: String,
     val uriString: String,
     val folderName: String,
+    /** 文件所在目录的完整路径（如 /storage/emulated/0/.../COS/作者/作品）。
+     * v1.12 新增：MediaStore 路径解析 COS 作者/作品时用完整目录路径做相对路径分割，
+     * 修复旧版用 folderName（直接父目录 leaf 名）removePrefix 恒失败、
+     * COS 结构2/3 下作者被识别成作品名的问题。SAF 分支用 uriString 解析，此字段可为空。 */
+    val directoryPath: String,
     val pathHash: String,
     val sizeBytes: Long,
     val modifiedAtMillis: Long,

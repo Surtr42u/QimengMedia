@@ -62,6 +62,9 @@ class SafMediaScanner(private val context: Context) {
                         mediaType = mediaType,
                         uriString = uri.toString(),
                         folderName = folderName,
+                        // SAF 分支在 ScanUseCase.scanCosMedia 用 uriString document 段解析
+                        // COS 作者/作品，不依赖 directoryPath，填根相对路径即可
+                        directoryPath = "",
                         pathHash = pathHash,
                         sizeBytes = child.length().coerceAtLeast(0L),
                         modifiedAtMillis = child.lastModified().takeIf { it > 0L } ?: 0L,

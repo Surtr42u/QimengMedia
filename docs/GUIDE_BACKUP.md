@@ -48,7 +48,7 @@
 - 自动同步使用防抖，避免每次小改动都写盘。
 - 写入时使用临时文件再替换，避免半写入损坏。
 - 导出失败提示用户，不影响数据库主数据。
-- 写入后立即回读校验（round-trip test），确保 JSON 可被正常解析。校验失败则删除该文件并记录 `AppLog.e`，防止备份损坏导致导入时静默丢数据。
+- 写入后立即回读校验（round-trip test）。**v1.12 起校验提前到 rename 之前**（校验 `.tmp` 内容可解析且一致），校验通过才删旧文件、再 rename；校验失败只删 `.tmp`、保留旧备份——旧实现在 rename 之后校验，失败时新旧文件都被删且无旧版回滚。
 - **空库覆盖防护**：自动同步（`syncAppDataOnly`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
 
 ## 导入原则
@@ -77,6 +77,11 @@
 - 重复作者 ID 时合并关联文件。
 - 作者关注状态随个人偏好导出（`personal_prefs.json` 的 `followedAuthorIds` 字段 + 每个作者的 `followed` 和 `viewCount` 字段）。
 - 统计数据可选择覆盖或取最大值，具体以项目文档为准。
+- **标签合并（v1.12）**：`importTags` 忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联。旧实现直插备份 tagId，向已有数据的库合并恢复时本地/备份 tags 的 autoGenerate id 撞号 → 标签及其关联静默丢失。
+- **收藏合并（v1.12）**：`importLikes` 收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏；同时清理备份中已不存在的陈旧点赞键（`like_count_*`/`like_date_*`）。
+- **时间轴标签去重（v1.12）**：`importTimelineTags` 导入前按 `(recordKey, timeMillis, name)` 查重（`TimelineTagDao.findExisting`），已存在则跳过——主键 autoGenerate 使 `@Upsert` 无法去重，重复导入同一备份标签会翻倍。
+- **settings.json 导入（v1.12）**：旧版只导出从不导入，恢复后用户设置（备份目录、TXT 导入 URI 等）永不还原；现已补 `importSettings` 纳入导入流程。
+- **导入事务性（v1.12）**：`importFromDirectory` 先读全部 JSON，再在**单一数据库事务**内导入 settings/authors/tags/album_rules/media_stats/history/scan_sources/timeline_tags，避免旧实现 9 个文件顺序导入中途异常留下"先序已入库、后序未导入"的半恢复状态；likes/recommendation_prefs 为 SharedPreferences 写入，事务外执行。
 
 ## 数据管理功能
 
@@ -202,4 +207,4 @@ COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08

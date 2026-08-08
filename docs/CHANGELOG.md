@@ -16,6 +16,25 @@
 | 扫描正确性 | `MediaStoreScanner.queryCosFolder` 作品去重 O(N×M) 线性扫描（SAF 分支已用 Set） | 对齐 SAF 分支改 `seenWorks` Set 去重 |
 | 扫描正确性 | MediaStoreObserver/ScanUseCase 全部前缀匹配改按 `sourceUri` 精确匹配 | 上述各处替换 |
 
+## P1 备份与崩溃风险修复（2026-08-08）
+
+| 类别 | 问题 | 修复方式 |
+|---|---|---|
+| 备份数据安全 | 原子写先删旧文件再 rename，rename 失败/校验失败时新旧皆失 | round-trip 校验提前到 rename 前（校验 .tmp），通过才删旧文件；失败保留旧备份 |
+| 备份数据安全 | settings.json 只导出从不导入，恢复后用户设置永不还原 | 补 `importSettings` 纳入导入流程 |
+| 备份数据安全 | 9 个 JSON 顺序导入无事务，中途异常库半恢复状态 | 先读全部 → 单一数据库事务导入 8 个表，prefs 事务外写入 |
+| 备份数据安全 | `importTags` 直插备份 tagId 撞号静默丢标签 | 忽略备份 tagId，按 name INSERT OR IGNORE 后查回本地真实 id |
+| 备份数据安全 | `importLikes` 空 favorites 备份清空本地收藏 | 收藏改「本地∪备份」合并 + 清理陈旧点赞键 |
+| 备份数据安全 | timeline 标签 autoGenerate 主键 @Upsert 无法去重，重复导入翻倍 | 导入前按 (recordKey,timeMillis,name) 查重跳过 |
+| 备份健壮性 | `writeFile` 忽略 rename 返回值假成功；autoSync 完全吞异常无日志；fullSync 忽略个人偏好子目录失败 | 检查返回值 + 补 AppLog.e + 汇总子目录成功状态 |
+| 崩溃（OOM） | `LargeImageDecoder` 直解路径无尺寸/内存上限绕过 Coil maxBitmapSize | 解码前 inJustDecodeBounds 预算检查，超 256MB 回退 Coil 受控解码 |
+| 崩溃（旧设备） | 删除大目录 `DELETE IN(:大列表)` 超 SQLite 999 绑定参数上限抛异常回滚 | `deleteMediaAndRefs`/`rebuildCosIndex`/COS 源删除统一按 500 分块 |
+| 崩溃（OOM） | 视频截帧 12 并发峰值约 800MB 原生堆 | 图片/视频分离并发，视频固定 2 并发 |
+| 崩溃（OOM） | `convertTo565` copy 失败先 recycle 再返回已回收 bitmap | 转换失败保留原图不 recycle |
+| 资源泄漏 | `loadEmbeddedCover`/`loadFirstFrame` setDataSource 抛异常时 pfd 不关闭 | pfd 改 `use{}` 包裹 |
+| 缓存治理 | filesDir 缩略图缓存无上限只增不减 | 超过 5000 文件按修改时间淘汰最旧 |
+| 功能错误（COS） | MediaStore 路径 COS 作者解析用 leaf 目录名当相对路径，结构2/3 作者被识别成作品名 | 新增 `MediaCandidate.directoryPath` 完整目录路径，`removePrefix` 后分割 |
+
 > 最后更新：2026-08-08
 
 ## 已完成重构项（2026-06-17）

@@ -109,6 +109,8 @@
 4. 如果 `segments.size <= 2`：作品名 = 作者名（扁平结构，文件直接在作者目录下）
 5. 使用 `associateBy` 建立 uriString→candidate 映射，避免 O(n²) 查找
 
+**v1.12 修正**：相对路径取自候选文件的**完整目录路径**（`MediaCandidate.directoryPath`，即文件系统路径去掉文件名）做 `removePrefix` 后再分割。旧实现用 `folderName`（直接父目录 leaf 名，如"作品"/"p1"）做 `removePrefix`，因不含根前缀恒不生效、`split` 恒得单段，COS 结构2/3（作者/作品/文件）下 `segments[0]` 取到的是作品/子目录名而非作者名，导致 MediaStore 主扫描路径 COS 作者/作品分组全部错乱（SAF 回退路径一直用 uriString document 段解析，不受影响）。
+
 ### SAF 回退路径解析算法（`scanCosMedia` SAF 分支）
 
 从 SAF document URI 中解析作者/作品名：

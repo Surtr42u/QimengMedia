@@ -11,6 +11,11 @@ interface TimelineTagDao {
     @Query("SELECT * FROM timeline_tags WHERE recordKey = :recordKey ORDER BY timeMillis ASC")
     fun observeForVideo(recordKey: String): Flow<List<TimelineTagEntity>>
 
+    /** v1.12：按 (recordKey, timeMillis, name) 查重，避免备份重复导入时间轴标签翻倍。
+     * TimelineTagEntity 主键为 autoGenerate，构造恒为 0，@Upsert 每次都会 INSERT 新行。 */
+    @Query("SELECT timelineTagId FROM timeline_tags WHERE recordKey = :recordKey AND timeMillis = :timeMillis AND name = :name LIMIT 1")
+    suspend fun findExisting(recordKey: String, timeMillis: Long, name: String): Long?
+
     @Upsert
     suspend fun upsert(tag: TimelineTagEntity)
 

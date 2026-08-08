@@ -3,6 +3,7 @@ package com.qimeng.media.backup
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import androidx.room.withTransaction
 import com.qimeng.media.core.AppLog
 import com.qimeng.media.data.db.AppDatabase
 import com.qimeng.media.data.db.entity.AlbumRuleEntity
@@ -11,6 +12,7 @@ import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ScanSourceEntity
+import com.qimeng.media.data.db.entity.SettingEntity
 import com.qimeng.media.data.db.entity.TagEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
@@ -161,6 +163,8 @@ class BackupManager(private val context: Context) {
             val count = exportToDirectory(appDataDir, database, appPrefsManager)
             count > 0
         } catch (e: Exception) {
+            // v1.12：补异常日志——旧实现完全吞异常无任何记录，自动同步静默失败无法排查
+            AppLog.e("BackupManager", "autoSyncToDirectory failed: ${e.message}", e)
             false
         }
     }
@@ -178,6 +182,10 @@ class BackupManager(private val context: Context) {
          *
          * v1.7：写入后立即回读校验（round-trip test），确保 JSON 可被正常解析。
          * 校验失败则删除该文件并记录日志，防止备份损坏导致导入时静默丢数据。
+         *
+         * v1.12：把 round-trip 校验提前到 rename 之前（校验 .tmp），校验通过后才删旧文件、
+         * 再 rename。旧实现在 rename 之后校验，校验失败时新旧文件都被删、且无旧版回滚；
+         * 现实现中校验失败只删 .tmp、旧文件保留，避免唯一备份被损坏的写入覆盖。
          */
         fun writeJson(name: String, json: JSONObject) {
             try {
@@ -194,34 +202,30 @@ class BackupManager(private val context: Context) {
                     // 在 ContentResolver OutputStream 中我们通过 flush 来保证
                 } ?: return
 
-                // 2. 删除旧文件（如果存在）
+                // 2. round-trip 校验 .tmp：JSON 可解析且内容一致才继续
+                val verified = context.contentResolver.openInputStream(tempFile.uri)?.use { stream ->
+                    val readBack = String(stream.readBytes(), Charsets.UTF_8)
+                    JSONObject(readBack).toString(2) == json.toString(2)
+                } ?: false
+                if (!verified) {
+                    AppLog.e("BackupManager", "writeJson verify failed (tmp) for $name")
+                    dir.findFile(tempName)?.delete()
+                    return
+                }
+
+                // 3. 删除旧文件（校验已通过，rename 失败时 .tmp 内容完整可抢救）
                 dir.findFile(name)?.takeIf { it.isFile }?.delete()
                 
-                // 3. 重命名临时文件为最终文件名
+                // 4. 重命名临时文件为最终文件名
                 if (!tempFile.renameTo(name)) {
                     AppLog.e("BackupManager", "writeJson rename failed for $name")
                     return
                 }
-
-                // 4. v1.7 round-trip 校验：回读并验证 JSON 可解析
-                val writtenFile = dir.findFile(name) ?: run {
-                    AppLog.e("BackupManager", "writeJson verify failed: file not found after rename: $name")
-                    return
-                }
-                context.contentResolver.openInputStream(writtenFile.uri)?.use { stream ->
-                    val readBack = String(stream.readBytes(), Charsets.UTF_8)
-                    JSONObject(readBack) // 若 JSON 损坏，此处抛 JSONException
-                } ?: run {
-                    AppLog.e("BackupManager", "writeJson verify failed: cannot open input stream: $name")
-                    return
-                }
-
                 count++
             } catch (e: Exception) {
                 AppLog.e("BackupManager", "writeJson failed for $name: ${e.message}", e)
-                // 清理临时文件和损坏的最终文件
+                // 清理临时文件；最终文件保留（校验失败时不覆盖旧备份）
                 dir.findFile("${name}.tmp")?.delete()
-                dir.findFile(name)?.delete()
             }
         }
 
@@ -266,15 +270,33 @@ class BackupManager(private val context: Context) {
             } catch (e: Exception) { com.qimeng.media.core.AppLog.d("Backup", "readJson failed for $name: ${e.message}"); null }
         }
 
-        readJson(BackupFileNames.AUTHORS)?.let { importAuthors(it, database); count++ }
-        readJson(BackupFileNames.TAGS)?.let { importTags(it, database); count++ }
-        readJson(BackupFileNames.ALBUM_RULES)?.let { importAlbumRules(it, database); count++ }
-        readJson(BackupFileNames.MEDIA_STATS)?.let { importMediaStats(it, database); count++ }
-        readJson(BackupFileNames.HISTORY)?.let { importHistory(it, database); count++ }
-        readJson(BackupFileNames.SCAN_SOURCES)?.let { importScanSources(it, database); count++ }
-        readJson(BackupFileNames.LIKES)?.let { importLikes(it); count++ }
-        readJson(BackupFileNames.RECOMMENDATION_PREFS)?.let { importRecommendationPrefs(it, appPrefsManager); count++ }
-        readJson(BackupFileNames.TIMELINE_TAGS)?.let { importTimelineTags(it, database); count++ }
+        // 先读全部 JSON（损坏文件返回 null 跳过），再在单一事务内执行数据库导入，
+        // 避免 9 个文件顺序导入中途异常留下"先序已入库、后序未导入"的半恢复状态。
+        val settingsJson = readJson(BackupFileNames.SETTINGS)
+        val authorsJson = readJson(BackupFileNames.AUTHORS)
+        val tagsJson = readJson(BackupFileNames.TAGS)
+        val albumRulesJson = readJson(BackupFileNames.ALBUM_RULES)
+        val statsJson = readJson(BackupFileNames.MEDIA_STATS)
+        val historyJson = readJson(BackupFileNames.HISTORY)
+        val scanSourcesJson = readJson(BackupFileNames.SCAN_SOURCES)
+        val timelineTagsJson = readJson(BackupFileNames.TIMELINE_TAGS)
+        val likesJson = readJson(BackupFileNames.LIKES)
+        val prefsJson = readJson(BackupFileNames.RECOMMENDATION_PREFS)
+
+        // v1.12：settings.json 此前只导出从不导入，恢复后用户设置永不还原，这里补上导入
+        database.withTransaction {
+            settingsJson?.let { importSettings(it, database); count++ }
+            authorsJson?.let { importAuthors(it, database); count++ }
+            tagsJson?.let { importTags(it, database); count++ }
+            albumRulesJson?.let { importAlbumRules(it, database); count++ }
+            statsJson?.let { importMediaStats(it, database); count++ }
+            historyJson?.let { importHistory(it, database); count++ }
+            scanSourcesJson?.let { importScanSources(it, database); count++ }
+            timelineTagsJson?.let { importTimelineTags(it, database); count++ }
+        }
+        // SharedPreferences 写入不在数据库事务内
+        likesJson?.let { importLikes(it); count++ }
+        prefsJson?.let { importRecommendationPrefs(it, appPrefsManager); count++ }
         count
     }
 
@@ -551,6 +573,23 @@ class BackupManager(private val context: Context) {
         appPrefsManager.updateRecommendationPrefs(prefs)
     }
 
+    private suspend fun importSettings(json: JSONObject, db: AppDatabase) {
+        val data = json.optJSONObject("data") ?: return
+        val items = data.optJSONArray("items") ?: return
+        for (i in 0 until items.length()) {
+            val obj = items.optJSONObject(i) ?: continue
+            val key = obj.optString("key", "")
+            if (key.isBlank()) continue
+            db.settingDao().upsert(
+                SettingEntity(
+                    key = key,
+                    value = obj.optString("value", ""),
+                    updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis())
+                )
+            )
+        }
+    }
+
     private suspend fun importAuthors(json: JSONObject, db: AppDatabase) {
         val data = json.optJSONObject("data") ?: return
         val arr = data.optJSONArray("authors") ?: return
@@ -591,15 +630,21 @@ class BackupManager(private val context: Context) {
     private suspend fun importTags(json: JSONObject, db: AppDatabase) {
         val data = json.optJSONObject("data") ?: return
         val tags = data.optJSONArray("tags") ?: return
-        // 1. 导入标签定义（INSERT OR IGNORE，按 name 唯一约束去重）
+        // 1. 导入标签定义（v1.12：忽略备份 tagId，按 name INSERT OR IGNORE 去重。
+        // 旧实现直插备份 tagId，向已有数据的库合并恢复时本地 tags 与备份 tags 的
+        // autoGenerate id 撞号 → IGNORE 静默丢弃该标签，其 mediaTags 关联一并丢失。
+        // 改按 name 路由后由第 2 步 getByName 查回本地真实 tagId，关联不丢。）
         for (i in 0 until tags.length()) {
             val obj = tags.optJSONObject(i) ?: continue
-            val tag = com.qimeng.media.data.db.entity.TagEntity(
-                tagId = obj.optLong("tagId", 0),
-                name = obj.optString("name", ""),
-                createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
+            val name = obj.optString("name", "")
+            if (name.isBlank()) continue
+            db.tagDao().insert(
+                com.qimeng.media.data.db.entity.TagEntity(
+                    tagId = 0,
+                    name = name,
+                    createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
+                )
             )
-            db.tagDao().insert(tag)
         }
         // 2. 恢复文件-标签关联（mediaTags）
         // 导出端写的是 tagName（不是 tagId），导入时按 name 查本地真实 tagId，
@@ -735,8 +780,13 @@ class BackupManager(private val context: Context) {
         val prefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         val likes = data.optJSONArray("likes")
+
+        // v1.12：清理本地残留的点赞键（源端已取消点赞的陈旧 like_count_*/like_date_*），
+        // 避免重复恢复后统计虚高、SharedPreferences 膨胀。
+        val backupLikeKeys = mutableSetOf<String>()
+        val likeCountPrefix = "like_count_"
+        val likeDatePrefix = "like_date_"
         if (likes != null) {
-            // 安全加固：限制条目数，防止恶意备份注入海量键导致 SharedPreferences 膨胀
             var imported = 0
             for (i in 0 until likes.length()) {
                 if (imported >= MAX_LIKE_ENTRIES) {
@@ -749,20 +799,37 @@ class BackupManager(private val context: Context) {
                 val likeCount = obj.optInt("likeCount", 0).coerceAtLeast(0)
                 val lastLikeDate = if (obj.has("lastLikeDate") && !obj.isNull("lastLikeDate")) obj.optString("lastLikeDate", "") else null
                 editor.putInt("like_count_$recordKey", likeCount)
+                backupLikeKeys.add(recordKey)
                 if (lastLikeDate != null) {
                     editor.putString("like_date_$recordKey", lastLikeDate)
+                } else {
+                    editor.remove("like_date_$recordKey")
                 }
                 imported++
             }
         }
+        for (entry in prefs.all.entries) {
+            val key = entry.key as String
+            val recordKey = when {
+                key.startsWith(likeCountPrefix) -> key.removePrefix(likeCountPrefix)
+                key.startsWith(likeDatePrefix) -> key.removePrefix(likeDatePrefix)
+                else -> continue
+            }
+            if (recordKey !in backupLikeKeys) {
+                editor.remove(likeCountPrefix + recordKey).remove(likeDatePrefix + recordKey)
+            }
+        }
+
+        // v1.12：收藏改为合并（本地 ∪ 备份），避免空 favorites 备份清空本地已有收藏。
+        // 旧实现 putStringSet 整体覆盖，向已有数据的库恢复无收藏备份时收藏全丢。
         val favs = data.optJSONArray("favorites")
         if (favs != null) {
-            val favSet = mutableSetOf<String>()
+            val existing = prefs.getStringSet(KEY_FAVORITES, emptySet())?.toMutableSet() ?: mutableSetOf()
             for (i in 0 until favs.length()) {
                 val key = favs.optString(i, "")
-                if (key.isNotBlank()) favSet.add(key)
+                if (key.isNotBlank()) existing.add(key)
             }
-            editor.putStringSet(KEY_FAVORITES, favSet)
+            editor.putStringSet(KEY_FAVORITES, existing)
         }
         editor.apply()
     }
@@ -1327,8 +1394,12 @@ class BackupManager(private val context: Context) {
                     out.flush()
                 } ?: return false
 
-                dir.findFile(name)?.delete()
-                tempFile.renameTo(name)
+                // v1.12：检查 renameTo 返回值——旧实现忽略返回值，rename 失败仍报成功
+                if (!tempFile.renameTo(name)) {
+                    AppLog.e("BackupManager", "writeFile rename failed for $name")
+                    dir.findFile(tempName)?.delete()
+                    return false
+                }
                 true
             } catch (e: Exception) {
                 AppLog.d("BackupManager", "writeFile failed for $name: ${e.message}")
@@ -1358,17 +1429,19 @@ class BackupManager(private val context: Context) {
             // 同步 app数据/
             val appDataDir = ensureSubDirectory(dirUri, "app数据") ?: dirUri
             val count = exportToDirectory(appDataDir, database, appPrefsManager)
-            // 同步 个人偏好/
+            // 同步 个人偏好/（v1.12：汇总子目录成功状态——旧实现忽略该返回值，叠加 writeFile
+            // 假成功时"全量同步完成"提示可能不准确）
+            var prefsOk = true
             val prefsDir = ensureSubDirectory(dirUri, "个人偏好")
             if (prefsDir != null) {
-                exportPersonalPrefsToFile(prefsDir, database)
+                prefsOk = exportPersonalPrefsToFile(prefsDir, database)
             }
             // 同步 格式说明/（仅在目录不存在时写入，避免每次同步覆盖）
             val specDir = ensureSubDirectory(dirUri, "格式说明")
             if (specDir != null) {
                 exportFormatSpec(specDir)
             }
-            count > 0
+            count > 0 && prefsOk
         } catch (e: Exception) {
             AppLog.e("BackupManager", "fullSyncToDirectory failed", e)
             false
@@ -1475,11 +1548,18 @@ class BackupManager(private val context: Context) {
         val items = json.optJSONObject("data")?.optJSONArray("items") ?: return
         for (i in 0 until items.length()) {
             val obj = items.optJSONObject(i) ?: continue
+            val recordKey = obj.optString("recordKey", "")
+            val timeMillis = obj.optLong("timeMillis", 0)
+            val name = obj.optString("name", "")
+            if (recordKey.isBlank() || name.isBlank()) continue
+            // v1.12：主键 autoGenerate 导致 @Upsert 无法去重，重复导入同一备份时间轴标签会翻倍；
+            // 导入前按 (recordKey, timeMillis, name) 查重，已存在则跳过
+            if (db.timelineTagDao().findExisting(recordKey, timeMillis, name) != null) continue
             db.timelineTagDao().upsert(com.qimeng.media.data.db.entity.TimelineTagEntity(
-                recordKey = obj.optString("recordKey", ""),
+                recordKey = recordKey,
                 fileName = obj.optString("fileName", ""),
-                timeMillis = obj.optLong("timeMillis", 0),
-                name = obj.optString("name", ""),
+                timeMillis = timeMillis,
+                name = name,
                 createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
             ))
         }
