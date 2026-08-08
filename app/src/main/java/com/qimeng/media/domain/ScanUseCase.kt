@@ -39,10 +39,13 @@ class ScanUseCase(
         val startedAtMillis = System.currentTimeMillis()
         AppLog.d("Scan", "scanDirectory: start, uri=$uri")
         var scannedMedia = emptyList<MediaFileEntity>()
+        val uriString = uri.toString()
 
         try {
-            val uriString = uri.toString()
-            val mediaFiles = tryMediaStoreScan(uri) ?: mediaScanner.scanTreeFast(uri)
+            val mediaFiles = resolveRecordKeyConflicts(
+                tryMediaStoreScan(uri, uriString) ?: mediaScanner.scanTreeFast(uri, uriString),
+                uriString
+            )
             scannedMedia = mediaFiles
 
             val sourceName = displayName?.trim().takeUnless { it.isNullOrEmpty() }
@@ -53,8 +56,7 @@ class ScanUseCase(
             mediaFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
 
             val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
-            val prefix = if (uriString.endsWith("/")) uriString else "$uriString/"
-            val existingKeys = repository.getRecordKeysByUriPrefix(prefix).toSet()
+            val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
             val staleKeys = existingKeys.filter { it !in scannedKeys }
             if (staleKeys.isNotEmpty()) {
                 repository.deleteMediaAndRefs(staleKeys)
@@ -90,11 +92,13 @@ class ScanUseCase(
         var refreshMedia = emptyList<MediaFileEntity>()
         try {
             val uri = uriString.toUri()
-            val mediaFiles = tryMediaStoreScan(uri) ?: mediaScanner.scanTreeFast(uri)
+            val mediaFiles = resolveRecordKeyConflicts(
+                tryMediaStoreScan(uri, uriString) ?: mediaScanner.scanTreeFast(uri, uriString),
+                uriString
+            )
             refreshMedia = mediaFiles
 
-            val prefix = if (uriString.endsWith("/")) uriString else "$uriString/"
-            val existingKeys = repository.getRecordKeysByUriPrefix(prefix).toSet()
+            val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
 
             val newOrUpdated = mediaFiles.filter { it.recordKey !in existingKeys }
             if (newOrUpdated.isNotEmpty()) {
@@ -150,8 +154,7 @@ class ScanUseCase(
             repository.upsertCosWorks(newCosWorks)
 
             val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
-            val prefix = if (uriString.endsWith("/")) uriString else "$uriString/"
-            val existingCosKeys = repository.getCosRecordKeysByUriPrefix(prefix).toSet()
+            val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
             val staleKeys = existingCosKeys.filter { it !in scannedKeys }
             if (staleKeys.isNotEmpty()) {
                 repository.deleteMediaAndRefs(staleKeys)
@@ -202,8 +205,7 @@ class ScanUseCase(
             val (newCosMedia, cosMediaAuthorMap, newCosWorks) = scanCosMedia(uri, uriString, indexedAtMillis)
             cosRefreshMedia = newCosMedia
 
-            val prefix = if (uriString.endsWith("/")) uriString else "$uriString/"
-            val existingCosKeys = repository.getCosRecordKeysByUriPrefix(prefix).toSet()
+            val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
 
             val newFiles = newCosMedia.filter { it.recordKey !in existingCosKeys }
             if (newFiles.isNotEmpty()) {
@@ -288,10 +290,12 @@ class ScanUseCase(
             for (source in sources) {
                 try {
                     val uri = source.uriString.toUri()
-                    val mediaFiles = tryMediaStoreScan(uri) ?: mediaScanner.scanTreeFast(uri)
+                    val mediaFiles = resolveRecordKeyConflicts(
+                        tryMediaStoreScan(uri, source.uriString) ?: mediaScanner.scanTreeFast(uri, source.uriString),
+                        source.uriString
+                    )
                     autoRefreshMedia.addAll(mediaFiles)
-                    val prefix = if (source.uriString.endsWith("/")) source.uriString else "${source.uriString}/"
-                    val existingKeys = repository.getRecordKeysByUriPrefix(prefix).toSet()
+                    val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
                     val newFiles = mediaFiles.filter { it.recordKey !in existingKeys }
                     if (newFiles.isNotEmpty()) {
                         newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
@@ -311,8 +315,6 @@ class ScanUseCase(
                     val (newCosMedia, cosMediaAuthorMap, newCosWorks) = scanCosMedia(uri, source.uriString, indexedAtMillis)
                     autoRefreshMedia.addAll(newCosMedia)
 
-                    val prefix = if (source.uriString.endsWith("/")) source.uriString else "${source.uriString}/"
-                    val existingCosKeys = repository.getCosRecordKeysByUriPrefix(prefix).toSet()
                     // 全量 upsert 所有扫描到的媒体（不只是新增），以同步 folderName 变化（结构3修复等）
                     newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
                     repository.upsertCosWorks(newCosWorks)
@@ -330,6 +332,7 @@ class ScanUseCase(
                     }
                     crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
                     val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
+                    val existingCosKeys = repository.getCosRecordKeysBySourceUri(source.uriString).toSet()
                     val staleKeys = existingCosKeys.filter { it !in scannedKeys }
                     if (staleKeys.isNotEmpty()) {
                         repository.deleteMediaAndRefs(staleKeys)
@@ -349,6 +352,19 @@ class ScanUseCase(
     /** 删除扫描源并清理孤立文件 */
     suspend fun deleteScanSource(uriString: String) {
         repository.deleteScanSource(uriString)
+
+        // v1.12：优先按 sourceUri 精确删除（扫描时随文件入库的归属 tree URI）。
+        // 旧版用文件 URI 前缀匹配扫描源 tree URI，因命名空间不同（content://media /
+        // document / tree）恒匹配失败，导致删除源后文件残留、且启动清理误删全部文件。
+        val sourceKeys = repository.getRecordKeysBySourceUri(uriString)
+        if (sourceKeys.isNotEmpty()) {
+            com.qimeng.media.core.AppLog.d("ScanUseCase", "deleteScanSource: uri=$uriString, sourceKeys=${sourceKeys.size}")
+            repository.deleteMediaAndRefs(sourceKeys)
+            repository.deleteOrphanAuthors()
+            return
+        }
+
+        // 回退：sourceUri 为 null 的旧版数据，用 URI 前缀匹配（仅对 SAF document 文件可命中）
         val remainingSources = repository.getScanSources().filter { !it.isBackupDirectory }
         val activePrefixes = remainingSources.map { src ->
             if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
@@ -357,8 +373,8 @@ class ScanUseCase(
         val orphanKeys = if (activePrefixes.isEmpty()) {
             allKeysAndUris.map { it.recordKey }
         } else {
-            allKeysAndUris.filter { (_, uri) ->
-                activePrefixes.none { prefix -> uri.startsWith(prefix) }
+            allKeysAndUris.filter { (_, uri, sourceUri) ->
+                sourceUri == null && activePrefixes.none { prefix -> uri.startsWith(prefix) }
             }.map { it.recordKey }
         }
         com.qimeng.media.core.AppLog.d("ScanUseCase", "deleteScanSource: uri=$uriString, remaining=${activePrefixes.size}, allNonCos=${allKeysAndUris.size}, orphans=${orphanKeys.size}")
@@ -368,7 +384,7 @@ class ScanUseCase(
         }
     }
 
-    /** 删除 COS 扫描源 */
+    /** 删除 COS 扫描源（v1.12：按 sourceUri 精确删除，避免误删其他源作品） */
     suspend fun deleteCosScanSource(uriString: String) {
         com.qimeng.media.core.AppLog.d("ScanUseCase", "deleteCosScanSource: uri=$uriString")
         repository.deleteCosScanSource(uriString)
@@ -378,15 +394,15 @@ class ScanUseCase(
     suspend fun cleanupOrphanFiles() {
         // 清理非COS孤立文件
         val remainingSources = repository.getScanSources().filter { !it.isBackupDirectory && !it.isCosDirectory }
-        val activePrefixes = remainingSources.map { src ->
-            if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
-        }
+        val activeUris = remainingSources.map { it.uriString }.toSet()
         val allKeysAndUris = repository.getNonCosKeysAndUris()
-        val orphanKeys = if (activePrefixes.isEmpty()) {
-            allKeysAndUris.map { it.recordKey }
+        val orphanKeys = if (activeUris.isEmpty()) {
+            // 无扫描源：新数据（sourceUri 非空）全部视为孤儿；旧数据（sourceUri null）保守保留
+            allKeysAndUris.filter { it.sourceUri != null }.map { it.recordKey }
         } else {
-            allKeysAndUris.filter { (_, uri) ->
-                activePrefixes.none { prefix -> uri.startsWith(prefix) }
+            allKeysAndUris.filter { (_, _, sourceUri) ->
+                // 优先按归属列精确判断；null 表示旧版数据，无法反推归属，保守保留不删
+                sourceUri != null && sourceUri !in activeUris
             }.map { it.recordKey }
         }
         if (orphanKeys.isNotEmpty()) {
@@ -397,15 +413,24 @@ class ScanUseCase(
 
         // 清理COS孤立文件（扫描源已删除但作品/文件残留）
         val remainingCosSources = repository.getScanSources().filter { it.isCosDirectory }
-        val activeCosUris = remainingCosSources.map { src ->
-            if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
-        }
+        val activeCosUris = remainingCosSources.map { it.uriString }.toSet()
         if (activeCosUris.isEmpty()) {
-            // 没有COS扫描源，清理所有COS数据
-            val allCosKeys = repository.getCosKeysAndUris().map { it.recordKey }
+            // 没有COS扫描源，清理所有新版本COS数据；旧数据（sourceUri null）保守保留
+            val allCosKeys = repository.getCosKeysAndUris()
+                .filter { it.sourceUri != null }
+                .map { it.recordKey }
             if (allCosKeys.isNotEmpty()) {
                 com.qimeng.media.core.AppLog.d("ScanUseCase", "cleanupOrphanFiles: cos orphans=${allCosKeys.size} (no cos sources)")
                 repository.deleteMediaAndRefs(allCosKeys)
+                repository.deleteOrphanAuthors()
+            }
+        } else {
+            val orphanCosKeys = repository.getCosKeysAndUris()
+                .filter { (_, _, sourceUri) -> sourceUri != null && sourceUri !in activeCosUris }
+                .map { it.recordKey }
+            if (orphanCosKeys.isNotEmpty()) {
+                com.qimeng.media.core.AppLog.d("ScanUseCase", "cleanupOrphanFiles: cos orphans=${orphanCosKeys.size} (source mismatch)")
+                repository.deleteMediaAndRefs(orphanCosKeys)
                 repository.deleteOrphanAuthors()
             }
         }
@@ -449,10 +474,47 @@ class ScanUseCase(
     }
 
     /** 尝试使用 MediaStore 快速扫描 */
-    private fun tryMediaStoreScan(uri: Uri): List<MediaFileEntity>? {
+    private fun tryMediaStoreScan(uri: Uri, sourceUri: String): List<MediaFileEntity>? {
         val filePath = mediaStoreScanner.safUriToFilePath(uri) ?: return null
-        val result = mediaStoreScanner.queryByFolderPath(filePath)
+        val result = mediaStoreScanner.queryByFolderPath(filePath, sourceUri)
         return result.ifEmpty { null }
+    }
+
+    /**
+     * 跨源 recordKey 冲突重映射（v1.12 修复）。
+     *
+     * 旧版判重仅限单次扫描的候选集内：两个扫描源各有同名文件（如各有一个 "1.jpg"）时，
+     * 各自生成裸文件名 key，@PrimaryKey 的 upsert 相互整行覆盖，被覆盖文件消失且统计/
+     * 作者关联丢失。这里在写入前把与**其他源**已占用 key 冲突的文件追加 pathHash 区分，
+     * 保证同一 key 只属于一个物理文件。
+     *
+     * @param mediaFiles 本次扫描的文件（sourceUri 已填充）
+     * @param sourceUri 当前扫描源的 tree URI
+     */
+    private suspend fun resolveRecordKeyConflicts(
+        mediaFiles: List<MediaFileEntity>,
+        sourceUri: String
+    ): List<MediaFileEntity> {
+        if (mediaFiles.isEmpty()) return mediaFiles
+        // 库中 (key → 归属 sourceUri 集合)：识别跨源同名碰撞。sourceUri 为 null 的旧版
+        // 数据无法判断归属，保守视为本源（不触发重映射，避免旧数据统计/历史丢失）。
+        val keyOwnerUris = (repository.getNonCosKeysAndUris() + repository.getCosKeysAndUris())
+            .groupBy({ it.recordKey }, { it.sourceUri })
+            .mapValues { (_, uris) -> uris.filterNotNull().toSet() }
+        val usedKeys = mutableSetOf<String>()
+        return mediaFiles.map { file ->
+            val owners = keyOwnerUris[file.recordKey].orEmpty()
+            // 碰撞：库中该 key 已被【其他源】占用（sourceUri 非空且 ≠ 本次源），且本次扫描内未处理过
+            if (owners.isNotEmpty() && owners.none { it == sourceUri } && file.recordKey !in usedKeys) {
+                val newKey = "${file.recordKey} @ ${file.pathHash.take(8)}"
+                AppLog.d("Scan", "resolveRecordKeyConflicts: '${file.recordKey}' -> '$newKey' (跨源同名)")
+                usedKeys.add(file.recordKey)
+                file.copy(recordKey = newKey, isDuplicateName = true)
+            } else {
+                usedKeys.add(file.recordKey)
+                file
+            }
+        }
     }
 
     /** COS 媒体扫描公共方法 */
@@ -464,21 +526,34 @@ class ScanUseCase(
         val filePath = mediaStoreScanner.safUriToFilePath(uri)
         AppLog.d("CosScan", "scanCosMedia: safUriToFilePath=$filePath, uri=$uriString")
         val cosResult = if (filePath != null) {
-            mediaStoreScanner.queryCosFolder(filePath)
+            mediaStoreScanner.queryCosFolder(filePath, uriString)
         } else null
         AppLog.d("CosScan", "scanCosMedia: MediaStore hit=${cosResult != null}, files=${cosResult?.mediaFiles?.size ?: 0}, authors=${cosResult?.authorFileMap?.keys?.joinToString(",") ?: "N/A"}")
 
         if (cosResult != null) {
-            val works = cosResult.works.map { work ->
-                CosWorkEntity(authorName = work.authorName, workName = work.workName, folderUri = work.folderPath, fileCount = cosResult.authorFileMap[work.authorName]?.size ?: 0, indexedAtMillis = indexedAtMillis)
+            val resolvedMedia = resolveRecordKeyConflicts(cosResult.mediaFiles, uriString)
+            val resolvedByUri = resolvedMedia.associateBy { it.uriString }
+            // 重映射后 authorFileMap 里的文件引用同步替换为新 key 的对象，保证 crossRefs 用新 key
+            val resolvedMap = cosResult.authorFileMap.mapValues { (_, files) ->
+                files.mapNotNull { resolvedByUri[it.uriString] }
             }
-            return Triple(cosResult.mediaFiles, cosResult.authorFileMap, works)
+            val works = cosResult.works.map { work ->
+                CosWorkEntity(
+                    authorName = work.authorName,
+                    workName = work.workName,
+                    folderUri = work.folderPath,
+                    fileCount = cosResult.authorFileMap[work.authorName]?.size ?: 0,
+                    sourceUri = uriString,
+                    indexedAtMillis = indexedAtMillis
+                )
+            }
+            return Triple(resolvedMedia, resolvedMap, works)
         }
 
         val root = DocumentFile.fromTreeUri(application, uri)
             ?: return Triple(emptyList(), emptyMap(), emptyList())
         AppLog.d("CosScan", "SAF fallback: scanning entire tree, rootUri=$uriString")
-        val allSafMedia = mediaScanner.scanTreeFast(root.uri).map { it.copy(isCosFile = true) }
+        val allSafMedia = mediaScanner.scanTreeFast(root.uri, uriString).map { it.copy(isCosFile = true) }
         AppLog.d("CosScan", "SAF fallback: found ${allSafMedia.size} files")
 
         allSafMedia.take(3).forEach { file ->
@@ -547,7 +622,13 @@ class ScanUseCase(
         val updatedWorks = safWorks.map { work ->
             work.copy(fileCount = safAuthorMap[work.authorName]?.size ?: 0)
         }
-        return Triple(updatedAllSafMedia, safAuthorMap, updatedWorks)
+        // 跨源 recordKey 冲突重映射（与常规源共享 media_files 主键表）
+        val resolvedMedia = resolveRecordKeyConflicts(updatedAllSafMedia, uriString)
+        val resolvedByUri = resolvedMedia.associateBy { it.uriString }
+        val resolvedMap = safAuthorMap.mapValues { (_, files) ->
+            files.mapNotNull { resolvedByUri[it.uriString] }
+        }
+        return Triple(resolvedMedia, resolvedMap, updatedWorks)
     }
 
     /** 生成 authorId */

@@ -34,10 +34,14 @@ object ScanUtils {
 
     /**
      * 将候选列表转换为 MediaFileEntity 列表，处理重复文件名的 recordKey 生成。
+     *
+     * @param sourceUri 归属扫描源的 tree URI（如 content://.../tree/primary:COS）。
+     *   随文件一起入库，供删除扫描源/启动清理按归属精确匹配（v1.12）。
      */
     fun buildEntities(
         candidates: List<MediaCandidate>,
-        indexedAtMillis: Long
+        indexedAtMillis: Long,
+        sourceUri: String
     ): List<MediaFileEntity> {
         val byFileName = candidates.groupBy { it.fileName }
         val folderCountsByFileName = byFileName.mapValues { (_, items) ->
@@ -75,6 +79,7 @@ object ScanUtils {
                 height = candidate.height,
                 durationMillis = candidate.durationMillis,
                 isDuplicateName = isDuplicateName,
+                sourceUri = sourceUri,
                 indexedAtMillis = indexedAtMillis
             )
         }

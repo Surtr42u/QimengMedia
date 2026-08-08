@@ -42,7 +42,7 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
         ScanSourceEntity::class,
         CosWorkEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -78,13 +78,32 @@ abstract class AppDatabase : RoomDatabase() {
             it.execSQL("CREATE INDEX IF NOT EXISTS index_media_files_uriString ON media_files(uriString)")
         }
 
+        // v1.12：media_files 增 sourceUri 归属列（扫描源 tree URI），根治旧版 URI 前缀匹配
+        // 跨命名空间（content://media / document / tree）恒失败导致的启动误删全库问题。
+        // sourceUri 为 null 表示旧版本数据，无法反推归属，清理逻辑对 null 保守保留。
+        private val MIGRATION_3_4 = androidx.room.migration.Migration(3, 4) {
+            it.execSQL("ALTER TABLE media_files ADD COLUMN sourceUri TEXT")
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_media_files_sourceUri ON media_files(sourceUri)")
+        }
+
+        // v1.12：cos_works 增 sourceUri 归属列，支持多 COS 源共存。
+        // 唯一索引从 (authorName, workName) 重构为 (sourceUri, authorName, workName)：
+        // SQLite 需删旧索引再建新索引（同名冲突时无法直接重建为不同定义）。
+        private val MIGRATION_4_5 = androidx.room.migration.Migration(4, 5) {
+            it.execSQL("ALTER TABLE cos_works ADD COLUMN sourceUri TEXT NOT NULL DEFAULT ''")
+            it.execSQL("DROP INDEX IF EXISTS index_cos_works_authorName_workName")
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_cos_works_authorName_workName ON cos_works(authorName, workName)")
+            it.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_cos_works_sourceUri_authorName_workName ON cos_works(sourceUri, authorName, workName)")
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_cos_works_folderUri ON cos_works(folderUri)")
+        }
+
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build().also { instance = it }
         }
     }

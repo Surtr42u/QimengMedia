@@ -18,6 +18,8 @@ gradle.properties
 *.log
 *.txt
 !gradle/wrapper/gradle-wrapper.properties
+# CMakeLists.txt 是 NDK 构建必需文件（libspng），*.txt 规则不得误伤它
+!app/src/main/cpp/CMakeLists.txt
 perf_monitor/
 
 # 签名文件（绝不能提交）

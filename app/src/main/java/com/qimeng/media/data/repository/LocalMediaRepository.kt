@@ -43,6 +43,10 @@ interface LocalMediaRepository {
     suspend fun getAllUriStrings(): List<String>
     suspend fun getRecordKeysByUriPrefix(prefix: String): List<String>
     suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String>
+    /** v1.12：按扫描源 tree URI 精确查询常规文件归属（删除源/启动清理用） */
+    suspend fun getRecordKeysBySourceUri(sourceUri: String): List<String>
+    /** v1.12：按扫描源 tree URI 精确查询 COS 文件归属（删除源/启动清理用） */
+    suspend fun getCosRecordKeysBySourceUri(sourceUri: String): List<String>
     suspend fun getNonCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri>
     suspend fun getCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri>
     suspend fun getNonCosKeysAndFileNames(): List<MediaFileDao.NonCosKeyFileName>

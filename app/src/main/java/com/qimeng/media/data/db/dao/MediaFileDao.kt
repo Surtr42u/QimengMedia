@@ -59,13 +59,13 @@ interface MediaFileDao {
     @Query("SELECT recordKey FROM media_files WHERE uriString LIKE :prefix || '%' AND isCosFile = 1")
     suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String>
 
-    @Query("SELECT recordKey, uriString FROM media_files WHERE isCosFile = 0")
+    @Query("SELECT recordKey, uriString, sourceUri FROM media_files WHERE isCosFile = 0")
     suspend fun getNonCosKeysAndUris(): List<NonCosKeyUri>
 
-    @Query("SELECT recordKey, uriString FROM media_files WHERE isCosFile = 1")
+    @Query("SELECT recordKey, uriString, sourceUri FROM media_files WHERE isCosFile = 1")
     suspend fun getCosKeysAndUris(): List<NonCosKeyUri>
 
-    data class NonCosKeyUri(val recordKey: String, val uriString: String)
+    data class NonCosKeyUri(val recordKey: String, val uriString: String, val sourceUri: String?)
 
     data class NonCosKeyFileName(val recordKey: String, val fileName: String)
 
@@ -77,6 +77,26 @@ interface MediaFileDao {
 
     @Query("SELECT recordKey FROM media_files WHERE isCosFile = 1")
     suspend fun getAllCosRecordKeys(): List<String>
+
+    @Query("SELECT recordKey FROM media_files WHERE isCosFile = 0")
+    suspend fun getAllNonCosRecordKeys(): List<String>
+
+    /**
+     * 按扫描源 tree URI 精确查询归属文件（v1.12 新增）。
+     * 用于删除扫描源/启动清理：比旧的 URI 前缀匹配（content://media 等文件 URI 与
+     * tree URI 命名空间不同恒匹配失败）可靠。
+     * [sourceUri] 为 null 的旧版数据行不匹配（保守保留）。
+     */
+    @Query("SELECT recordKey FROM media_files WHERE sourceUri = :sourceUri")
+    suspend fun getRecordKeysBySourceUri(sourceUri: String): List<String>
+
+    /** v1.12：按扫描源 tree URI 精确查询归属 COS 文件。 */
+    @Query("SELECT recordKey FROM media_files WHERE sourceUri = :sourceUri AND isCosFile = 1")
+    suspend fun getCosRecordKeysBySourceUri(sourceUri: String): List<String>
+
+    /** v1.12：按扫描源 tree URI 删除归属文件（供清理孤儿文件使用）。 */
+    @Query("DELETE FROM media_files WHERE sourceUri = :sourceUri")
+    suspend fun deleteBySourceUri(sourceUri: String)
 
     @Query("SELECT recordKey FROM media_files")
     suspend fun getAllRecordKeys(): List<String>

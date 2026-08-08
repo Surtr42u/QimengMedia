@@ -95,6 +95,12 @@ class DefaultLocalMediaRepository(
     override suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String> =
         mediaFileDao.getCosRecordKeysByUriPrefix(prefix)
 
+    override suspend fun getRecordKeysBySourceUri(sourceUri: String): List<String> =
+        mediaFileDao.getRecordKeysBySourceUri(sourceUri)
+
+    override suspend fun getCosRecordKeysBySourceUri(sourceUri: String): List<String> =
+        mediaFileDao.getCosRecordKeysBySourceUri(sourceUri)
+
     override suspend fun getNonCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri> =
         mediaFileDao.getNonCosKeysAndUris()
 
@@ -286,20 +292,35 @@ class DefaultLocalMediaRepository(
         val allOrphanKeys = mutableListOf<String>()
         database.withTransaction {
             scanSourceDao.deleteByUri(uriString)
-            val remainingCosSources = scanSourceDao.getCosSources()
-            val activeCosUris = remainingCosSources.map { src ->
-                if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
+            // v1.12：按 sourceUri 精确匹配归属作品与文件。
+            // 旧版用 folderUri（文件系统路径）与扫描源 content URI 前缀匹配恒失败，
+            // 删除任一 COS 源会清空所有源作品；这里只删除该源自己的作品。
+            val sourceWorks = database.cosWorkDao().getBySourceUri(uriString)
+            database.cosWorkDao().deleteBySourceUri(uriString)
+
+            // 删除该源归属的媒体文件（含级联统计/历史/标签/关联）
+            val orphanKeys = mediaFileDao.getCosRecordKeysBySourceUri(uriString)
+            if (orphanKeys.isNotEmpty()) {
+                allOrphanKeys.addAll(orphanKeys)
+                authorDao.deleteCrossRefsByRecordKeys(orphanKeys)
+                database.tagDao().deleteCrossRefsByRecordKeys(orphanKeys)
+                viewStatsDao.deleteByRecordKeys(orphanKeys)
+                viewHistoryDao.deleteByRecordKeys(orphanKeys)
+                database.timelineTagDao().deleteByRecordKeys(orphanKeys)
+                mediaFileDao.deleteByRecordKeys(orphanKeys)
             }
-            val allCosWorks = database.cosWorkDao().getAll()
-            val inactiveWorks = if (activeCosUris.isEmpty()) {
-                allCosWorks
-            } else {
-                allCosWorks.filter { work ->
+
+            // 兼容旧版数据（sourceUri 为 null）：按 folderUri 前缀兜底清理
+            val legacyWorks = if (sourceWorks.isEmpty()) {
+                // 旧版未写入 sourceUri 时 getBySourceUri 为空，退回到前缀匹配兜底
+                val activeCosUris = scanSourceDao.getCosSources().map { src ->
+                    if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
+                }
+                database.cosWorkDao().getAll().filter { work ->
                     activeCosUris.none { prefix -> work.folderUri.startsWith(prefix) }
                 }
-            }
-            // 轻量查询：只获取 recordKey，避免加载全量 MediaFileEntity
-            for (work in inactiveWorks) {
+            } else emptyList()
+            for (work in legacyWorks) {
                 val prefix = if (work.folderUri.endsWith("/")) work.folderUri else "${work.folderUri}/"
                 val orphanKeys = mediaFileDao.getCosRecordKeysByUriPrefixLight(prefix)
                 if (orphanKeys.isNotEmpty()) {
@@ -312,8 +333,10 @@ class DefaultLocalMediaRepository(
                     mediaFileDao.deleteByRecordKeys(orphanKeys)
                 }
             }
-            val activeUris = activeCosUris.map { it.trimEnd('/') }
-            database.cosWorkDao().deleteByInactiveUris(activeUris)
+            if (legacyWorks.isNotEmpty()) {
+                val activeUris = scanSourceDao.getCosSources().map { it.uriString.trimEnd('/') }
+                database.cosWorkDao().deleteByInactiveUris(activeUris)
+            }
             authorDao.deleteOrphanCosAuthors()
         }
         // 事务外清理 SharedPreferences（点赞、收藏）
@@ -343,13 +366,16 @@ class DefaultLocalMediaRepository(
     }
 
     override suspend fun updateBrowseSeconds(recordKey: String, seconds: Long) {
-        val existing = viewStatsDao.getByRecordKey(recordKey) ?: return
-        viewStatsDao.upsert(
-            existing.copy(
-                totalBrowseSeconds = existing.totalBrowseSeconds + seconds,
-                updatedAtMillis = System.currentTimeMillis()
+        // 读-改-写包事务，避免快速连续退出详情页时并发累计丢失更新
+        database.withTransaction {
+            val existing = viewStatsDao.getByRecordKey(recordKey) ?: return@withTransaction
+            viewStatsDao.upsert(
+                existing.copy(
+                    totalBrowseSeconds = existing.totalBrowseSeconds + seconds,
+                    updatedAtMillis = System.currentTimeMillis()
+                )
             )
-        )
+        }
     }
 
     override suspend fun updateMediaMetadata(recordKey: String, width: Int?, height: Int?, durationMillis: Long?) {

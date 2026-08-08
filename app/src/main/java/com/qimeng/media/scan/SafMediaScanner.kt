@@ -15,8 +15,10 @@ class SafMediaScanner(private val context: Context) {
     /**
      * 快速扫描目录树，跳过图片尺寸和视频元数据解码（仅读取视频时长）。
      * 当前唯一使用的扫描方法，scanTree（含完整元数据解码）已移除。
+     *
+     * @param sourceUri 归属扫描源的 tree URI（随文件入库，供按源删除/清理，v1.12）
      */
-    suspend fun scanTreeFast(rootUri: Uri): List<MediaFileEntity> = withContext(Dispatchers.IO) {
+    suspend fun scanTreeFast(rootUri: Uri, sourceUri: String): List<MediaFileEntity> = withContext(Dispatchers.IO) {
         val root = DocumentFile.fromTreeUri(context, rootUri)
         require(root != null && root.isDirectory) { "无法读取选择的文件夹" }
         val rootName = root.name?.ifBlank { null } ?: "Root"
@@ -24,7 +26,7 @@ class SafMediaScanner(private val context: Context) {
         val candidates = buildList {
             scanDirectoryFast(directory = root, folderName = rootName, output = this)
         }
-        ScanUtils.buildEntities(candidates, indexedAtMillis)
+        ScanUtils.buildEntities(candidates, indexedAtMillis, sourceUri)
     }
 
     private fun scanDirectoryFast(

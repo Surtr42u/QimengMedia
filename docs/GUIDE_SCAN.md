@@ -185,6 +185,8 @@ COS 目录的三种文件夹结构（作者→文件、作者→作品→文件�
 - MediaStore URI：`content://media/external/images/media/123`
 - SAF URI：`content://com.android.externalstorage.documents/tree/primary:XXX/document/primary:XXX/文件.jpg`
 - 两种 URI 都存储在 `uriString` 字段中，**不可混用前缀匹配**
+- **扫描源归属（`sourceUri`，v1.12）**：每次扫描把扫描源的 tree URI（`content://.../tree/...`）随文件写入 `media_files.sourceUri`。删除扫描源/启动清理孤儿文件时按此列精确匹配归属，规避旧版"用文件 URI 前缀匹配扫描源 tree URI"因命名空间不同恒失败导致的误删。旧版本迁移数据该列为 null，清理时保守保留不删
+- **跨源 recordKey 冲突**（v1.12）：不同扫描源同名文件（各有一个 `1.jpg`）生成相同裸文件名 key，`@Upsert` 主键会整行互相覆盖。`resolveRecordKeyConflicts` 在写入前检测库中该 key 已被其他源占用时，为本次文件追加 pathHash 生成新 key（`1.jpg @ a1b2c3d4`）
 
 ### MediaStore 查询限制
 
@@ -245,10 +247,10 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 删除扫描源时，系统自动执行以下清理：
 
 1. 删除 `scan_sources` 表中对应记录。
-2. 获取所有剩余非备份扫描源，通过 URI 前缀匹配判断每个媒体文件的归属。
-3. 不属于任何剩余扫描源的媒体文件从 `media_files` 表中删除。
-4. 级联删除对应的 `author_media_cross_refs` 和 `media_tag_cross_refs`。
-5. 常规扫描源清理孤立作者用 `deleteOrphanAuthors()`，COS 扫描源用 `deleteOrphanCosAuthors()`。
+2. **按 `media_files.sourceUri` 精确匹配**（v1.12）删除归属该源的媒体文件及其关联（作者关联、标签关联、统计、历史、时间轴标签）。
+3. 旧版数据（sourceUri 为 null，无法反推归属）回退到 URI 前缀匹配兜底清理；启动清理孤儿文件时对 null 保守保留，避免误删。
+4. 常规扫描源清理孤立作者用 `deleteOrphanAuthors()`，COS 扫描源用 `deleteOrphanCosAuthors()`。
+5. 删除 COS 扫描源时按 `cos_works.sourceUri` 只删除该源的作品与文件，不影响其他 COS 源（v1.12 修复旧版 folderUri 前缀匹配恒失败、删除任一 COS 源清空所有源作品的问题）。
 
 统计和历史数据保留不删除，以便重新添加扫描源后恢复。
 
@@ -280,4 +282,4 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 - Uri 失效时提示重新授权
 - Android 16+ 仍优先 SAF，不依赖 READ_EXTERNAL_STORAGE 旧逻辑（见 GUIDE_ANDROID_COMPAT.md）
 
-> 最后更新：2026-06-25
+> 最后更新：2026-08-08

@@ -140,12 +140,11 @@ class MediaStoreObserver(
                     continue
                 }
 
-                val mediaFiles = mediaStoreScanner.queryByFolderPath(filePath)
+                val mediaFiles = mediaStoreScanner.queryByFolderPath(filePath, source.uriString)
                 if (mediaFiles.isEmpty()) continue
 
-                // 增量更新
-                val prefix = if (source.uriString.endsWith("/")) source.uriString else "${source.uriString}/"
-                val existingKeys = repository.getRecordKeysByUriPrefix(prefix).toSet()
+                // 增量更新（v1.12：按 sourceUri 精确匹配，避免 URI 前缀跨命名空间失效）
+                val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
 
                 val newOrUpdated = mediaFiles.filter { it.recordKey !in existingKeys }
                 if (newOrUpdated.isNotEmpty()) {

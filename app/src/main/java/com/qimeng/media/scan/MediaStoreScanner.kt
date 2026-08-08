@@ -25,9 +25,10 @@ class MediaStoreScanner(private val context: Context) {
      * 相比逐作品文件夹查询（188次 MediaStore 查询），此方法只需 2 次查询（图片+视频）。
      *
      * @param rootFolderPath COS 根目录的文件系统路径
+     * @param sourceUri 归属扫描源的 tree URI（随文件入库，供按源删除/清理，v1.12）
      * @return CosScanResult 包含所有媒体文件、作者→文件映射、作品列表
      */
-    fun queryCosFolder(rootFolderPath: String): CosScanResult? {
+    fun queryCosFolder(rootFolderPath: String, sourceUri: String): CosScanResult? {
         val normalizedPath = rootFolderPath.trimEnd('/')
         val indexedAtMillis = System.currentTimeMillis()
         AppLog.d("CosScan", "queryCosFolder: path=$normalizedPath")
@@ -79,11 +80,13 @@ class MediaStoreScanner(private val context: Context) {
         val rootPrefix = "$normalizedPath/"
         val authorFileMap = mutableMapOf<String, MutableList<MediaFileEntity>>()
         val works = mutableListOf<CosWorkInfo>()
+        // 去重 set：对齐 SAF 分支写法，避免 O(文件数×作品数) 线性扫描
+        val seenWorks = mutableSetOf<String>()
         // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
         val workNameByUri = mutableMapOf<String, String>()
 
         // 先构建所有 entity
-        val entities = ScanUtils.buildEntities(candidates, indexedAtMillis).map { it.copy(isCosFile = true) }
+        val entities = ScanUtils.buildEntities(candidates, indexedAtMillis, sourceUri).map { it.copy(isCosFile = true) }
 
         // 建立 uriString → candidate 映射，避免 O(n²) 查找
         val candidateByUri = candidates.associateBy { it.uriString }
@@ -105,9 +108,9 @@ class MediaStoreScanner(private val context: Context) {
             workNameByUri[candidate.uriString] = workName
             val workPath = if (segments.size > 2) "$rootPrefix$authorName/$workName" else "$rootPrefix$authorName"
 
-            // 去重添加作品
-            if (works.none { it.authorName == authorName && it.workName == workName }) {
-                works.add(CosWorkInfo(authorName = authorName, workName = workName, folderPath = workPath))
+            // 去重添加作品（set 去重对齐 SAF 分支，替代 O(N×M) none{} 线性扫描）
+            if (seenWorks.add("$authorName/$workName")) {
+                works.add(CosWorkInfo(authorName = authorName, workName = workName, folderPath = workPath, sourceUri = sourceUri))
             }
         }
 
@@ -139,15 +142,17 @@ class MediaStoreScanner(private val context: Context) {
     data class CosWorkInfo(
         val authorName: String,
         val workName: String,
-        val folderPath: String
+        val folderPath: String,
+        val sourceUri: String
     )
 
     /**
      * 查询指定目录路径下的所有媒体文件。
      * @param folderPath 文件系统路径，如 "/storage/emulated/0/Pictures/某文件夹"
+     * @param sourceUri 归属扫描源的 tree URI（随文件入库，供按源删除/清理，v1.12）
      * @return 匹配的 MediaFileEntity 列表
      */
-    fun queryByFolderPath(folderPath: String): List<MediaFileEntity> {
+    fun queryByFolderPath(folderPath: String, sourceUri: String): List<MediaFileEntity> {
         val normalizedPath = folderPath.trimEnd('/')
         val indexedAtMillis = System.currentTimeMillis()
 
@@ -186,7 +191,7 @@ class MediaStoreScanner(private val context: Context) {
             output = candidates
         )
 
-        return ScanUtils.buildEntities(candidates, indexedAtMillis)
+        return ScanUtils.buildEntities(candidates, indexedAtMillis, sourceUri)
     }
 
     private fun queryMedia(

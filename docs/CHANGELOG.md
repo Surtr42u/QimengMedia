@@ -2,6 +2,22 @@
 
 本文件归档项目历次代码审查、重构、性能优化的详细记录。当前有效的规则、备案、共享组件表见 `GUIDE_CODE_MAINTENANCE.md`。
 
+## 全项目审查与 P0 数据安全修复（2026-08-08）
+
+基于 22 代理（11 主审查 + 11 复核）全项目只读审查，确认 4 项灾难级缺陷并完成修复，DB schema v3→v5。
+
+| 类别 | 问题 | 修复方式 |
+|---|---|---|
+| 数据丢失（灾难级） | 启动清理 `cleanupOrphanFiles` 用文件 URI 前缀匹配扫描源 tree URI，MediaStore（`content://media`）与 SAF（`document`）文件恒匹配失败 → 全部非 COS 文件被判孤儿删除，首次扫描后重启即全清库 | `media_files` 新增 `sourceUri` 归属列（v3→v4），扫描时随文件写入扫描源 tree URI；清理/删除按归属列精确匹配；旧数据（null）保守保留 |
+| 数据丢失（灾难级） | 跨源同名文件 recordKey 相同，`@Upsert` 主键整行互相覆盖，被覆盖文件消失 | `resolveRecordKeyConflicts` 写入前检测库中该 key 已被其他源占用时追加 pathHash 生成新 key |
+| 数据丢失（灾难级） | 删除 COS 源用 folderUri（文件系统路径）与扫描源 content URI 前缀匹配恒失败 → 删除任一 COS 源清空所有源 cos_works，且本源媒体文件删不掉 | `cos_works` 新增 `sourceUri`（v4→v5），唯一索引重构为 `(sourceUri, authorName, workName)` 支持多 COS 源共存；删除按归属列精确匹配 |
+| 构建断裂 | `.gitignore` 的 `*.txt` 误伤 `app/src/main/cpp/CMakeLists.txt`，克隆仓库后 assembleDebug 直接失败 | .gitignore 增加 `!app/src/main/cpp/CMakeLists.txt` 白名单并入库 |
+| 数据一致性 | `updateBrowseSeconds` 读-改-写未包事务，快速退出详情页并发丢更新 | `withTransaction` 包裹 |
+| 扫描正确性 | `MediaStoreScanner.queryCosFolder` 作品去重 O(N×M) 线性扫描（SAF 分支已用 Set） | 对齐 SAF 分支改 `seenWorks` Set 去重 |
+| 扫描正确性 | MediaStoreObserver/ScanUseCase 全部前缀匹配改按 `sourceUri` 精确匹配 | 上述各处替换 |
+
+> 最后更新：2026-08-08
+
 ## 已完成重构项（2026-06-17）
 
 | 文件/方法 | 重构前 CC | 重构后 CC | 重构方式 |
