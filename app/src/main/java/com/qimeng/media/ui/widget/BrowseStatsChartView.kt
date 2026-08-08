@@ -34,13 +34,7 @@ class BrowseStatsChartView @JvmOverloads constructor(
 
     private var entries: List<BarEntry> = emptyList()
 
-    // 主题色（在 onDraw 中读取，确保主题切换后刷新）
-    private val barColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorPrimary) }
-    private val textColorPrimary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextPrimary) }
-    private val textColorSecondary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextSecondary) }
-    private val surfaceColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorSurface) }
-
-    // 画笔
+    // 画笔（颜色不在此初始化：主题色在 onDraw 中动态解析，见 v1.12 修复说明）
     private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -54,6 +48,10 @@ class BrowseStatsChartView @JvmOverloads constructor(
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 13f.dp(context)
         textAlign = Paint.Align.CENTER
+    }
+    // v1.12：柱条背景轨道画笔提升为成员复用，替代原 onDraw 内每行 new Paint 的分配
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
     }
 
     // 布局参数（dp）
@@ -89,8 +87,16 @@ class BrowseStatsChartView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
 
+        // v1.12 修复：主题色改为 onDraw 内动态解析（Context 为运行期主题上下文），
+        // MainActivity 声明 configChanges=uiMode，系统明暗切换不重建 View，旧 lazy 缓存色不刷新
+        val barColor = context.resolveThemeColor(R.attr.qmColorPrimary)
+        val textColorPrimary = context.resolveThemeColor(R.attr.qmColorTextPrimary)
+        val textColorSecondary = context.resolveThemeColor(R.attr.qmColorTextSecondary)
+        val surfaceColor = context.resolveThemeColor(R.attr.qmColorSurface)
+
+        emptyPaint.color = textColorSecondary
+
         if (entries.isEmpty()) {
-            emptyPaint.color = textColorSecondary
             canvas.drawText("暂无浏览数据", w / 2f, h / 2f, emptyPaint)
             return
         }
@@ -112,6 +118,8 @@ class BrowseStatsChartView @JvmOverloads constructor(
         textPaint.color = textColorPrimary
         valuePaint.color = textColorSecondary
         barPaint.color = barColor
+        // 柱条背景轨道使用 surface 色（低对比度），颜色在 onDraw 内随主题刷新
+        trackPaint.color = surfaceColor
 
         entries.forEachIndexed { index, entry ->
             val rowTop = topPad + index * rowHeight
@@ -124,11 +132,6 @@ class BrowseStatsChartView @JvmOverloads constructor(
             // 2. 绘制柱条背景（浅色轨道）
             val barTop = rowCenterY - barHeight / 2f
             val barRect = RectF(barAreaStart, barTop, barAreaEnd, barTop + barHeight)
-            // 背景轨道使用 surface 色（低对比度）
-            val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = surfaceColor
-                style = Paint.Style.FILL
-            }
             canvas.drawRoundRect(barRect, barHeight / 2f, barHeight / 2f, trackPaint)
 
             // 3. 绘制柱条前景（按比例填充）

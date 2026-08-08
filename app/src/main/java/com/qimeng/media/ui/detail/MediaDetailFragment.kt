@@ -94,7 +94,7 @@ class MediaDetailFragment : Fragment() {
     private var currentRecordKey: String? = null
     private var enterTimeMillis = 0L
     private var chromeVisible = true
-    private var tagJob: Job? = null
+    // v1.12 删除：tagJob 仅服务于 observeTags 空 collect（collect{} 丢弃全部值），随死代码一并移除
     private var timelineTagJob: Job? = null
     private var themeBgColor: Int = 0
     private var isTransitioning = false
@@ -352,7 +352,6 @@ class MediaDetailFragment : Fragment() {
         binding.detailFileName.text = "%d/%d".format(displayIndex, totalSourceCount)
         updateLikeButton()
         updateFavoriteButton()
-        observeTags(media.recordKey)
         observeTimelineTags(media.recordKey)
         viewModel.loadAndRecordView(media.recordKey) { }
 
@@ -714,12 +713,7 @@ class MediaDetailFragment : Fragment() {
             .start()
     }
 
-    private fun observeTags(recordKey: String) {
-        tagJob?.cancel()
-        tagJob = viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.tagEntitiesForMedia(recordKey).collect { }
-        }
-    }
+    // v1.12 删除：observeTags 空 collect 死代码（collect{} 丢弃全部值，无任何消费点），已移除
 
     private fun observeTimelineTags(recordKey: String) {
         timelineTagJob?.cancel()
@@ -1173,7 +1167,6 @@ class MediaDetailFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         updateCurrentDuration()
-        tagJob?.cancel()
         timelineTagJob?.cancel()
         videoPreviewJob?.cancel()
         // 取消所有预加载请求，释放预渲染内存

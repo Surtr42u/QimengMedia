@@ -6,7 +6,7 @@
 
 ## 当前基准
 
-- 版本：v1.12
+- 版本：v1.12（功能版本；注意 `app/build.gradle.kts` 中 `versionName="1.7"` / `versionCode=9` 与功能版本**不同步**，构建号长期未随功能迭代递增，文档统一以功能版本 v1.12 为准）
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
@@ -55,7 +55,7 @@
 ### 代码质量
 
 - Detekt + Android Lint + ktlint 静态分析，GitHub Actions CI
-- 7 个核心测试类覆盖纯逻辑（RecordKeyFactory/MediaBrowserLogic/SourceMatcher/MediaGroupHelper/MediaRenderHelper）
+- 5 个核心测试类覆盖纯逻辑（RecordKeyFactory/MediaBrowserLogic/SourceMatcher/MediaGroupHelper/MediaRenderHelper）
 - 当前已备案黄色/红色区项详见 `GUIDE_CODE_MAINTENANCE.md`「当前已备案的黄色区项」
 
 ## 核心原则
@@ -135,7 +135,7 @@ QimengMedia/
 │           │   ├── db/
 │           │   │   ├── AppDatabase.kt
 │           │   │   ├── dao/          # 10 个 DAO（MediaFile/ViewHistory/ViewStats/TimelineTag/AlbumRule/Author/Tag/Setting/ScanSource/CosWork）
-│           │   │   ├── entity/       # 13 个实体（MediaFileEntity/ScanSourceEntity/CosWorkEntity/SettingEntity/AuthorEntity/AuthorMediaCrossRef/AlbumRuleEntity/TimelineTagEntity/MediaTagCrossRef/TagEntity/ViewHistoryEntity/ViewStatsEntity/AuthorFileCount）
+│           │   │   ├── entity/       # 12 个实体（MediaFileEntity/ScanSourceEntity/CosWorkEntity/SettingEntity/AuthorEntity/AuthorMediaCrossRef/AlbumRuleEntity/TimelineTagEntity/MediaTagCrossRef/TagEntity/ViewHistoryEntity/ViewStatsEntity）
 │           │   │   └── model/MediaTypeName.kt
 │           │   ├── model/MediaType.kt
 │           │   ├── prefs/
@@ -249,4 +249,4 @@ QimengMedia/
 
 换 AI、换开发工具或交接项目时，必须传完整源码目录，不只传 APK。
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08

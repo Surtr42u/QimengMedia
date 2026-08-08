@@ -5,12 +5,19 @@ import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.CosWorkEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.ui.album.SourceMatcher
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 媒体分组计算工具类，封装出处/角色/COS 分组的共享逻辑。
  * AllFilesFragment、FavoriteFragment、BrowseHistoryFragment、AuthorFilesFragment、AlbumDetailFragment 共用。
  */
 object MediaGroupHelper {
+
+    /** groupByCosWork「其他」诊断日志采样间隔：每 50 次落「其他」记 1 条，避免批量分组时日志刷屏（采样写法参考 SourceMatcher.logCharMiss） */
+    private const val COS_OTHER_LOG_INTERVAL = 50
+
+    /** groupByCosWork「其他」诊断日志采样计数器，线程安全 */
+    private val cosOtherLogCounter = AtomicInteger(0)
 
     /** 按出处分组（非 COS） */
     fun groupBySource(media: List<MediaFileEntity>): Map<String, List<MediaFileEntity>> {
@@ -141,18 +148,23 @@ object MediaGroupHelper {
             groups.getOrPut(charName) { mutableListOf() }.add(m)
         }
 
-        // 诊断日志：落「其他」的文件采样前3条，记录 folderName vs workNames 用于区分结构1/结构3/关联失败
+        // v1.12 修复：诊断日志采样节流——落「其他」每 COS_OTHER_LOG_INTERVAL 次记 1 条，
+        // 避免每次分组有文件落「其他」都输出完整诊断，造成日志刷屏并加速 2MB 日志文件截断
+        // （计数采样写法参考 SourceMatcher.logCharMiss，落「其他」总次数可通过计数器值还原）
         val otherFiles = groups["其他"]
         if (otherFiles != null && otherFiles.isNotEmpty()) {
-            val samples = otherFiles.take(3).joinToString(" | ") { m ->
-                val author = authorIndex.authorNameOf(m.recordKey)
-                val works = workIndex.worksOf(author)
-                "[${m.fileName}] author=\"$author\" folderName=\"${m.folderName}\" works=$works"
+            val count = cosOtherLogCounter.incrementAndGet()
+            if (count % COS_OTHER_LOG_INTERVAL == 1) {
+                val samples = otherFiles.take(3).joinToString(" | ") { m ->
+                    val author = authorIndex.authorNameOf(m.recordKey)
+                    val works = workIndex.worksOf(author)
+                    "[${m.fileName}] author=\"$author\" folderName=\"${m.folderName}\" works=$works"
+                }
+                com.qimeng.media.core.AppLog.d(
+                    "CosScan",
+                    "groupByCosWork 诊断(采样): 落「其他」${otherFiles.size}个文件，采样前3条 → $samples"
+                )
             }
-            com.qimeng.media.core.AppLog.d(
-                "CosScan",
-                "groupByCosWork 诊断: 落「其他」${otherFiles.size}个文件，采样前3条 → $samples"
-            )
         }
 
         return groups

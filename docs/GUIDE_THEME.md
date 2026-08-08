@@ -146,4 +146,4 @@ context.isNightMode()
 - **强调色使用场景**：`qmColorAccent` 仅用于数据可视化（进度条、图表高亮）、选中态强调，不用于普通文字或背景。
 - **明暗模式切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08

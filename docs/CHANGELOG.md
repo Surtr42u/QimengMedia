@@ -37,6 +37,50 @@
 
 > 最后更新：2026-08-08
 
+## P2 渲染层与 P3 规范清理（2026-08-08）
+
+基于 P0/P1 修复后，由 8 个并行修复代理完成 UI 渲染层与规范清理（多代理并行，文件域互斥）。
+
+### 渲染竞态与协程管理
+| 文件 | 修复 |
+|---|---|
+| HomeFragment | render 并发去重（renderJob cancel，挂起期间 tab 改写不再被旧结果覆盖）；onScrolled 目标 tab 未渲染时跳过 submitList(emptyList) 白屏闪烁 |
+| AllFilesFragment | 下拉刷新取消旧收集器（不再叠加永久收集器）；computeAllGroupsAsync 内快照 selectedPartitions/selectedSources 消除 CME；setViewMode 清空残留选中；renderJob 去重；COS 指纹纳入自动刷新判定 |
+| FavoriteFragment/BrowseHistoryFragment | 下拉刷新接线（重读 prefs/render）；collect 过滤排序移入 Default 线程；renderJob 去重 + viewLifecycleOwner scope；收藏页补 PinchZoomHelper；COS 分区角色渲染对齐 renderCosWorkPills |
+| SearchFragment | 搜索历史改时间戳 JSON 有序存储（最新在前/上限20）；手动标签参与搜索（观察 allMediaTags）；doSearch/rebuildNameIndex 协程取消；保存后历史 chips 刷新 |
+| AlbumDetailFragment/AuthorFilesFragment | render 指纹前置判定 + renderJob 去重 + viewLifecycleOwner scope |
+| ThumbnailUseCase | 取消时 CancellationException 重抛（不再吞掉导致队列任务丢失） |
+| MainActivity | 深色切换 recreate 后从 FragmentManager 重建 fragment 缓存 + findFragmentByTag 兜底，消除重复 fragment 叠加 |
+
+### 功能与数据正确性
+| 文件 | 修复 |
+|---|---|
+| StatsDetailFragment | 标签均值公式改为 关联总数/去重文件数 |
+| StatsFormatHelper | groupByWeek 改为从当前周向前取最近 12 周（旧实现取最旧 12 周丢最新趋势） |
+| AuthorListFragment | renderHash 加入文件数/浏览数维度 + refreshBindings |
+| AuthorFilesFragment | render 指纹加入 stats/tags 维度 |
+| MediaBrowserLogic | 每日推荐惩罚改随展示次数递增（-0.8×count，旧恒 -0.8 高频刷新后失效）；balanceVideoImage 复用 seed |
+| AlbumFragment | 仅自定义出处变化时清空 SourceMatcher 全局缓存；分组改 matchAll 走缓存 |
+| SourceGroupsData | 好运姐/女枪/厄运小姐合并单条目（去别名冲突）、蕾珂丝移除 Lux 别名、崩坏3 variants 去重、NIKEE→NIKKE |
+
+### 崩溃/内存/规范
+| 文件 | 修复 |
+|---|---|
+| 4 个图表 View | 主题色 lazy 缓存改 onDraw 动态解析（uiMode 切换后刷新）；顺带消除动画每帧 new LinearGradient/new Paint |
+| MediaFilterSheet/AuthorListFragment | ContextCompat.getColor(qm_*) 改 ThemeHelper.resolve 主题色 |
+| MediaGroupHelper | 落「其他」诊断日志计数采样（每 50 次 1 条） |
+| AppLog | 日志截断改一次截断再追加（旧每次追加全量重写） |
+| MediaGroupHelperTest | 6 处 Kotlin 原生 assert() 改 JUnit assertTrue（Gradle 默认 -ea 虽生效但可读性差） |
+| 死代码 | 删除 BackupRepository/AuthorEditDialog 整文件、SourceMatcher txt 体系、ZoomImageView 3 方法、cachedAutoSync、cachedCosAuthorNameToId、PieChartView selectedIndex 分支、observeTags 空 collect、FilterConfig 冗余预设 |
+
+### 文档同步
+- GUIDE_CODE_MAINTENANCE 备案行数/测试数/方法数刷新（MediaDetailFragment 1291、ProfileFragment 906、BackupManager 1567、SourceGroupsData 1674、MediaLibraryViewModel 36 方法等）
+- PROJECT_GUIDE 实体数 13→12、测试类统一 5 个、构建版本号不同步如实记录
+- GUIDE_UI 双击倍率统一 1.8x、「滑动暂停缩略图加载」「onViewRecycled 清 drawable」「亮度调节」3 项无实现声明改为如实描述
+- GUIDE_ALGORITHM 出处数统一 131、别名合并与拼写修正说明、新增拼写校验规则
+
+> 最后更新：2026-08-08
+
 ## 已完成重构项（2026-06-17）
 
 | 文件/方法 | 重构前 CC | 重构后 CC | 重构方式 |

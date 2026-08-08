@@ -7,6 +7,7 @@ import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.ui.browser.MediaGroupHelper
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaGroupHelperTest {
@@ -77,7 +78,7 @@ class MediaGroupHelperTest {
             createMedia("崩坏 星穹铁道 卡芙卡 1.mp4")
         )
         val groups = MediaGroupHelper.groupBySource(media)
-        assert(groups.size >= 2)
+        assertTrue(groups.size >= 2)
     }
 
     @Test
@@ -87,7 +88,7 @@ class MediaGroupHelperTest {
             createMedia("another_random.png")
         )
         val groups = MediaGroupHelper.groupBySource(media)
-        assert(groups.containsKey("其他"))
+        assertTrue(groups.containsKey("其他"))
         assertEquals(2, groups["其他"]?.size)
     }
 
@@ -107,7 +108,7 @@ class MediaGroupHelperTest {
             createMedia("原神 芭芭拉 1.jpg")
         )
         val groups = MediaGroupHelper.groupByCharacter(media)
-        assert(groups.size >= 2)
+        assertTrue(groups.size >= 2)
     }
 
     @Test
@@ -116,7 +117,7 @@ class MediaGroupHelperTest {
             createMedia("scenery.jpg")
         )
         val groups = MediaGroupHelper.groupByCharacter(media)
-        assert(groups.containsKey("其他"))
+        assertTrue(groups.containsKey("其他"))
     }
 
     // === groupByCosAuthor 测试 ===
@@ -181,8 +182,8 @@ class MediaGroupHelperTest {
     fun extractCharacterName_returnsCharacterFromFileName() {
         val media = createMedia("原神 刻晴 1.jpg")
         val charName = MediaGroupHelper.extractCharacterName(media)
-        assert(charName.isNotEmpty())
-        assert(charName != "其他")
+        assertTrue(charName.isNotEmpty())
+        assertTrue(charName != "其他")
     }
 
     @Test

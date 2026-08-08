@@ -220,24 +220,24 @@
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
-### 当前已备案的黄色区项（基于三档警戒线人工对照 + detekt 实证，2026-06-22 更新）
+### 当前已备案的黄色区项（基于三档警戒线人工对照 + detekt 实证，2026-08-08 更新）
 
 | 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
-| `MediaDetailFragment` | 1160 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可 |
-| `ProfileFragment` | 822 行 | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
-| `StatsDetailFragment` | 760 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 辅助图表 + Top 20 排行榜/分布对比，四种模式 + 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
-| `BiliPlayerView` | 755 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度 |
-| `MediaLibraryViewModel` | 32 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
+| `MediaDetailFragment` | 1291 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可 |
+| `ProfileFragment` | 906 行 | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
+| `StatsDetailFragment` | 852 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 辅助图表 + Top 20 排行榜/分布对比，四种模式 + 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
+| `BiliPlayerView` | 819 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度 |
+| `MediaLibraryViewModel` | 36 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
 | `ScanUseCase.scanCosMedia` | 22 | 黄色（合理复杂度） | COS 扫描编排，同上 |
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
-| `BackupManager` | 1294 行 | 红色（类总行数，合理复杂度备案） | 备份管理天然多方法：10 个 export + 10 个 import + 14 个 appendXxxSection 报告子方法 + 4 个公开入口（export/import/autoSync/fullSync），各方法职责单一。`exportPersonalPrefs` 见下行单独备案。强行拆分（如按 export/import 分两个类）会割裂 companion 常量、私有辅助方法、BackupSummary 内部类的共享，增加跨类耦合，按 §8「合理复杂度」认可 |
+| `BackupManager` | 1567 行 | 红色（类总行数，合理复杂度备案） | 备份管理天然多方法：10 个 export + 10 个 import + 14 个 appendXxxSection 报告子方法 + 4 个公开入口（export/import/autoSync/fullSync），各方法职责单一。`exportPersonalPrefs` 见下行单独备案。强行拆分（如按 export/import 分两个类）会割裂 companion 常量、私有辅助方法、BackupSummary 内部类的共享，增加跨类耦合，按 §8「合理复杂度」认可 |
 | `BackupManager.exportPersonalPrefs` | ~280 行 | 黄色（方法行数） | 报告生成汇总 23 个数据源，天然复杂，已封装 PersonalPrefsReportData + 章节子方法 |
-| `SourceGroupsData` | 1664 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
+| `SourceGroupsData` | 1674 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 历史审查与重构记录
 
@@ -255,11 +255,11 @@
 
 | 测试类 | 覆盖目标 |
 |--------|----------|
-| `RecordKeyFactoryTest` | 主键生成逻辑（12 个测试） |
-| `MediaBrowserLogicTest` | formatSize/dateLabel/groupByDate（14 个测试） |
-| `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处/txt作品（18 个测试） |
-| `MediaGroupHelperTest` | 分组算法（partition/source/character 模式） |
-| `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（18 个测试） |
+| `RecordKeyFactoryTest` | 主键生成逻辑（17 个测试） |
+| `MediaBrowserLogicTest` | formatSize/dateLabel/groupByDate（21 个测试） |
+| `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处/txt作品（23 个测试） |
+| `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
+| `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
 
 ### detekt CI 集成
 
@@ -397,7 +397,7 @@ Fragment/类规模按 §8 三档警戒线判定，不设硬性"必须拆分"行�
 - **数据汇总/报告生成**：天然需要汇总多数据源（如 `BackupManager.exportPersonalPrefs`）
 - **手势回调/事件分发**：天然多分支（如 `BiliPlayerView.onTouchEvent`）
 - **扫描编排/流程调度**：多源顺序刷新（如 `ScanUseCase.autoRefreshAllSources`）
-- **纯数据声明**：圈复杂度=0（如 `SourceGroupsData` 1664 行检索表）
+- **纯数据声明**：圈复杂度=0（如 `SourceGroupsData` 1674 行检索表）
 - **设置项弹窗编排**：顺序组装多设置项（如 `ProfileFragment`）
 
 ### 拆分策略（进入红色区或出现真正信号时）
@@ -466,4 +466,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08

@@ -79,11 +79,10 @@ object MediaBrowserLogic {
             val tags = tagsFor(item, tagMap)
             val likeCount = likeCounts[item.recordKey] ?: 0
 
-            // 每日推荐去重：已展示过的文件强惩罚
-            val dailyPenalty = when (dailyShownCountMap[item.recordKey] ?: 0) {
-                0 -> 0f       // 首次出现，不惩罚
-                else -> -0.8f // 已展示过，强惩罚，让新文件排到前面
-            }
+            // 每日推荐去重：v1.12 惩罚随展示次数递增（原实现恒 -0.8，高频刷新后
+            // 近全库都被罚一次、推荐趋近随机）。次数越多惩罚越重，让新文件稳定排到前面
+            val shownCount = dailyShownCountMap[item.recordKey] ?: 0
+            val dailyPenalty = if (shownCount == 0) 0f else -0.8f * shownCount
 
             val tagRelevance = tagRelevanceScore(tags, tagRelevanceMap) * weights.tagRelevance
             val tagCollection = tagCollectionScore(tags, topTags) * weights.tagCollection
@@ -107,7 +106,9 @@ object MediaBrowserLogic {
         val result = if (seed > 0) shuffleBuckets(scored, seed) else scored.map { it.first }
 
         // 视频图片自然混合：按比例随机取，不做连续分组
-        return@withContext balanceVideoImage(result).take(limit)
+        // v1.12：seed 传入 balanceVideoImage，与 shuffleBuckets 共用同一 RNG 种子，
+        // 保证同 seed 下整个推荐结果可复现（原实现无种子 Random，破坏可复现性）
+        return@withContext balanceVideoImage(result, seed).take(limit)
     }
 
     /** 推荐权重（9 维），由 resolveWeights 计算得出 */
@@ -382,11 +383,13 @@ object MediaBrowserLogic {
      * trade-off：此操作会打乱评分排序，低评分视频可能排在高评分图片前面，
      * 牺牲部分排序精度换取浏览体验的视觉多样性。
      */
-    private fun balanceVideoImage(sorted: List<MediaFileEntity>): List<MediaFileEntity> {
+    private fun balanceVideoImage(sorted: List<MediaFileEntity>, seed: Int): List<MediaFileEntity> {
         val videos = ArrayDeque(sorted.filter { it.mediaType.equals(MediaType.VIDEO, ignoreCase = true) })
         val images = ArrayDeque(sorted.filter { !it.mediaType.equals(MediaType.VIDEO, ignoreCase = true) })
         val result = mutableListOf<MediaFileEntity>()
-        val rng = java.util.Random()
+        // v1.12：seed > 0 时用与 shuffleBuckets 相同的种子初始化 RNG，保证同 seed 下推荐结果可复现；
+        // seed = 0 保持原随机行为（此时 shuffleBuckets 同样跳过，不影响默认推荐路径）
+        val rng = if (seed > 0) java.util.Random(seed.toLong()) else java.util.Random()
 
         while (videos.isNotEmpty() || images.isNotEmpty()) {
             // 按剩余数量比例随机选择类型，自然混合

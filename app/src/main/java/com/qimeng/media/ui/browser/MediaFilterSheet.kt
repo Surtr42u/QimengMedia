@@ -10,12 +10,13 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.NumberPicker
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.qimeng.media.R
+import com.qimeng.media.ThemeColors
+import com.qimeng.media.ThemeHelper
 import com.qimeng.media.data.db.entity.TagEntity
 import com.qimeng.media.ui.widget.dp
 import java.util.Calendar
@@ -31,11 +32,9 @@ data class FilterConfig(
     val showTags: Boolean = true
 ) {
     companion object {
+        // v1.12 删除：FOR_HOME/FOR_ALL/FOR_AUTHOR/FOR_ALBUM 四个预设此前全部等于默认 FilterConfig()，冗余；
+        // 各页面调用点已统一改用 FULL，移除后仅保留 FULL 供 show() 默认参数使用
         val FULL = FilterConfig()
-        val FOR_HOME = FilterConfig()
-        val FOR_ALL = FilterConfig()
-        val FOR_AUTHOR = FilterConfig()
-        val FOR_ALBUM = FilterConfig()
     }
 }
 
@@ -57,9 +56,11 @@ object MediaFilterSheet {
     ) {
         val dialog = BottomSheetDialog(context)
         val holder = FilterStateHolder(current)
+        // v1.12 修复：弹窗颜色改用 ThemeHelper.resolve 批量解析主题色，跟随系统明暗模式（弹窗不得用 ContextCompat.getColor(R.color.qm_*)）
+        val colors = ThemeHelper.resolve(context)
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(ContextCompat.getColor(context, R.color.qm_surface))
+            setBackgroundColor(colors.surface)
         }
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -71,42 +72,42 @@ object MediaFilterSheet {
             (context.resources.displayMetrics.heightPixels * 0.62f).toInt()
         ))
 
-        content.addView(headerLabel(context, "筛选"))
+        content.addView(headerLabel(context, colors, "筛选"))
 
         if (config.showSort) {
-            content.addView(section(context, "排序方式"))
+            content.addView(section(context, colors, "排序方式"))
             content.addView(singleGroup(context, sortOptions(), holder.value.sortKey) { holder.value = holder.value.copy(sortKey = it) })
         }
         if (config.showDirection) {
-            content.addView(section(context, "顺位"))
+            content.addView(section(context, colors, "顺位"))
             content.addView(singleGroup(context, directionOptions(), holder.value.sortDirection) { holder.value = holder.value.copy(sortDirection = it) })
         }
         if (config.showViews) {
-            content.addView(section(context, "观看次数"))
+            content.addView(section(context, colors, "观看次数"))
             content.addView(singleGroup(context, viewRangeOptions(), holder.value.viewRange) { holder.value = holder.value.copy(viewRange = it) })
         }
         if (config.showPlays) {
-            content.addView(section(context, "点击次数"))
+            content.addView(section(context, colors, "点击次数"))
             content.addView(singleGroup(context, playRangeOptions(), holder.value.playRange) { holder.value = holder.value.copy(playRange = it) })
         }
         if (config.showSize) {
-            content.addView(section(context, "文件大小"))
+            content.addView(section(context, colors, "文件大小"))
             content.addView(singleGroup(context, sizeRangeOptions(), holder.value.sizeRange) { holder.value = holder.value.copy(sizeRange = it) })
         }
         val (startPicker, endPicker) = if (config.showTimeRange) {
-            appendTimeRangeSection(content, context, holder)
+            appendTimeRangeSection(content, context, colors, holder)
         } else {
             Pair(null, null)
         }
         if (config.showTagMode) {
-            content.addView(section(context, "标签模式"))
+            content.addView(section(context, colors, "标签模式"))
             content.addView(singleGroup(context, tagModeOptions(), holder.value.tagMode) { holder.value = holder.value.copy(tagMode = it) })
         }
         if (config.showTags) {
-            appendTagsSection(content, context, holder, tags, onAddTag, onDeleteTag)
+            appendTagsSection(content, context, colors, holder, tags, onAddTag, onDeleteTag)
         }
 
-        root.addView(buildFooter(context, holder, startPicker, endPicker, onApply, dialog))
+        root.addView(buildFooter(context, colors, holder, startPicker, endPicker, onApply, dialog))
         dialog.setContentView(root)
         dialog.behavior.isDraggable = true
         dialog.show()
@@ -114,9 +115,9 @@ object MediaFilterSheet {
 
     /** 时间范围块：含 NumberPicker 年份选择，返回 (startPicker, endPicker) 供 footer 读取 */
     private fun appendTimeRangeSection(
-        content: LinearLayout, context: Context, holder: FilterStateHolder
+        content: LinearLayout, context: Context, colors: ThemeColors, holder: FilterStateHolder
     ): Pair<NumberPicker?, NumberPicker?> {
-        content.addView(section(context, "时间范围"))
+        content.addView(section(context, colors, "时间范围"))
         val yearRangeRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -140,7 +141,7 @@ object MediaFilterSheet {
             text = "—"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(ContextCompat.getColor(context, R.color.qm_text_primary))
+            setTextColor(colors.textPrimary)
             setPadding(8.dp(context), 0, 8.dp(context), 0)
         }
         yearRangeRow.addView(startPicker, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -156,10 +157,10 @@ object MediaFilterSheet {
 
     /** 标签块：Chip 选择/长按删除/添加标签对话框 */
     private fun appendTagsSection(
-        content: LinearLayout, context: Context, holder: FilterStateHolder,
+        content: LinearLayout, context: Context, colors: ThemeColors, holder: FilterStateHolder,
         tags: List<TagEntity>, onAddTag: (String) -> Unit, onDeleteTag: (Long) -> Unit
     ) {
-        content.addView(section(context, "标签"))
+        content.addView(section(context, colors, "标签"))
         val tagGroup = ChipGroup(context).apply { isSingleLine = false }
         tags.forEach { tag ->
             tagGroup.addView(Chip(context).apply {
@@ -191,7 +192,7 @@ object MediaFilterSheet {
         val addTagBtn = TextView(context).apply {
             text = "+ 添加标签"
             textSize = 13f
-            setTextColor(ContextCompat.getColor(context, R.color.qm_primary))
+            setTextColor(colors.primary)
             setPadding(0, 8.dp(context), 0, 8.dp(context))
             setOnClickListener {
                 val input = EditText(context).apply {
@@ -230,7 +231,7 @@ object MediaFilterSheet {
 
     /** 底部按钮栏：重置 + 应用筛选（含年份范围交叉校验） */
     private fun buildFooter(
-        context: Context, holder: FilterStateHolder,
+        context: Context, colors: ThemeColors, holder: FilterStateHolder,
         startPicker: NumberPicker?, endPicker: NumberPicker?,
         onApply: (MediaFilterState) -> Unit, dialog: BottomSheetDialog
     ): LinearLayout {
@@ -238,11 +239,11 @@ object MediaFilterSheet {
             orientation = LinearLayout.HORIZONTAL
             setPadding(20.dp(context), 12.dp(context), 20.dp(context), 24.dp(context))
         }
-        footer.addView(actionButton(context, "重置", primary = false) {
+        footer.addView(actionButton(context, colors, "重置", primary = false) {
             dialog.dismiss()
             onApply(MediaFilterState())
         }, LinearLayout.LayoutParams(0, 48.dp(context), 1f).apply { marginEnd = 8.dp(context) })
-        footer.addView(actionButton(context, "应用筛选", primary = true) {
+        footer.addView(actionButton(context, colors, "应用筛选", primary = true) {
             dialog.dismiss()
             if (holder.value.dateRange == MediaDateRange.YEAR_RANGE) {
                 val sp = startPicker
@@ -276,31 +277,31 @@ object MediaFilterSheet {
         }
     }
 
-    private fun headerLabel(context: Context, text: String): TextView = TextView(context).apply {
+    private fun headerLabel(context: Context, colors: ThemeColors, text: String): TextView = TextView(context).apply {
         this.text = text
         gravity = Gravity.CENTER
         textSize = 18f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setTextColor(ContextCompat.getColor(context, R.color.qm_text_primary))
+        setTextColor(colors.textPrimary)
         setPadding(0, 4.dp(context), 0, 10.dp(context))
     }
 
-    private fun section(context: Context, text: String): TextView = TextView(context).apply {
+    private fun section(context: Context, colors: ThemeColors, text: String): TextView = TextView(context).apply {
         this.text = text
         textSize = 12f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setTextColor(ContextCompat.getColor(context, R.color.qm_text_secondary))
+        setTextColor(colors.textSecondary)
         setPadding(0, 14.dp(context), 0, 4.dp(context))
     }
 
-    private fun actionButton(context: Context, text: String, primary: Boolean, onClick: () -> Unit): TextView =
+    private fun actionButton(context: Context, colors: ThemeColors, text: String, primary: Boolean, onClick: () -> Unit): TextView =
         TextView(context).apply {
             this.text = text
             gravity = Gravity.CENTER
             textSize = 15f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setBackgroundResource(if (primary) R.drawable.bg_capsule_primary else R.drawable.bg_capsule_soft)
-            setTextColor(ContextCompat.getColor(context, if (primary) R.color.qm_bg else R.color.qm_text_primary))
+            setTextColor(if (primary) colors.bg else colors.textPrimary)
             setOnClickListener { onClick() }
         }
 

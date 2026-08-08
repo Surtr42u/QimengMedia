@@ -153,7 +153,7 @@
 - 详情页按 4 层组织：纯背景层、透明媒体层、上下轻量图标操作层、沉浸隐藏层
 - `detailContentContainer`（FrameLayout）包裹媒体视图（ZoomImageView + BiliPlayerView + videoTouchOverlay + videoPlayButton），左右滑动切换时仅该容器做平移动画，顶栏和底栏不动
 - chrome 显示态跟随系统白天/夜间主题，白天浅底深色图标，夜间黑底浅色图标；chrome 隐藏态始终黑底沉浸
-- 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**智能分层渲染**（2026-06-20 优化，2026-06-21 修复超大图渲染阈值，2026-06-23 去重）：`ZoomImageView.setImageDrawable` 调用 `applyOptimalLayerType()` 按图尺寸智能选层（`setImageBitmap` 不再单独调用，由 `super.setImageBitmap` 链式触发的 `setImageDrawable` 统一负责，消除同图二次判断冗余）——GIF（`AnimatedImageDrawable`）→ `LAYER_TYPE_HARDWARE`（动画依赖硬件刷新帧）；普通图长边 ≤ **硬件渲染安全阈值 4096**（`HARDWARE_RENDER_SAFE_SIZE`）→ `LAYER_TYPE_HARDWARE`（GPU 直渲，4096 图绘制从 ~50ms 降到 ~5ms，消除来回切大图卡顿）；普通图长边 > 4096 → `LAYER_TYPE_SOFTWARE`（CPU 软件渲染，正确应用 MATRIX 缩放）。**⚠️ 阈值选择根因**（2026-06-21 修复）：原方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，旗舰机实测可达 16384）作阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap（如 8000x8000=256MB）无法正确应用 MATRIX 缩放——超大图走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。4096 是业界公认稳定值（Glide/Fresco 默认上限，Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 `GpuInfo` 探测失败回退值 `DEFAULT_MAX_TEXTURE_SIZE=4096` 一致。手势期间（双指缩放/拖拽）同样用 `shouldUseHardwareForCurrent()` **同 4096 阈值**判断，超大图手势时保持 SOFTWARE。不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**两个独立阈值需区分**：①渲染安全阈值 4096（`HARDWARE_RENDER_SAFE_SIZE`，HARDWARE/SOFTWARE 分层判断，保渲染正确性）②Coil maxBitmapSize = `gpuMax`（`GpuInfo.maxTextureSize()`，解码降采样上限，放开让 8192 解原图）。两者独立，改其一不影响另一个；**Coil maxBitmapSize 放开**（2026-06-20）：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样（8192→4096），偏离"始终原图"决策。`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 放开到 GPU 上限，让 8192/7680 等超大图显示原图。代价是内存上升（超大图原图 ARGB_8888 ~150MB/张，浏览多张超大图 Native Heap 峰值可达 ~900MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制；**超大图 SOFTWARE 渲染 trade-off**（2026-06-21）：超大图（>4096）走 SOFTWARE 比 HARDWARE 慢（CPU 逐像素处理，8000x8000 量级可能 100ms+），但保证 matrix 缩放正确、显示位置正常。保正确性优先于渲染速度，这是已知 trade-off；**缩放范围**：0.5x~5x，双击放大3x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
+- 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**智能分层渲染**（2026-06-20 优化，2026-06-21 修复超大图渲染阈值，2026-06-23 去重）：`ZoomImageView.setImageDrawable` 调用 `applyOptimalLayerType()` 按图尺寸智能选层（`setImageBitmap` 不再单独调用，由 `super.setImageBitmap` 链式触发的 `setImageDrawable` 统一负责，消除同图二次判断冗余）——GIF（`AnimatedImageDrawable`）→ `LAYER_TYPE_HARDWARE`（动画依赖硬件刷新帧）；普通图长边 ≤ **硬件渲染安全阈值 4096**（`HARDWARE_RENDER_SAFE_SIZE`）→ `LAYER_TYPE_HARDWARE`（GPU 直渲，4096 图绘制从 ~50ms 降到 ~5ms，消除来回切大图卡顿）；普通图长边 > 4096 → `LAYER_TYPE_SOFTWARE`（CPU 软件渲染，正确应用 MATRIX 缩放）。**⚠️ 阈值选择根因**（2026-06-21 修复）：原方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，旗舰机实测可达 16384）作阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap（如 8000x8000=256MB）无法正确应用 MATRIX 缩放——超大图走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。4096 是业界公认稳定值（Glide/Fresco 默认上限，Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 `GpuInfo` 探测失败回退值 `DEFAULT_MAX_TEXTURE_SIZE=4096` 一致。手势期间（双指缩放/拖拽）同样用 `shouldUseHardwareForCurrent()` **同 4096 阈值**判断，超大图手势时保持 SOFTWARE。不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**两个独立阈值需区分**：①渲染安全阈值 4096（`HARDWARE_RENDER_SAFE_SIZE`，HARDWARE/SOFTWARE 分层判断，保渲染正确性）②Coil maxBitmapSize = `gpuMax`（`GpuInfo.maxTextureSize()`，解码降采样上限，放开让 8192 解原图）。两者独立，改其一不影响另一个；**Coil maxBitmapSize 放开**（2026-06-20）：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样（8192→4096），偏离"始终原图"决策。`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 放开到 GPU 上限，让 8192/7680 等超大图显示原图。代价是内存上升（超大图原图 ARGB_8888 ~150MB/张，浏览多张超大图 Native Heap 峰值可达 ~900MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制；**超大图 SOFTWARE 渲染 trade-off**（2026-06-21）：超大图（>4096）走 SOFTWARE 比 HARDWARE 慢（CPU 逐像素处理，8000x8000 量级可能 100ms+），但保证 matrix 缩放正确、显示位置正常。保正确性优先于渲染速度，这是已知 trade-off；**缩放范围**：0.5x~5x，双击放大1.8x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
 - 视频（仅 `MediaType.VIDEO`）：未播放时用 `ZoomImageView` 显示视频帧预览（透明背景，透出主题色，与图片分支一致；优先使用 `MediaMetadataRetriever` 提取首帧，失败时回退到 Coil VideoFrameDecoder），中央显示 ▶ 播放按钮；单击预览区直接启动播放（进入 BiliPlayerView），横滑浏览其他文件。播放时 BiliPlayerView 接管触摸
 - 按返回键：播放中先退到 chrome 浏览模式（暂停+chrome显示），再按退回首页
 - 顶部操作层：返回（胶囊图标） / 当前序号 / 信息（胶囊图标），背景使用 `bg_detail_top_gradient` 渐变遮罩（从 `qmColorBg` 90% 不透明度渐变到透明），与背景层一体无分割感，点击信息图标弹出 BottomSheet 显示文件名/出处/尺寸/时长等详细信息（区分图片和视频）；尺寸/时长等元数据在扫描时未解码（`scanTreeFast` 跳过），打开信息面板时按需解码并缓存到数据库
@@ -175,7 +175,7 @@
 - 长按倍速：长按屏幕2倍速播放，松手恢复原速；竖屏长按时下方出现"⬇ 拖动到此处锁定倍速"提示（B站竖屏逻辑），拖动到该区域可锁定2x倍速；横屏长按只有临时2x，无锁定提示，长按时隐藏UI，想锁定倍速只能点击倍速按钮选择；已锁定倍速时再长按显示"⬇ 拖动到此处退出倍速"，拖到下方退出锁定回到1x，期间保持2x
 - 滑动进度自适应：短视频（≤30s）最大滑动范围=视频时长，中等视频（30s~2min）最大60s，长视频最大120s
 - 静音：默认静音（ExoPlayer volume=0），底部栏静音按钮切换，开启声音后 ExoPlayer volume=1 跟随系统音量
-- 手势指示器：中央半透明浮层显示当前操作（进度偏移/倍速/亮度百分比）
+- 手势指示器：中央半透明浮层显示当前操作（进度偏移）
 - 顶部指示器：长按倍速/静音切换/快进快退等操作提示显示在顶部（微透明，不遮挡视频中心）
 - 手势进度时同步更新底部进度条和时间显示，视频内容跟随seek位置
 - 中央操作指示：播放/暂停/快进/快退/静音/取消静音图标短暂显示后自动消失
@@ -184,10 +184,9 @@
 - 控制器自动隐藏：5秒无操作后自动隐藏
 - ExoPlayer 生命周期：Fragment `onViewCreated` 创建并配置音频属性，`onPause` 暂停，`onResume` 恢复，`onDestroyView` 释放
 - 音频焦点：ExoPlayer 自动管理（`setAudioAttributes(handleAudioFocus=true)`）
-- 亮度调节：通过 `onBrightnessChange` 回调设置 Activity window `screenBrightness`
 - 视频预览：优先使用 Coil `VideoFrameDecoder`（利用内存/磁盘缓存，`size(1440,2560)`），失败回退 `MediaMetadataRetriever`（`openAssetFileDescriptor` + `decodeFileDescriptor`，提取3秒帧 `OPTION_CLOSEST_SYNC`）
 - Coil 全局配置：Coil 3.4.0，`QimengApplication` 通过 `SingletonImageLoader.setSafe` 注册 `VideoFrameDecoder.Factory()` + `AnimatedImageDecoder.Factory()` 到 ImageLoader；内存缓存25%堆大小；磁盘缓存20%磁盘空间（首次解码后缓存到磁盘，后续加载无感）
-- 缩略图缓存策略：Coil `size(480,270)` 限制缩略图解码尺寸；RecyclerView `setItemViewCacheSize(20)` + `RecycledViewPool(max=20)`；`onViewRecycled` 时清除 ImageView drawable 释放内存；扫描/导入时即开始缓存缩略图到磁盘
+- 缩略图缓存策略：Coil `size(480,270)` 限制缩略图解码尺寸；RecyclerView `setItemViewCacheSize(20)` + `RecycledViewPool(max=20)`；`onViewRecycled` 时取消未完成的缩略图解码任务（`decodeJob?.cancel()`）；扫描/导入时即开始缓存缩略图到磁盘
 
 ## 数据统计页
 
@@ -345,7 +344,7 @@
 
 - 匹配成功返回规范名，所有变体归入同一出处分区
 - 版本号合并：铁拳7/8→"铁拳"，生化危机2/3/4/8→"生化危机"
-- 检索表覆盖约 120 个出处
+- 检索表覆盖 131 个出处
 
 ### 药丸容器
 
@@ -387,8 +386,7 @@
 ### 缩略图加载策略
 
 - **分辨率**：默认 480×270，首页1列时 960×540
-- **滑动暂停**：RecyclerView 滑动时（`SCROLL_STATE_DRAGGING` / `SETTLING`）暂停缩略图加载，已加载的缩略图保持可见（不清除），未加载的显示占位色；滑动停止（`SCROLL_STATE_IDLE`）后 `notifyDataSetChanged()` 触发加载
-- **适配器**：`MediaThumbnailAdapter.paused` 和 `GroupedMediaAdapter.paused` 控制暂停状态
+- **滑动暂停**：未实现（v1.12 无 `paused` 标志 / `SCROLL_STATE` 监听，滑动期间缩略图照常加载；仅在 `onViewRecycled` 时取消已完成回收项的未完成任务）
 - **覆盖页面**：HomeFragment、AllFilesFragment、AlbumDetailFragment、AuthorFilesFragment、FavoriteFragment
 
 ## 浏览历史
@@ -481,7 +479,7 @@ COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-06-23
+> 最后更新：2026-08-08
 
 ## 应用图标
 

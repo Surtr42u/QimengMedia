@@ -6,7 +6,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -104,9 +103,18 @@ class AuthorListFragment : Fragment() {
         if (_binding == null) return
 
         val fileCountMap = cachedFileCounts.associateBy { it.authorId }
+        val viewCounts = computeAuthorViewCounts()
         val sorted = sortAndFilterAuthors(fileCountMap)
 
-        val hash = sorted.joinToString("|") { it.authorId } + "|$sortMode|$filterMode"
+        // v1.12 修复：hash 追加文件数/浏览数维度，浏览/文件数变化后列表副标题与排序可刷新
+        val hash = buildString {
+            append(sorted.joinToString("|") { it.authorId })
+            append("|$sortMode|$filterMode")
+            append("|counts=")
+            fileCountMap.entries.sortedBy { it.key }.forEach { (id, c) -> append("$id:${c.fileCount},") }
+            append("|views=")
+            viewCounts.entries.sortedBy { it.key }.forEach { (id, v) -> append("$id:$v,") }
+        }
         if (hash == lastRenderHash) return
         lastRenderHash = hash
 
@@ -125,10 +133,12 @@ class AuthorListFragment : Fragment() {
         }
         (container.adapter as? AuthorListAdapter)?.let { adapter ->
             adapter.cachedFileCounts = fileCountMap
-            adapter.cachedAuthorViewCounts = computeAuthorViewCounts()
+            adapter.cachedAuthorViewCounts = viewCounts
             adapter.cachedAuthorRecentViewCounts = computeAuthorRecentViewCounts()
             adapter.sortMode = sortMode
             adapter.submitList(sorted)
+            // v1.12：列表项内容相等时 AsyncListDiffer 不会 re-bind，手动刷新副标题等渲染数据
+            adapter.refreshBindings()
         }
     }
 
@@ -200,6 +210,8 @@ class AuthorListFragment : Fragment() {
     private fun showSortSheet() {
         val dialog = BottomSheetDialog(requireContext())
         val ctx = requireContext()
+        // v1.12 修复：排序弹窗颜色改用 ThemeHelper.resolve 批量解析主题色，跟随系统明暗模式（弹窗不得用 ContextCompat.getColor(R.color.qm_*)）
+        val colors = ThemeHelper.resolve(ctx)
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20.dp(ctx), 18.dp(ctx), 20.dp(ctx), 28.dp(ctx))
@@ -209,7 +221,7 @@ class AuthorListFragment : Fragment() {
         container.addView(TextView(ctx).apply {
             text = "排序方式"
             gravity = android.view.Gravity.CENTER
-            setTextColor(ContextCompat.getColor(ctx, R.color.qm_text_primary))
+            setTextColor(colors.textPrimary)
             textSize = 18f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setPadding(0, 0, 0, 10.dp(ctx))
@@ -241,7 +253,7 @@ class AuthorListFragment : Fragment() {
 
                 addView(TextView(ctx).apply {
                     text = label
-                    setTextColor(if (isActive) ContextCompat.getColor(ctx, R.color.qm_primary) else ContextCompat.getColor(ctx, R.color.qm_text_primary))
+                    setTextColor(if (isActive) colors.primary else colors.textPrimary)
                     textSize = 15f
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 })
@@ -249,7 +261,7 @@ class AuthorListFragment : Fragment() {
                 if (isActive) {
                     addView(TextView(ctx).apply {
                         text = "✓"
-                        setTextColor(ContextCompat.getColor(ctx, R.color.qm_primary))
+                        setTextColor(colors.primary)
                         textSize = 16f
                         typeface = android.graphics.Typeface.DEFAULT_BOLD
                     })
@@ -340,16 +352,23 @@ class AuthorListAdapter(
         items = list
     }
 
+    /** 强制刷新全部可见项：文件数/浏览数等渲染数据变化但列表项相同时，AsyncListDiffer 不会 re-bind，需手动触发 */
+    fun refreshBindings() {
+        notifyDataSetChanged()
+    }
+
     override fun getItemCount() = items.size
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val ctx = parent.context
+        // v1.12 修复：作者卡片颜色改用 ThemeHelper.resolve 批量解析主题色，跟随系统明暗模式（不得用 ContextCompat.getColor(R.color.qm_*)）
+        val colors = ThemeHelper.resolve(ctx)
         val card = MaterialCardView(ctx).apply {
             radius = 12f.dp(ctx)
             cardElevation = 0f
             strokeWidth = 1.dp(ctx)
-            setStrokeColor(ContextCompat.getColor(ctx, R.color.qm_divider))
-            setCardBackgroundColor(ContextCompat.getColor(ctx, R.color.qm_surface))
+            setStrokeColor(colors.divider)
+            setCardBackgroundColor(colors.surface)
             layoutParams = RecyclerView.LayoutParams(
                 RecyclerView.LayoutParams.MATCH_PARENT,
                 RecyclerView.LayoutParams.WRAP_CONTENT
@@ -362,7 +381,7 @@ class AuthorListAdapter(
         }
 
         val name = TextView(ctx).apply {
-            setTextColor(ContextCompat.getColor(ctx, R.color.qm_text_primary))
+            setTextColor(colors.textPrimary)
             textSize = 16f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             id = android.R.id.text1
@@ -373,7 +392,7 @@ class AuthorListAdapter(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = 4.dp(ctx) }
-            setTextColor(ContextCompat.getColor(ctx, R.color.qm_text_secondary))
+            setTextColor(colors.textSecondary)
             textSize = 12f
             id = android.R.id.text2
         }

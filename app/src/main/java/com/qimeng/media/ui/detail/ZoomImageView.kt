@@ -145,11 +145,7 @@ class ZoomImageView @JvmOverloads constructor(
     private var lastDrawableHeight = 0
     private var overrideDrawableSize = false
 
-    fun setDrawableSize(width: Int, height: Int) {
-        lastDrawableWidth = width
-        lastDrawableHeight = height
-        overrideDrawableSize = true
-    }
+    // v1.12 删除：setDrawableSize(width, height) 无调用者，已移除（lastDrawableWidth/Height 仍由 setImageDrawable 维护）
 
     override fun setImageDrawable(drawable: Drawable?) {
         if (drawable == null) overrideDrawableSize = false
@@ -275,23 +271,8 @@ class ZoomImageView @JvmOverloads constructor(
         com.qimeng.media.core.AppLog.d("Detail", "resetZoom: scaleType=$scaleType drawMatrix=$drawMatrix 旧imageMatrix=$oldMatrix 新imageMatrix=${imageMatrix} drawable=${lastDrawableWidth}x${lastDrawableHeight} view=${width}x${height}")
     }
 
-    fun preserveCurrentScreenRect() {
-        if (lastDrawableWidth <= 0 || lastDrawableHeight <= 0) return
-        mappedRect.set(0f, 0f, lastDrawableWidth.toFloat(), lastDrawableHeight.toFloat())
-        drawMatrix.mapRect(mappedRect)
-        getLocationOnScreen(windowLocation)
-        pendingScreenRect.set(
-            mappedRect.left + windowLocation[0],
-            mappedRect.top + windowLocation[1],
-            mappedRect.right + windowLocation[0],
-            mappedRect.bottom + windowLocation[1]
-        )
-        hasPendingScreenRect = true
-    }
-
-    fun restorePreservedScreenRectIfNeeded() {
-        if (hasPendingScreenRect) restorePendingScreenRect()
-    }
+    // v1.12 删除：preserveCurrentScreenRect() 与 restorePreservedScreenRectIfNeeded() 无调用者，已移除
+    // （pendingScreenRect/hasPendingScreenRect 私有字段仍由 onLayout→restorePendingScreenRect 使用）
 
     private fun configureBaseMatrix() {
         val dw = lastDrawableWidth

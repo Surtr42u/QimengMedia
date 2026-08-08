@@ -5,6 +5,7 @@ import com.qimeng.media.core.AppLog
 import com.qimeng.media.core.ThumbnailCache
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +66,9 @@ class ThumbnailUseCase(
                 }
                 _progress.value = ThumbnailProgress.Done(mediaFiles.size, source)
                 AppLog.d("Scan", "pregenerateThumbnails: completed ${mediaFiles.size} files (${source.label})")
+            } catch (e: CancellationException) {
+                // v1.12：取消必须向上透传，不能吞掉（否则 finally 的排队任务也永远不会执行）
+                throw e
             } catch (e: Exception) {
                 _progress.value = ThumbnailProgress.Idle
                 AppLog.e("Scan", "pregenerateThumbnails failed: ${e.message}", e)
@@ -73,8 +77,14 @@ class ThumbnailUseCase(
                 // 处理队列中的下一个请求
                 val next = pendingQueue.poll()
                 if (next != null) {
-                    withContext(Dispatchers.Main) {
-                        startPregeneration(next.mediaFiles, coroutineScope, next.source)
+                    // v1.12：finally 内单独 try-catch——外层已取消时 withContext(Main) 会抛
+                    // CancellationException，原实现无保护导致排队任务被吞、队列永不处理
+                    try {
+                        withContext(Dispatchers.Main) {
+                            startPregeneration(next.mediaFiles, coroutineScope, next.source)
+                        }
+                    } catch (c: CancellationException) {
+                        AppLog.d("Scan", "pregenerateThumbnails: cancelled while starting next task")
                     }
                 }
             }

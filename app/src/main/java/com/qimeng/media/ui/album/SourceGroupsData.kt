@@ -62,12 +62,13 @@ internal val BUILTIN_GROUPS = listOf(
         CharEntry("莫甘娜", listOf("莫甘娜", "Morgana")),
         CharEntry("戴安娜", listOf("戴安娜", "Diana", "皎月女神")),
         CharEntry("格温", listOf("格温", "Gwen")),
-        CharEntry("好运姐", listOf("好运姐", "赏金", "赏金猎人", "Miss Fortune", "MF", "厄运小姐")),
+        // v1.12：好运姐/女枪/厄运小姐原为三个 CharEntry 且共享别名 Miss Fortune/MF，
+        // 违反「同一 SourceGroup 内禁止重复 CharEntry」，已合并为单一条目并集齐别名
+        CharEntry("好运姐", listOf("好运姐", "女枪", "厄运小姐", "Miss Fortune", "MF", "赏金", "赏金猎人")),
         CharEntry("卡特琳娜", listOf("卡特琳娜", "卡特", "Katarina", "不祥之刃")),
         CharEntry("阿卡丽", listOf("阿卡丽", "Akali")),
         CharEntry("卡莎", listOf("卡莎", "Kaisa", "卡莎")),
         CharEntry("琴女", listOf("琴女", "Sona", "娑娜")),
-        CharEntry("女枪", listOf("女枪", "Miss Fortune", "MF")),
         CharEntry("薇恩", listOf("薇恩", "Vayne", "暗夜猎手")),
         CharEntry("艾希", listOf("艾希", "Ashe", "寒冰射手")),
         CharEntry("凯特琳", listOf("凯特琳", "Caitlyn", "女警")),
@@ -76,7 +77,6 @@ internal val BUILTIN_GROUPS = listOf(
         CharEntry("蕾欧娜", listOf("蕾欧娜", "Leona", "日女")),
         CharEntry("婕拉", listOf("婕拉", "Zyra")),
         CharEntry("希瓦娜", listOf("希瓦娜", "Shyvana", "龙女")),
-        CharEntry("厄运小姐", listOf("厄运小姐", "Miss Fortune", "好运姐", "赏金")),
         CharEntry("锐雯", listOf("锐雯", "Riven", "放逐之刃")),
         CharEntry("菲奥娜", listOf("菲奥娜", "Fiora", "剑姬")),
         CharEntry("艾瑞莉娅", listOf("艾瑞莉娅", "Irelia", "刀妹")),
@@ -95,7 +95,8 @@ internal val BUILTIN_GROUPS = listOf(
         CharEntry("崔丝塔娜", listOf("崔丝塔娜", "Tristana", "小炮")),
         CharEntry("波比", listOf("波比", "Poppy", "圣锤之毅")),
         CharEntry("莉莉娅", listOf("莉莉娅", "Lillia")),
-        CharEntry("蕾珂丝", listOf("蕾珂丝", "Lux")),
+        // v1.12：蕾珂丝（Rek'Sai）误用 Lux 别名，与「拉克丝」冲突，已移除
+        CharEntry("蕾珂丝", listOf("蕾珂丝", "Rek'Sai")),
         CharEntry("米利欧", listOf("米利欧", "Millio")),
         CharEntry("娜美", listOf("娜美", "Nami")),
         CharEntry("索拉卡", listOf("索拉卡", "Soraka", "星妈")),
@@ -143,7 +144,8 @@ internal val BUILTIN_GROUPS = listOf(
         CharEntry("遐蝶", listOf("遐蝶")),
         CharEntry("玄符", listOf("玄符"))
     )),
-    SourceGroup("崩坏3", listOf("崩坏3", "崩坏3rd", "崩坏3rd", "Honkai Impact 3rd", "崩坏三"), listOf(
+    // v1.12：原 variants 含重复的"崩坏3rd"（出现两次），已去重
+    SourceGroup("崩坏3", listOf("崩坏3", "崩坏3rd", "Honkai Impact 3rd", "崩坏三"), listOf(
         CharEntry("琪亚娜", listOf("琪亚娜", "Kiana", "空之律者")),
         CharEntry("芽衣", listOf("芽衣", "Mei", "雷电芽衣")),
         CharEntry("布洛妮娅", listOf("布洛妮娅", "Bronya", "理之律者")),
@@ -478,7 +480,8 @@ internal val BUILTIN_GROUPS = listOf(
         CharEntry("优香", listOf("优香", "早濑优香", "Yuuka")),
         CharEntry("调月莉音", listOf("调月莉音", "Tsurumaki Tsukasa"))
     )),
-    SourceGroup("胜利女神 NIKEE", listOf("胜利女神 NIKEE", "NIKEE", "胜利女神", "Goddess of Victory Nikke", "Nikke", "妮姬"), listOf(
+    // v1.12：canonical/variants 拼写修正，NIKEE → NIKKE
+    SourceGroup("胜利女神 NIKKE", listOf("胜利女神 NIKKE", "NIKKE", "胜利女神", "Goddess of Victory Nikke", "Nikke", "妮姬"), listOf(
         CharEntry("拉毗", listOf("拉毗", "Rapi")),
         CharEntry("阿尼斯", listOf("阿尼斯", "Anis")),
         CharEntry("妮恩", listOf("妮恩", "Neon")),

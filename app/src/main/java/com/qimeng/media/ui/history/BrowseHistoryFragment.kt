@@ -35,6 +35,7 @@ import com.qimeng.media.ui.widget.FlowLayout
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -59,6 +60,8 @@ class BrowseHistoryFragment : Fragment() {
     private var charPillsExpanded = true
     private var typePillsExpanded = true
     private var lastRenderHash = ""
+    // v1.12：render 协程 job——旧 render 晚完成会覆盖新选中态 UI，启动新 render 前取消旧的
+    private var renderJob: Job? = null
     private var cachedCosMedia = emptyList<MediaFileEntity>()
     private var cachedCosWorks = emptyList<CosWorkEntity>()
     private var cachedAuthorMedia = emptyList<AuthorMediaCrossRef>()
@@ -92,6 +95,8 @@ class BrowseHistoryFragment : Fragment() {
         binding.historyBack.setOnClickListener { parentFragmentManager.popBackStack() }
         binding.historyClearBtn.setOnClickListener { viewModel.clearHistory() }
         binding.historySwipeRefresh.setOnRefreshListener {
+            // v1.12：下拉刷新重跑过滤/排序并渲染，修复刷新 no-op
+            computeAndRender()
             binding.historySwipeRefresh.isRefreshing = false
         }
         scrollListener = ViewTreeObserver.OnScrollChangedListener {
@@ -191,18 +196,23 @@ class BrowseHistoryFragment : Fragment() {
         }
         // 按浏览时间（openedAtMillis）倒序排列，而非文件修改时间
         val openedAtMap = cachedHistory.associate { it.recordKey to it.openedAtMillis }
-        val historyMedia = workingMedia.filter { it.recordKey in historyKeys }
-            .sortedByDescending { openedAtMap[it.recordKey] ?: 0L }
-        if (historyMedia.isEmpty()) {
-            cachedHistoryMedia = emptyList()
-            cachedSourceGroups = emptyMap()
-            cachedCharGroups = emptyMap()
-            render()
-            return
+        viewLifecycleOwner.lifecycleScope.launch {
+            // v1.12：历史过滤 + 时间倒序排序移入 Default 线程，避免主线程全量处理
+            val historyMedia = withContext(Dispatchers.Default) {
+                workingMedia.filter { it.recordKey in historyKeys }
+                    .sortedByDescending { openedAtMap[it.recordKey] ?: 0L }
+            }
+            if (_binding == null) return@launch
+            if (historyMedia.isEmpty()) {
+                cachedHistoryMedia = emptyList()
+                cachedSourceGroups = emptyMap()
+                cachedCharGroups = emptyMap()
+                render()
+                return@launch
+            }
+            cachedHistoryMedia = historyMedia
+            computeSourceGroups()
         }
-
-        cachedHistoryMedia = historyMedia
-        computeSourceGroups()
     }
 
     private fun computeSourceGroups() {
@@ -215,11 +225,18 @@ class BrowseHistoryFragment : Fragment() {
 
         val isCosPartition = selectedPartitions == setOf("COS")
         val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
-
-        val typed = MediaRenderHelper.applyTypeFilter(cachedHistoryMedia, filterType)
+        // 主线程快照历史列表引用，供协程在 Default 线程安全使用
+        val historyMedia = cachedHistoryMedia
 
         // 分区→类型→出处→角色 逐层联动：出处和角色分组都基于类型筛选后的文件
-        lifecycleScope.launch {
+        // v1.12：取消上一个未完成的 render 协程，防止旧 Default 计算晚完成覆盖新选中态 UI；
+        // 改用 viewLifecycleOwner.lifecycleScope，随 View 销毁自动取消
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
+            // v1.12：类型筛选移入 Default 线程计算，避免主线程全量过滤
+            val typed = withContext(Dispatchers.Default) {
+                MediaRenderHelper.applyTypeFilter(historyMedia, filterType)
+            }
             val (sourceGroups, charGroups) = computeHistoryGroupsAsync(typed, isCosPartition, isAllPartition)
             if (_binding == null) return@launch
             cachedSourceGroups = sourceGroups
@@ -273,7 +290,8 @@ class BrowseHistoryFragment : Fragment() {
                 selectedSources.retainAll(sourceGroups.keys)
             }
             VIEW_MODE_CHARACTER -> {
-                renderCharPills(charGroups)
+                // v1.12：COS 分区下用 renderCosWorkPills 渲染作品名药丸（与全部页/收藏页一致）
+                if (isCosPartition) renderCosWorkPills(charGroups) else renderCharPills(charGroups)
                 selectedChars.retainAll(charGroups.keys)
             }
             VIEW_MODE_TYPE -> renderTypePills()
@@ -349,6 +367,27 @@ class BrowseHistoryFragment : Fragment() {
 
     private fun renderCharPills(charGroups: Map<String, List<MediaFileEntity>>) {
         MediaPillsHelper.renderCharPills(
+            requireContext(),
+            binding.historyPillsWrapper,
+            binding.historyPillsScroller,
+            charGroups,
+            selectedChars,
+            charPillsExpanded,
+            onPillClick = {
+                lastRenderHash = ""
+                render()
+            },
+            onCollapse = {
+                charPillsExpanded = false
+                lastRenderHash = ""
+                render()
+            }
+        )
+    }
+
+    /** v1.12：COS 分区下渲染作品名药丸（与全部页/收藏页一致） */
+    private fun renderCosWorkPills(charGroups: Map<String, List<MediaFileEntity>>) {
+        MediaPillsHelper.renderCosWorkPills(
             requireContext(),
             binding.historyPillsWrapper,
             binding.historyPillsScroller,

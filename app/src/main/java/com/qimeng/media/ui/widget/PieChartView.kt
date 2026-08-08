@@ -11,9 +11,7 @@ import android.view.View
 import android.view.animation.DecelerateInterpolator
 import com.qimeng.media.R
 import com.qimeng.media.resolveThemeColor
-import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.sin
 
 /**
  * 环形图（自绘 Canvas）。
@@ -41,61 +39,42 @@ class PieChartView @JvmOverloads constructor(
 
     private var slices: List<Slice> = emptyList()
     private var animatedProgress: Float = 0f
-    private var selectedIndex: Int = -1
+    // v1.12 删除：selectedIndex 恒为 -1（无写入路径，onTouchEvent 纯展示不消费触摸），其偏移分支与选中扇区显示分支为死代码，已移除
 
-    // 主题色
-    private val textColorPrimary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextPrimary) }
-    private val textColorSecondary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextSecondary) }
-    private val bgColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorBg) }
-
-    // 多色调色板（基于主题色 + 互补色，专业报表风格）
-    private val colorPalette: List<Int> by lazy {
-        val primary = context.resolveThemeColor(R.attr.qmColorPrimary)
-        val primarySoft = context.resolveThemeColor(R.attr.qmColorPrimarySoft)
-        listOf(
-            primary,
-            primarySoft,
-            adjustColor(primary, 0.7f),
-            adjustColor(primarySoft, 0.8f),
-            adjustColor(primary, 1.3f),
-            adjustColor(primarySoft, 1.2f)
-        )
-    }
-
-    // 画笔
+    // 画笔（颜色不在此初始化：主题色在 onDraw 中动态解析，见 v1.12 修复说明）
     private val slicePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val centerLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 11f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorSecondary
     }
     private val centerValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 22f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorPrimary
         isFakeBoldText = true
     }
     private val legendLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 11f.dp(context)
-        color = textColorPrimary
     }
     private val legendValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 10f.dp(context)
-        color = textColorSecondary
         textAlign = Paint.Align.RIGHT
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 13f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorSecondary
     }
+
+    // v1.12：多色调色板缓存（主题主色变化时重建），替代原 lazy 一次性缓存，
+    // 解决 configChanges=uiMode 下系统明暗切换不重建 View 时配色不刷新的问题
+    private var colorPalette: List<Int> = emptyList()
+    private var cachedPalettePrimary = 0
+    private var cachedPalettePrimarySoft = 0
 
     // 布局参数
     private val minSizeDp = 180
     private val ringThicknessDp = 24
     private val legendItemHeightDp = 18  // 每行图例高度
     private val legendTopPaddingDp = 8   // 图例区域顶部间距
-    private val selectedOffsetDp = 8
 
     private var animator: ValueAnimator? = null
 
@@ -105,7 +84,6 @@ class PieChartView @JvmOverloads constructor(
      */
     fun setData(slices: List<Slice>) {
         this.slices = slices
-        selectedIndex = -1
         startEnterAnimation()
         invalidate()
     }
@@ -147,8 +125,37 @@ class PieChartView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
 
+        // v1.12 修复：主题色改为 onDraw 内动态解析（Context 为运行期主题上下文），
+        // MainActivity 声明 configChanges=uiMode，系统明暗切换不重建 View，旧 lazy 缓存色不刷新
+        val textColorPrimary = context.resolveThemeColor(R.attr.qmColorTextPrimary)
+        val textColorSecondary = context.resolveThemeColor(R.attr.qmColorTextSecondary)
+        val bgColor = context.resolveThemeColor(R.attr.qmColorBg)
+        val primary = context.resolveThemeColor(R.attr.qmColorPrimary)
+        val primarySoft = context.resolveThemeColor(R.attr.qmColorPrimarySoft)
+
+        centerLabelPaint.color = textColorSecondary
+        centerValuePaint.color = textColorPrimary
+        legendLabelPaint.color = textColorPrimary
+        legendValuePaint.color = textColorSecondary
+        emptyPaint.color = textColorSecondary
+        // 主题主色变化时重建调色板（明暗切换后主色不同，颜色才会随主题刷新）
+        if (colorPalette.isEmpty() ||
+            cachedPalettePrimary != primary ||
+            cachedPalettePrimarySoft != primarySoft
+        ) {
+            cachedPalettePrimary = primary
+            cachedPalettePrimarySoft = primarySoft
+            colorPalette = listOf(
+                primary,
+                primarySoft,
+                adjustColor(primary, 0.7f),
+                adjustColor(primarySoft, 0.8f),
+                adjustColor(primary, 1.3f),
+                adjustColor(primarySoft, 1.2f)
+            )
+        }
+
         if (slices.isEmpty()) {
-            emptyPaint.color = textColorSecondary
             canvas.drawText("暂无分布数据", w / 2f, h / 2f, emptyPaint)
             return
         }
@@ -173,19 +180,8 @@ class PieChartView @JvmOverloads constructor(
             slices.forEachIndexed { index, slice ->
                 val sweepAngle = (slice.value.toFloat() / total) * 360f * animatedProgress
 
-                // 选中时向外偏移
-                val drawRect = if (index == selectedIndex) {
-                    val offset = selectedOffsetDp.dp(context).toFloat()
-                    val midAngle = Math.toRadians((startAngle + sweepAngle / 2).toDouble())
-                    val dx = offset * cos(midAngle).toFloat()
-                    val dy = offset * sin(midAngle).toFloat()
-                    RectF(baseRect.left + dx, baseRect.top + dy, baseRect.right + dx, baseRect.bottom + dy)
-                } else {
-                    baseRect
-                }
-
                 slicePaint.color = colorPalette[index % colorPalette.size]
-                canvas.drawArc(drawRect, startAngle, sweepAngle, true, slicePaint)
+                canvas.drawArc(baseRect, startAngle, sweepAngle, true, slicePaint)
 
                 startAngle += sweepAngle
             }
@@ -197,19 +193,11 @@ class PieChartView @JvmOverloads constructor(
 
             // 中心总览数字（动画完成后显示）
             if (animatedProgress >= 0.95f) {
-                if (selectedIndex >= 0 && selectedIndex < slices.size) {
-                    val selected = slices[selectedIndex]
-                    val percent = (selected.value.toFloat() / total * 100).toInt()
-                    canvas.drawText(selected.label, centerX, centerY - 8f.dp(context), centerLabelPaint)
-                    canvas.drawText("$percent%", centerX, centerY + 14f.dp(context), centerValuePaint)
-                } else {
-                    canvas.drawText("总计", centerX, centerY - 8f.dp(context), centerLabelPaint)
-                    canvas.drawText(total.toString(), centerX, centerY + 14f.dp(context), centerValuePaint)
-                }
+                canvas.drawText("总计", centerX, centerY - 8f.dp(context), centerLabelPaint)
+                canvas.drawText(total.toString(), centerX, centerY + 14f.dp(context), centerValuePaint)
             }
         } else {
             // 全部为0时在图表区显示提示
-            emptyPaint.color = textColorSecondary
             canvas.drawText("暂无数据", centerX, chartAreaHeight / 2f, emptyPaint)
         }
 
@@ -245,8 +233,7 @@ class PieChartView @JvmOverloads constructor(
     }
 
     /**
-     * 纯展示视图，不消费触摸事件，便于父级卡片接收点击。
-     * 保留 selectedIndex = -1 始终显示总计，不做扇区选中交互。
+     * 纯展示视图，不消费触摸事件，便于父级卡片接收点击，中心始终显示总计。
      */
     override fun onTouchEvent(event: MotionEvent): Boolean {
         return false

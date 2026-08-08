@@ -66,6 +66,8 @@ class AlbumDetailFragment : Fragment() {
     private var cachedAllTags = emptyList<TagEntity>()
     private var cachedHistory = emptyList<ViewHistoryEntity>()
     private var lastRenderedFingerprint: String = ""
+    // v1.12：render 协程去重用 Job——取消上一个未完成的重算，防止旧结果覆盖新筛选态
+    private var renderJob: kotlinx.coroutines.Job? = null
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
 
@@ -118,7 +120,7 @@ class AlbumDetailFragment : Fragment() {
 
     private fun setupActions() {
         binding.albumDetailFilterButton.setOnClickListener {
-            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FOR_ALBUM,
+            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FULL,
                 onApply = { next ->
                     filterState = next
                     lastRenderedFingerprint = ""
@@ -193,7 +195,8 @@ class AlbumDetailFragment : Fragment() {
                         }
                     }
 
-                    lastRenderedFingerprint = ""
+                    // v1.12：不再无条件清空指纹后全量重算——render() 内部会先做轻量指纹判定，
+                    // 数据身份未变化（如仅统计字段刷新）时直接跳过协程重算
                     render()
                 }
             }
@@ -202,10 +205,41 @@ class AlbumDetailFragment : Fragment() {
 
     private fun render() {
         if (_binding == null) return
+        // v1.12：渲染前先算轻量数据指纹（媒体身份 + filterState + viewMode），
+        // 与上次渲染一致时直接 return，不启动协程——避免 collect 每次发射都全量重算
+        val preFingerprint = buildString {
+            append(cachedAlbumMedia.size)
+            append("|")
+            append(cachedAlbumMedia.firstOrNull()?.recordKey.orEmpty())
+            append("|")
+            append(cachedAlbumMedia.lastOrNull()?.recordKey.orEmpty())
+            append("|")
+            append(filterType.orEmpty())
+            append("|")
+            append(filterState.viewRange)
+            append("|")
+            append(filterState.playRange)
+            append("|")
+            append(filterState.sizeRange)
+            append("|")
+            append(filterState.dateRange)
+            append("|")
+            append(filterState.selectedTags.sorted().joinToString(","))
+            append("|")
+            append(filterState.tagMode)
+            append("|")
+            append(viewMode)
+        }
+        if (preFingerprint == lastRenderedFingerprint) return
+        lastRenderedFingerprint = preFingerprint
+
         val stats = cachedStats.associateBy { it.recordKey }
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { e -> e.value.map { it.name }.toSet() }
 
-        lifecycleScope.launch {
+        // v1.12：改用 viewLifecycleOwner.lifecycleScope（原 fragment 级 lifecycleScope 在
+        // View 销毁后仍运行且不取消），并取消上一个未完成的 render 协程去重
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
             val (filtered, charGroups) = computeAlbumGroupsAsync(stats, tagMap)
             if (_binding == null) return@launch
             cachedCharGroups = charGroups
@@ -253,34 +287,12 @@ class AlbumDetailFragment : Fragment() {
 
         binding.albumDetailCount.text = "${displayed.size} 文件 · ${MediaBrowserLogic.formatSize(displayed.sumOf { it.sizeBytes })}"
 
-        val renderHash = buildString {
-            append(viewMode)
-            append("|cos=")
-            append(isCosAlbum)
-            append("|")
-            append(displayed.size)
-            append("|")
-            append(displayed.firstOrNull()?.recordKey.orEmpty())
-            append("|sel=")
-            append(selectedChars.sorted().joinToString(","))
-            append("|ft=")
-            append(filterType.orEmpty())
-            append("|typeExp=")
-            append(typePillsExpanded)
-            if (viewMode == VIEW_MODE_CHARACTER) {
-                append("|")
-                charGroups.entries.sortedBy { it.key }.forEach { (k, v) ->
-                    append("$k:${v.size},")
-                }
-            }
-        }
-        if (renderHash != lastRenderedFingerprint) {
-            lastRenderedFingerprint = renderHash
-            if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty()) {
-                adapter.submitMediaWithGroups(filtered, charGroups)
-            } else {
-                adapter.submitMedia(displayed)
-            }
+        // v1.12：原 renderHash 去重已由 render() 前置的轻量指纹判定取代（同指纹直接不启动协程），
+        // 此处每次 render 必提交——数据身份已变，DiffUtil 内部负责增量更新
+        if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty()) {
+            adapter.submitMediaWithGroups(filtered, charGroups)
+        } else {
+            adapter.submitMedia(displayed)
         }
         binding.albumDetailEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
         binding.albumDetailRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE

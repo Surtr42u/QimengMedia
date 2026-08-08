@@ -167,15 +167,4 @@ class SourceMatcherTest {
         SourceMatcher.updateCustomSources(emptySet())
         assertThat(SourceMatcher.match("临时游戏")).isNull()
     }
-
-    // ==================== txt 作品 ====================
-
-    @Test
-    fun match_txtWork_matchesAfterUpdate() {
-        // 更新 txt 作品后应能匹配
-        SourceMatcher.updateTxtWorks(setOf("某部小说"))
-        assertThat(SourceMatcher.match("某部小说")).isEqualTo("某部小说")
-        // 清理
-        SourceMatcher.updateTxtWorks(emptySet())
-    }
 }

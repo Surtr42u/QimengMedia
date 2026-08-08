@@ -91,6 +91,10 @@ class HomeFragment : Fragment() {
     private var flingConsumedAt = 0L
     private var cachedLikeCounts: Map<String, Int> = emptyMap()
     private var likeCountsDirty = true
+    // v1.12：render 并发去重——旧实现每次 setTab/刷新/collect 都 launch 新协程不取消旧的，
+    // 旧 render 在 withContext(Default) 挂起期间 currentTab 已被改写时，会把旧 tab 的排序
+    // 结果写入新 tab 键并提交旧列表（旧查询覆盖新查询）。这里取消上一个 render job。
+    private var renderJob: kotlinx.coroutines.Job? = null
     private val likePrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith(KEY_LIKE_COUNT_PREFIX)) {
             likeCountsDirty = true
@@ -154,6 +158,9 @@ class HomeFragment : Fragment() {
                     displayCount += DISPLAY_INCREMENT
                     tabDisplayCounts[currentTab] = displayCount
                     val items = tabSortedItems[currentTab].orEmpty()
+                    // v1.12：目标 tab 首次切换后 render 尚在挂起、该键仍为空时，直接跳过
+                    // ——旧实现会 submitList(emptyList) 把当前列表清空成白屏闪烁，直至 render 完成
+                    if (items.isEmpty()) return
                     adapter.submitList(items.take(displayCount))
                 }
             }
@@ -171,9 +178,7 @@ class HomeFragment : Fragment() {
             // 保留 dailyShownCountMap，让之前展示过的文件被惩罚，新文件排到前面
             lastRenderedKeys = ""
             displayCount = INITIAL_DISPLAY_COUNT
-            viewLifecycleOwner.lifecycleScope.launch {
-                render()
-            }
+            launchRender()
             swipeRefresh?.isRefreshing = false
         }
         chipRecommend?.setOnClickListener { setTab(TAB_RECOMMEND) }
@@ -185,13 +190,11 @@ class HomeFragment : Fragment() {
         rankChips.forEach { (period, chip) -> chip.setOnClickListener { setRankPeriod(period) } }
         columnButton?.setOnClickListener { toggleColumns() }
         filterButton?.setOnClickListener {
-            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FOR_HOME,
+            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FULL,
                 onApply = { next ->
                     filterState = next
                     displayCount = INITIAL_DISPLAY_COUNT
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        render()
-                    }
+                    launchRender()
                 },
                 onAddTag = { name -> viewModel.createTag(name) },
                 onDeleteTag = { tagId -> viewModel.deleteTagById(tagId) }
@@ -281,7 +284,9 @@ class HomeFragment : Fragment() {
                     cachedAllTags = allTags
                     cachedHistory = history
 
-                    render()
+                    // v1.12：走统一去重入口，避免 collect 触发的 render 与 setTab/刷新触发的
+                    // render 并发交错（旧实现直接挂起调用，无去重）
+                    launchRender()
 
                     // 后台预构建搜索索引，用户打开搜索页时索引已就绪
                     launch(Dispatchers.Default) {
@@ -294,6 +299,17 @@ class HomeFragment : Fragment() {
         }
     }
 
+    /**
+     * v1.12：启动去重后的 render——取消上一个未完成的 render job，防止挂起期间
+     * tab/筛选状态被改写导致旧结果覆盖新结果。
+     */
+    private fun launchRender() {
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
+            render()
+        }
+    }
+
     private fun setTab(tab: Int) {
         // 保存当前 tab 的排序缓存
         tabDisplayCounts[currentTab] = displayCount
@@ -302,18 +318,14 @@ class HomeFragment : Fragment() {
         displayCount = tabDisplayCounts[tab] ?: INITIAL_DISPLAY_COUNT
         updateChipStates()
         rankPeriodContainer?.visibility = if (tab == TAB_RANKING) View.VISIBLE else View.GONE
-        viewLifecycleOwner.lifecycleScope.launch {
-            render()
-        }
+        launchRender()
     }
 
     private fun setRankPeriod(period: MediaRankingPeriod) {
         rankPeriod = period
         displayCount = INITIAL_DISPLAY_COUNT
         updateChipStates()
-        viewLifecycleOwner.lifecycleScope.launch {
-            render()
-        }
+        launchRender()
     }
 
     private fun toggleColumns() {

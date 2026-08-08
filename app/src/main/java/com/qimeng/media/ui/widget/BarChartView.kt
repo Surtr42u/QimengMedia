@@ -44,14 +44,7 @@ class BarChartView @JvmOverloads constructor(
     private var animatedProgress: Float = 0f
     private var selectedIndex: Int = -1
 
-    // 主题色
-    private val barColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorPrimary) }
-    private val barColorSoft: Int by lazy { context.resolveThemeColor(R.attr.qmColorPrimarySoft) }
-    private val textColorPrimary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextPrimary) }
-    private val textColorSecondary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextSecondary) }
-    private val dividerColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorDivider) }
-
-    // 画笔
+    // 画笔（颜色不在此初始化：主题色在 onDraw 中动态解析，见 v1.12 修复说明）
     private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val selectedBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -61,18 +54,15 @@ class BarChartView @JvmOverloads constructor(
     private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 10f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorPrimary
     }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1f
-        color = dividerColor
         alpha = 60
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 13f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorSecondary
     }
 
     // 布局参数
@@ -85,6 +75,12 @@ class BarChartView @JvmOverloads constructor(
 
     private var animator: ValueAnimator? = null
     private val barRects: MutableList<RectF> = mutableListOf()
+    // v1.12：LinearGradient 缓存（坐标或颜色变化时才重建），避免动画期间 onDraw 每帧 new Shader
+    private var cachedGradient: LinearGradient? = null
+    private var cachedGradientTop = 0f
+    private var cachedGradientBottom = 0f
+    private var cachedGradientStart = 0
+    private var cachedGradientEnd = 0
 
     /**
      * 设置柱状图数据并触发入场动画。
@@ -128,8 +124,20 @@ class BarChartView @JvmOverloads constructor(
         val h = height.toFloat()
         barRects.clear()
 
+        // v1.12 修复：主题色改为 onDraw 内动态解析（Context 为运行期主题上下文），
+        // MainActivity 声明 configChanges=uiMode，系统明暗切换不重建 View，旧 lazy 缓存色不刷新；
+        // onDraw 每帧解析有少量开销，可接受（统计页图表为低频重绘，非滚动热路径）。
+        val barColor = context.resolveThemeColor(R.attr.qmColorPrimary)
+        val barColorSoft = context.resolveThemeColor(R.attr.qmColorPrimarySoft)
+        val textColorPrimary = context.resolveThemeColor(R.attr.qmColorTextPrimary)
+        val textColorSecondary = context.resolveThemeColor(R.attr.qmColorTextSecondary)
+        val dividerColor = context.resolveThemeColor(R.attr.qmColorDivider)
+
+        gridPaint.color = dividerColor
+        valuePaint.color = textColorPrimary
+        emptyPaint.color = textColorSecondary
+
         if (entries.isEmpty()) {
-            emptyPaint.color = textColorSecondary
             canvas.drawText("暂无排行数据", w / 2f, h / 2f, emptyPaint)
             return
         }
@@ -167,17 +175,13 @@ class BarChartView @JvmOverloads constructor(
             barRects.add(barRect)
 
             // 渐变填充（选中时用纯色高亮，否则用渐变）
+            // v1.12：LinearGradient 只在坐标或颜色变化时重建，动画期间 barTop 每帧变化，
+            // 命中缓存条件即复用同一 Shader，避免动画 700ms 内每帧 new LinearGradient 的分配开销
             val paint = if (index == selectedIndex) {
-                selectedBarPaint.shader = LinearGradient(
-                    0f, barTop, 0f, chartBottom,
-                    barColor, barColor, Shader.TileMode.CLAMP
-                )
+                selectedBarPaint.shader = getCachedGradient(barTop, chartBottom, barColor, barColor)
                 selectedBarPaint
             } else {
-                barPaint.shader = LinearGradient(
-                    0f, barTop, 0f, chartBottom,
-                    barColor, barColorSoft, Shader.TileMode.CLAMP
-                )
+                barPaint.shader = getCachedGradient(barTop, chartBottom, barColor, barColorSoft)
                 barPaint
             }
             val cornerRadius = 4f.dp(context)
@@ -217,6 +221,30 @@ class BarChartView @JvmOverloads constructor(
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    /**
+     * v1.12：获取柱条渐变 Shader。坐标与起止颜色均未变化时复用缓存实例，
+     * 避免动画期间 onDraw 每帧 new LinearGradient（柱条高度每帧在变，但通常相邻帧差值很小，
+     * 这里采用精确缓存：任一参数变化才重建）。
+     */
+    private fun getCachedGradient(top: Float, bottom: Float, startColor: Int, endColor: Int): LinearGradient {
+        val cached = cachedGradient
+        if (cached != null &&
+            cachedGradientTop == top &&
+            cachedGradientBottom == bottom &&
+            cachedGradientStart == startColor &&
+            cachedGradientEnd == endColor
+        ) {
+            return cached
+        }
+        cachedGradientTop = top
+        cachedGradientBottom = bottom
+        cachedGradientStart = startColor
+        cachedGradientEnd = endColor
+        return LinearGradient(0f, top, 0f, bottom, startColor, endColor, Shader.TileMode.CLAMP).also {
+            cachedGradient = it
+        }
     }
 
     private fun ellipsize(text: String, maxWidth: Float, paint: Paint): String {

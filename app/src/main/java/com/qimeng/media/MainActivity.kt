@@ -69,6 +69,11 @@ class MainActivity : AppCompatActivity() {
         // M8: 配置变更后 fragmentCache 中的 Fragment 引用已失效，必须清空
         if (savedInstanceState != null) {
             fragmentCache.clear()
+            // v1.12 修复：深色切换触发 recreate() 后，系统会按 tag 把 add 过的 tab Fragment 实例
+            // 恢复到 FragmentManager（add/hide 模式下旧实例仍留在容器中）。必须在此遍历现有
+            // fragment 重建 fragmentCache，否则后续 showCachedFragment 用 getOrPut 新建实例 add，
+            // 会与恢复的旧实例叠加，导致每次深色切换后首次点 tab 出现重复 fragment。
+            rebuildTabFragmentCache()
             // 标记正在重建状态，防止系统恢复 selectedItemId 时 listener 误触发 showCachedFragment
             // 清空覆盖页面 BackStack（如详情页），导致详情页上方出现底部 tab
             isRestoringState = true
@@ -191,7 +196,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCachedFragment(tabId: Int, factory: () -> Fragment): Boolean {
-        val fragment = fragmentCache.getOrPut(tabId) { factory() }
+        // v1.12 修复：recreate() 后 fragmentCache 已由 rebuildTabFragmentCache() 重建，
+        // 这里再兜底用 findFragmentByTag 找回系统恢复的旧 tab 实例（覆盖缓存重建遗漏的边缘场景），
+        // 避免 getOrPut 新建实例 add 到容器与恢复的旧实例叠加。
+        val fragment = fragmentCache.getOrPut(tabId) {
+            supportFragmentManager.findFragmentByTag(tabFragmentTag(tabId)) ?: factory()
+        }
         val fm = supportFragmentManager
         val transaction = fm.beginTransaction()
         // 隐藏所有当前可见的Tab Fragment
@@ -204,7 +214,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             // 首次添加
             fm.popBackStack(null, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
-            transaction.add(R.id.fragmentContainer, fragment)
+            // v1.12：add 时指定稳定 tag，供下次 recreate() 后从 FragmentManager 找回恢复实例
+            transaction.add(R.id.fragmentContainer, fragment, tabFragmentTag(tabId))
         }
         transaction.commit()
         return true
@@ -298,6 +309,24 @@ class MainActivity : AppCompatActivity() {
             .commit()
     }
 
+    /**
+     * v1.12：recreate() 后从 FragmentManager 找回系统恢复的 tab Fragment 实例重建缓存。
+     * 每个 tab Fragment 在 add 时都指定了稳定 tag（"tab_<tabId>"），系统恢复后 tag 保留，
+     * 据此还原 tabId → Fragment 映射，避免 showCachedFragment 新建实例与旧实例叠加。
+     * 调用时机：onCreate 中 savedInstanceState != null 分支（super.onCreate 后系统已恢复 fragment）。
+     */
+    private fun rebuildTabFragmentCache() {
+        supportFragmentManager.fragments.forEach { fragment ->
+            val tabId = fragment.tag?.removePrefix(TAB_FRAGMENT_TAG_PREFIX)?.toIntOrNull()
+            if (tabId != null) {
+                fragmentCache[tabId] = fragment
+            }
+        }
+    }
+
+    /** v1.12：tab Fragment 的稳定 tag，recreate() 后用于从 FragmentManager 找回恢复实例 */
+    private fun tabFragmentTag(tabId: Int): String = TAB_FRAGMENT_TAG_PREFIX + tabId
+
     fun getBottomNavigationInfo(): String {
         return "visibility=${binding.bottomNavigation.visibility}/height=${binding.bottomNavigation.height}/width=${binding.bottomNavigation.width}"
     }
@@ -332,5 +361,10 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = lightBars
             isAppearanceLightNavigationBars = lightBars
         }
+    }
+
+    companion object {
+        /** tab Fragment tag 前缀，配合 rebuildTabFragmentCache() 在 recreate() 后还原缓存 */
+        private const val TAB_FRAGMENT_TAG_PREFIX = "tab_"
     }
 }

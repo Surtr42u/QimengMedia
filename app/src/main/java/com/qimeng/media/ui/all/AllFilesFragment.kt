@@ -83,6 +83,11 @@ class AllFilesFragment : Fragment() {
     private var lastRenderedFingerprint: String = ""
     private var mediaFingerprint: String = ""
     private var observeStarted: Boolean = false
+    // v1.12：数据收集器 job 引用——下拉刷新会重复调 observeData() 叠加永久收集器，
+    // 刷新前取消旧收集器，避免每个数据变更被 N 个收集器重复处理
+    private var observeJob: kotlinx.coroutines.Job? = null
+    // v1.12：render 协程 job——旧 render 晚完成会覆盖新选中态 UI，启动新 render 前取消旧的
+    private var renderJob: kotlinx.coroutines.Job? = null
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
 
@@ -121,6 +126,8 @@ class AllFilesFragment : Fragment() {
 
     private fun setupActions() {
         binding.allSwipeRefresh.setOnRefreshListener {
+            // v1.12：先取消旧收集器，避免每次下拉叠加一个永久收集器
+            observeJob?.cancel()
             lastRenderedFingerprint = ""
             mediaFingerprint = ""
             observeStarted = false
@@ -138,7 +145,7 @@ class AllFilesFragment : Fragment() {
         binding.allChipCharacter.setOnClickListener { setViewMode(VIEW_MODE_CHARACTER) }
         binding.allChipType.setOnClickListener { setViewMode(VIEW_MODE_TYPE) }
         binding.allFilterButton.setOnClickListener {
-            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FOR_ALL,
+            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FULL,
                 onApply = { next ->
                     filterState = next
                     render()
@@ -154,7 +161,7 @@ class AllFilesFragment : Fragment() {
     }
 
     private fun observeData() {
-        viewLifecycleOwner.lifecycleScope.launch {
+        observeJob = viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // 重新收集 Flow 时需要重新 submitMedia（避免白屏），但不重置数据指纹（避免不必要刷新）
                 lastRenderedFingerprint = ""
@@ -198,7 +205,9 @@ class AllFilesFragment : Fragment() {
                     // 注：此处不再调用 computeSourceGroups()——它已退化为 render() 的空壳委托，
                     // 与下方 render() 重复执行（fingerprint 相同时白白浪费 45-210ms 主线程时间）。
                     // 分区药丸点击回调（renderPartitionPills 内）仍通过 computeSourceGroups() 触发 render。
-                    val fp = "${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}"
+                    // v1.12：指纹纳入 COS 侧数据（cosMedia/cosWorks 的首条与数量）——旧指纹只含
+                    // nonCosMedia，COS 文件新增/作品表变更时 fp 不变 → 全部页不自动重渲染
+                    val fp = "${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}|${cosMedia.size}|${cosMedia.firstOrNull()?.recordKey.orEmpty()}|${cosWorks.size}"
                     if (fp != mediaFingerprint || !observeStarted) {
                         mediaFingerprint = fp
                         observeStarted = true
@@ -247,7 +256,10 @@ class AllFilesFragment : Fragment() {
             binding.allPillsWrapper.removeAllViews()
         }
 
-        viewLifecycleOwner.lifecycleScope.launch {
+        // v1.12：启动去重后的 render——取消上一个未完成的 render 协程，
+        // 防止旧 Default 计算晚完成覆盖新选中态 UI
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
             val computeStart = System.currentTimeMillis()
             val computeResult = computeAllGroupsAsync(workingMedia, isCosPartition, isAllPartition)
 
@@ -270,10 +282,14 @@ class AllFilesFragment : Fragment() {
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
         val typed = MediaRenderHelper.applyTypeFilter(workingMedia, filterType)
 
+        // v1.12：快照选中集合——主线程药丸点击会 clear()/addAll() 修改可变 Set，
+        // 直接在 Default 线程迭代 sorted()/filterKeys 可能 ConcurrentModificationException
+        val partitionsSnapshot = selectedPartitions.toSet().sorted().joinToString("+")
+        val sourcesSnapshot = selectedSources.toSet().sorted().joinToString("+")
+
         // 缓存键：只在数据/filterType/partition/selectedSources变化时重算分组
-        val partitionKey = selectedPartitions.sorted().joinToString("+")
-        val newSourceKey = "$partitionKey|$filterType|$dataVersion"
-        val newCharKey = "$partitionKey|$filterType|${selectedSources.sorted()}|$dataVersion"
+        val newSourceKey = "$partitionsSnapshot|$filterType|$dataVersion"
+        val newCharKey = "$partitionsSnapshot|$filterType|$sourcesSnapshot|$dataVersion"
 
         if (newSourceKey != sourceGroupsKey) {
             cachedSourceGroups = when {
@@ -290,8 +306,10 @@ class AllFilesFragment : Fragment() {
 
         val needCharGroups = viewMode == VIEW_MODE_CHARACTER || selectedChars.isNotEmpty()
         if (needCharGroups && newCharKey != charGroupsKey) {
-            val baseForChars = if (selectedSources.isNotEmpty()) {
-                val sourceMediaSet = cachedSourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
+            // v1.12：快照化判断与过滤，避免并发修改
+            val sourcesSnapshotSet = selectedSources.toSet()
+            val baseForChars = if (sourcesSnapshotSet.isNotEmpty()) {
+                val sourceMediaSet = cachedSourceGroups.filterKeys { it in sourcesSnapshotSet }.values.flatten().toSet()
                 typed.filter { it in sourceMediaSet }
             } else typed
             cachedCharGroups = when {
@@ -309,8 +327,11 @@ class AllFilesFragment : Fragment() {
         val srcGroups = cachedSourceGroups
         val chrGroups = cachedCharGroups
 
+        // v1.12：快照传入，避免 Default 线程迭代可变 Set 的 CME
+        val sourcesSnapshotSet = selectedSources.toSet()
+        val charsSnapshotSet = selectedChars.toSet()
         val displayed = MediaRenderHelper.computeDisplayed(
-            typed, srcGroups, chrGroups, selectedSources, selectedChars
+            typed, srcGroups, chrGroups, sourcesSnapshotSet, charsSnapshotSet
         )
 
         val result = MediaBrowserLogic.applyFilter(displayed, query = "", filterState, stats, tagMap, cachedHistory)
@@ -422,6 +443,11 @@ class AllFilesFragment : Fragment() {
         if (mode == VIEW_MODE_SOURCE) sourcePillsExpanded = true
         if (mode == VIEW_MODE_CHARACTER) charPillsExpanded = true
         if (mode == VIEW_MODE_TYPE) typePillsExpanded = true
+        // v1.12：切换模式清空残留选中（对齐 Favorite/History 的 setViewMode）——
+        // 旧实现不清 selectedSources/selectedChars，角色模式选中后切到分区模式，
+        // computeDisplayed 仍按旧选中过滤，列表被残留选中项误过滤
+        selectedSources.clear()
+        selectedChars.clear()
         lastRenderedFingerprint = ""
         updateChipStyles()
         render()

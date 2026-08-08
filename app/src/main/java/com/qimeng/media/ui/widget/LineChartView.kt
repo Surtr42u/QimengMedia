@@ -49,12 +49,7 @@ class LineChartView @JvmOverloads constructor(
     /** 当前选中的数据点索引（-1 表示无选中），点击数据点高亮并显示数值气泡 */
     private var selectedIndex: Int = -1
 
-    // 主题色
-    private val lineColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorPrimary) }
-    private val textColorSecondary: Int by lazy { context.resolveThemeColor(R.attr.qmColorTextSecondary) }
-    private val dividerColor: Int by lazy { context.resolveThemeColor(R.attr.qmColorDivider) }
-
-    // 画笔
+    // 画笔（颜色不在此初始化：主题色在 onDraw 中动态解析，见 v1.12 修复说明）
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 3f.dp(context)
@@ -69,23 +64,19 @@ class LineChartView @JvmOverloads constructor(
     }
     private val pointFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = context.resolveThemeColor(R.attr.qmColorBg)
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 10f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorSecondary
     }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1f
-        color = dividerColor
         alpha = 60
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 13f.dp(context)
         textAlign = Paint.Align.CENTER
-        color = textColorSecondary
     }
 
     // 布局参数
@@ -96,6 +87,13 @@ class LineChartView @JvmOverloads constructor(
     private val minChartHeightDp = 120
 
     private var animator: ValueAnimator? = null
+
+    // v1.12：区域渐变 Shader 缓存（坐标与颜色变化时才重建），
+    // 图表数据不变时 chartTop/chartBottom/lineColor 均固定，动画与重绘期间可直接复用
+    private var cachedAreaGradient: LinearGradient? = null
+    private var cachedAreaGradientTop = 0f
+    private var cachedAreaGradientBottom = 0f
+    private var cachedAreaGradientColor = 0
 
     /**
      * 设置趋势数据并触发入场动画。
@@ -138,8 +136,19 @@ class LineChartView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
 
+        // v1.12 修复：主题色改为 onDraw 内动态解析（Context 为运行期主题上下文），
+        // MainActivity 声明 configChanges=uiMode，系统明暗切换不重建 View，旧 lazy 缓存色不刷新
+        val lineColor = context.resolveThemeColor(R.attr.qmColorPrimary)
+        val textColorSecondary = context.resolveThemeColor(R.attr.qmColorTextSecondary)
+        val dividerColor = context.resolveThemeColor(R.attr.qmColorDivider)
+        val bgColor = context.resolveThemeColor(R.attr.qmColorBg)
+
+        gridPaint.color = dividerColor
+        labelPaint.color = textColorSecondary
+        emptyPaint.color = textColorSecondary
+        pointFillPaint.color = bgColor
+
         if (points.isEmpty()) {
-            emptyPaint.color = textColorSecondary
             canvas.drawText("暂无趋势数据", w / 2f, h / 2f, emptyPaint)
             return
         }
@@ -199,11 +208,22 @@ class LineChartView @JvmOverloads constructor(
             areaPath.close()
 
             // 渐变填充（主题色从上到下渐淡）
-            areaPaint.shader = LinearGradient(
-                0f, chartTop, 0f, chartBottom,
-                lineColor, lineColor,
-                Shader.TileMode.CLAMP
-            )
+            // v1.12：坐标与颜色不变时复用缓存 Shader，避免动画 800ms 内每帧 new LinearGradient
+            if (cachedAreaGradient == null ||
+                cachedAreaGradientTop != chartTop ||
+                cachedAreaGradientBottom != chartBottom ||
+                cachedAreaGradientColor != lineColor
+            ) {
+                cachedAreaGradientTop = chartTop
+                cachedAreaGradientBottom = chartBottom
+                cachedAreaGradientColor = lineColor
+                cachedAreaGradient = LinearGradient(
+                    0f, chartTop, 0f, chartBottom,
+                    lineColor, lineColor,
+                    Shader.TileMode.CLAMP
+                )
+            }
+            areaPaint.shader = cachedAreaGradient
             areaPaint.alpha = 40
             canvas.drawPath(areaPath, areaPaint)
             areaPaint.alpha = 255
@@ -248,20 +268,22 @@ class LineChartView @JvmOverloads constructor(
 
         // 5. 绘制选中点高亮 + 数值气泡（动画完成后才响应）
         if (selectedIndex >= 0 && selectedIndex < coords.size && animatedProgress >= 0.95f) {
-            drawSelectedPoint(canvas, coords[selectedIndex], chartLeft, chartRight, chartTop)
+            drawSelectedPoint(canvas, coords[selectedIndex], chartLeft, chartRight, chartTop, lineColor)
         }
     }
 
     /**
      * 绘制选中数据点的高亮圆圈和数值气泡。
      * 气泡位置优先在点上方，空间不足时切换到下方，避免超出图表区域。
+     * @param lineColor 当前主题主色（onDraw 已解析，传入避免重复解析）
      */
     private fun drawSelectedPoint(
         canvas: Canvas,
         coord: Triple<Point, Float, Float>,
         chartLeft: Float,
         chartRight: Float,
-        chartTop: Float
+        chartTop: Float,
+        lineColor: Int
     ) {
         val (point, x, y) = coord
         val pointRadius = pointRadiusDp.dp(context).toFloat()

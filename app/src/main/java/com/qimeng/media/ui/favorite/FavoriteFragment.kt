@@ -12,6 +12,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -58,6 +59,8 @@ class FavoriteFragment : Fragment() {
     private var charPillsExpanded = true
     private var typePillsExpanded = true
     private var lastRenderHash = ""
+    // v1.12：render 协程 job——旧 render 晚完成会覆盖新选中态 UI，启动新 render 前取消旧的
+    private var renderJob: Job? = null
     private var cachedCosMedia = emptyList<MediaFileEntity>()
     private var cachedCosWorks = emptyList<CosWorkEntity>()
     private var cachedAuthorMedia = emptyList<AuthorMediaCrossRef>()
@@ -88,6 +91,8 @@ class FavoriteFragment : Fragment() {
         )
         binding.favoriteBack.setOnClickListener { parentFragmentManager.popBackStack() }
         binding.favoriteSwipeRefresh.setOnRefreshListener {
+            // v1.12：下拉刷新重读收藏键并重新渲染，修复刷新 no-op
+            refreshFavoriteData()
             binding.favoriteSwipeRefresh.isRefreshing = false
         }
         scrollListener = ViewTreeObserver.OnScrollChangedListener {
@@ -112,7 +117,8 @@ class FavoriteFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-
+        // v1.12：双指缩放列数（与全部页/历史页一致）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.favoriteRecycler)
     }
 
     private fun setupChips() {
@@ -120,6 +126,22 @@ class FavoriteFragment : Fragment() {
         binding.favoriteChipSource.setOnClickListener { setViewMode(VIEW_MODE_SOURCE) }
         binding.favoriteChipCharacter.setOnClickListener { setViewMode(VIEW_MODE_CHARACTER) }
         binding.favoriteChipType.setOnClickListener { setViewMode(VIEW_MODE_TYPE) }
+    }
+
+    /** v1.12：下拉刷新——重读收藏键、重新过滤收藏列表并渲染，修复刷新 no-op */
+    private fun refreshFavoriteData() {
+        val favPrefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val favKeys = favPrefs?.getStringSet(KEY_FAVORITES, emptySet()) ?: emptySet()
+        val isCosPartition = selectedPartitions == setOf("COS")
+        val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
+        val workingMedia = when {
+            isCosPartition -> cachedCosMedia
+            isAllPartition -> cachedMedia + cachedCosMedia
+            else -> cachedMedia
+        }
+        cachedFavoriteMedia = workingMedia.filter { it.recordKey in favKeys }
+        lastRenderHash = ""
+        computeSourceGroups()
     }
 
     private fun observeData() {
@@ -170,8 +192,16 @@ class FavoriteFragment : Fragment() {
                         isAllPartition -> cachedMedia + cachedCosMedia
                         else -> cachedMedia
                     }
-                    cachedFavoriteMedia = workingMedia.filter { it.recordKey in favKeys }
-                    computeSourceGroups()
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        // v1.12：收藏过滤移入 Default 线程，避免 9 流合并每次 stats/history 变更都在主线程全量过滤；
+                        // 过滤结果回到主线程再赋值并触发 render，保留 UI 更新在主线程
+                        val favoriteMedia = withContext(Dispatchers.Default) {
+                            workingMedia.filter { it.recordKey in favKeys }
+                        }
+                        if (_binding == null) return@launch
+                        cachedFavoriteMedia = favoriteMedia
+                        computeSourceGroups()
+                    }
                 }
             }
         }
@@ -187,11 +217,18 @@ class FavoriteFragment : Fragment() {
 
         val isCosPartition = selectedPartitions == setOf("COS")
         val isAllPartition = selectedPartitions.containsAll(listOf("常规", "COS"))
-
-        val typed = MediaRenderHelper.applyTypeFilter(cachedFavoriteMedia, filterType)
+        // 主线程快照收藏列表引用，供协程在 Default 线程安全使用
+        val favoriteMedia = cachedFavoriteMedia
 
         // 分区→类型→出处→角色 逐层联动：出处和角色分组都基于类型筛选后的文件
-        lifecycleScope.launch {
+        // v1.12：取消上一个未完成的 render 协程，防止旧 Default 计算晚完成覆盖新选中态 UI；
+        // 改用 viewLifecycleOwner.lifecycleScope，随 View 销毁自动取消
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
+            // v1.12：类型筛选移入 Default 线程计算，避免主线程全量过滤
+            val typed = withContext(Dispatchers.Default) {
+                MediaRenderHelper.applyTypeFilter(favoriteMedia, filterType)
+            }
             val (sourceGroups, charGroups) = computeFavoriteGroupsAsync(typed, isCosPartition, isAllPartition)
             if (_binding == null) return@launch
             cachedSourceGroups = sourceGroups

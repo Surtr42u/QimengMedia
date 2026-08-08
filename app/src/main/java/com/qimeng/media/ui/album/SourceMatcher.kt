@@ -14,7 +14,7 @@ object SourceMatcher {
     /** matchAll 缓存容量上限：超过时清空重建，防长期累积（用户持续扫描新文件场景）。8192 远超常见媒体库规模（数千），极端场景才触发 */
     private const val MATCH_ALL_CACHE_MAX_SIZE = 8192
 
-    /** matchAll 结果缓存：同一 fileName 的出处+角色匹配结果在数据版本内不变，批量遍历（如 groupBySource 对 5816 文件）受益。customSources/txtWorks 更新时清空 */
+    /** matchAll 结果缓存：同一 fileName 的出处+角色匹配结果在数据版本内不变，批量遍历（如 groupBySource 对 5816 文件）受益。customSources 更新时清空 */
     private val matchAllCache = ConcurrentHashMap<String, Pair<String?, List<String>>>(256)
 
     /** charMiss 采样计数器，线程安全 */
@@ -86,22 +86,6 @@ object SourceMatcher {
         matchAllCache.clear()
     }
 
-    private var txtWorks: Set<String> = emptySet()
-    private var txtWorkVariants: List<VariantEntry> = emptyList()
-
-    fun updateTxtWorks(works: Set<String>) {
-        txtWorks = works
-        txtWorkVariants = works.map { work ->
-            VariantEntry(
-                collapsedKey = work.replace("\\s+".toRegex(), "").lowercase(),
-                canonical = work,
-                originalVariant = work
-            )
-        }.sortedByDescending { it.collapsedKey.length }
-        // txt 作品变化，matchAll 缓存失效
-        matchAllCache.clear()
-    }
-
     fun match(fileName: String): String? {
         val nameNoExt = fileName.substringBeforeLast('.')
         val collapsed = nameNoExt.replace("\\s+".toRegex(), "").lowercase()
@@ -114,11 +98,6 @@ object SourceMatcher {
         for (entry in customVariants) {
             if (collapsed.startsWith(entry.collapsedKey)) return entry.canonical
         }
-        // 第三层：txt 作品（collapsed前缀匹配）
-        for (entry in txtWorkVariants) {
-            if (collapsed.startsWith(entry.collapsedKey)) return entry.canonical
-        }
-
         // 回退：原始文件名前缀匹配（保留空格和大小写，匹配精度较低）
         for (group in BUILTIN_GROUPS) {
             for (variant in group.variants) {
@@ -239,7 +218,7 @@ object SourceMatcher {
     /**
      * 一次性匹配出处和角色，避免对同一文件名重复调用 match()。
      * 返回 Pair<出处, 角色列表>，出处为 null 表示未匹配到。
-     * 结果按 fileName 缓存（customSources/txtWorks 更新时清空），批量遍历（如 groupBySource 对数千文件）时避免重复匹配。
+     * 结果按 fileName 缓存（customSources 更新时清空），批量遍历（如 groupBySource 对数千文件）时避免重复匹配。
      */
     fun matchAll(fileName: String): Pair<String?, List<String>> {
         // 缓存命中：同一文件名的出处+角色匹配结果在数据版本内不变
@@ -328,7 +307,6 @@ object SourceMatcher {
     fun allKnownSources(): Set<String> {
         val all = mutableSetOf<String>()
         all.addAll(customSources)
-        all.addAll(txtWorks)
         all.addAll(BUILTIN_GROUPS.map { it.canonical })
         return all
     }

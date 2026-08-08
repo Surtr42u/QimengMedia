@@ -56,10 +56,14 @@ object AppLog {
         val file = logFile ?: return
         synchronized(lock) {
             try {
-                // 超过大小限制时截断
+                // v1.12 修复：2MB 截断判定改为"仅当文件超限时截断一次再追加"。
+                // 旧实现超限时固定保留末尾 500 行再整文件重写（readLines+takeLast+writeText），
+                // 若日志单行较长（大堆栈/长路径），截断后仍可能超 2MB，导致每次追加都重复全量读写。
+                // 现改为按字节保留文件尾部（约上限一半），保证一次截断后文件回到限内，后续追加仅 appendText。
                 if (file.exists() && file.length() > MAX_LOG_SIZE) {
-                    val content = file.readLines().takeLast(500).joinToString("\n") + "\n"
-                    file.writeText(content)
+                    val keepBytes = (MAX_LOG_SIZE / 2).toInt()
+                    val bytes = file.readBytes()
+                    file.writeBytes(bytes.copyOfRange(bytes.size - keepBytes, bytes.size))
                 }
                 val timestamp = dateFormat.format(Date())
                 file.appendText("$timestamp $line\n")

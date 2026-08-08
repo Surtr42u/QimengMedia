@@ -327,7 +327,10 @@ class StatsDetailFragment : Fragment() {
                 val singleFileTags = tagData.count { it.second == 1 }
                 insights.add("$singleFileTags 个标签仅关联 1 个文件，${totalTags - singleFileTags} 个标签关联多个文件")
                 if (totalTags > 0) {
-                    insights.add("平均每个文件被标记 ${String.format(java.util.Locale.US, "%.1f", if (totalRelations > 0) totalTags.toFloat() else 0f)} 个标签")
+                    // v1.12 修复：原公式误用标签种类数 totalTags，正确应为「关联总数 / 被标记的去重文件数」
+                    val taggedFileCount = mediaTags.map { it.recordKey }.distinct().size
+                    val avgTagsPerFile = if (taggedFileCount > 0) totalRelations.toFloat() / taggedFileCount else 0f
+                    insights.add("平均每个文件被标记 ${String.format(java.util.Locale.US, "%.1f", avgTagsPerFile)} 个标签")
                 }
                 renderInsights(insights)
 

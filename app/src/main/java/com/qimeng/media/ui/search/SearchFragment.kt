@@ -38,6 +38,7 @@ import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
+import com.qimeng.media.data.db.model.MediaTagName
 import com.qimeng.media.ui.album.SourceMatcher
 import com.qimeng.media.ui.adapter.GroupedMediaAdapter
 import com.qimeng.media.ui.browser.MediaBrowserLogic
@@ -46,9 +47,12 @@ import com.qimeng.media.ui.browser.MediaGroupHelper
 import com.qimeng.media.ui.browser.SearchContext
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 class SearchFragment : Fragment() {
@@ -78,12 +82,17 @@ class SearchFragment : Fragment() {
     private var cachedAuthorMedia = emptyList<AuthorMediaCrossRef>()
     private var cachedAuthors = emptyList<AuthorEntity>()
     private var cachedStats = emptyList<ViewStatsEntity>()
+    private var cachedMediaTags = emptyList<MediaTagName>()
     private var nameIndex: List<SearchSuggestItem> = emptyList()
     private var cachedSearchContext: SearchContext? = null
     private var currentState = STATE_EMPTY
     private var chipColors: ThemeColors? = null
     private val columnsRef = ColumnsRef(3)
     private lateinit var gridLayoutManager: GridLayoutManager
+
+    // v1.12：保存异步任务引用，新任务启动前取消旧任务，避免旧结果晚到覆盖新结果
+    private var nameIndexJob: Job? = null
+    private var searchJob: Job? = null
 
     // 搜索历史
     private val historyPrefs by lazy { requireContext().getSharedPreferences("search_history", Context.MODE_PRIVATE) }
@@ -144,6 +153,7 @@ class SearchFragment : Fragment() {
         historyClear?.setOnClickListener {
             historyPrefs.edit { clear() }
             historySection?.visibility = View.GONE
+            historyChips?.removeAllViews()
         }
     }
 
@@ -258,9 +268,11 @@ class SearchFragment : Fragment() {
                     viewModel.authors
                 ) { stats, authorMedia, authors ->
                     arrayOf(stats, authorMedia, authors)
-                }
-            ) { arr1, arr2 ->
-                arr1 + arr2
+                },
+                // v1.12：观察手动标签数据流，使手动标签参与搜索匹配
+                viewModel.allMediaTags
+            ) { arr1, arr2, mediaTags ->
+                arrayOf(arr1[0], arr1[1], arr1[2], arr2[0], arr2[1], arr2[2], mediaTags)
             }.collect @Suppress("UNCHECKED_CAST") { arr ->
                 val media = arr[0] as? List<MediaFileEntity> ?: return@collect
                 val cosMedia = arr[1] as? List<MediaFileEntity> ?: return@collect
@@ -268,6 +280,7 @@ class SearchFragment : Fragment() {
                 val stats = arr[3] as? List<ViewStatsEntity> ?: return@collect
                 val authorMedia = arr[4] as? List<AuthorMediaCrossRef> ?: return@collect
                 val authors = arr[5] as? List<AuthorEntity> ?: return@collect
+                val mediaTags = arr[6] as? List<MediaTagName> ?: return@collect
 
                 cachedMedia = media
                 cachedCosMedia = cosMedia
@@ -275,6 +288,7 @@ class SearchFragment : Fragment() {
                 cachedStats = stats
                 cachedAuthorMedia = authorMedia
                 cachedAuthors = authors
+                cachedMediaTags = mediaTags
 
                 // 异步重建名字索引，避免卡顿
                 rebuildNameIndexAsync()
@@ -294,7 +308,9 @@ class SearchFragment : Fragment() {
             return
         }
         val idxStart = System.currentTimeMillis()
-        viewLifecycleOwner.lifecycleScope.launch {
+        // v1.12：取消上一次未完成的索引重建，避免旧数据索引晚完成覆盖新数据索引
+        nameIndexJob?.cancel()
+        nameIndexJob = viewLifecycleOwner.lifecycleScope.launch {
             val (items, searchContext) = withContext(Dispatchers.Default) {
                 val idx = buildNameIndex(cachedMedia, cachedCosMedia, cachedCosWorks, cachedAuthorMedia, cachedAuthors)
                 val ctx = buildSearchContextFromData(cachedMedia, cachedCosMedia, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
@@ -336,16 +352,22 @@ class SearchFragment : Fragment() {
 
         hideKeyboard()
         saveHistory(query)
+        // v1.12：写入历史后立即刷新历史 chips，保证最新在前实时可见
+        refreshHistoryChips()
 
-        viewLifecycleOwner.lifecycleScope.launch {
+        // v1.12：保存搜索协程引用并在新搜索前取消旧搜索，避免旧搜索晚完成覆盖新结果
+        searchJob?.cancel()
+        searchJob = viewLifecycleOwner.lifecycleScope.launch {
             val allMedia = cachedMedia + cachedCosMedia
             val statsMap = cachedStats.associateBy { it.recordKey }
+            // 手动标签 Map：recordKey → 标签名集合（与全部页 applyFilter 语义一致）
+            val tagMap = cachedMediaTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
             // 优先使用缓存的 SearchContext，避免重复计算 SourceMatcher
             val searchContext = cachedSearchContext ?: withContext(Dispatchers.Default) { buildSearchContext() }
 
             val filtered = withContext(Dispatchers.Default) {
                 MediaBrowserLogic.applyFilter(
-                    allMedia, query, MediaFilterState(), statsMap, emptyMap(), emptyList(), emptyMap(), searchContext
+                    allMedia, query, MediaFilterState(), statsMap, tagMap, emptyList(), emptyMap(), searchContext
                 )
             }
 
@@ -379,28 +401,66 @@ class SearchFragment : Fragment() {
 
     // ===== 搜索历史 =====
 
+    /**
+     * 保存搜索历史（最新在前，去重，上限 [MAX_HISTORY_COUNT] 条）。
+     *
+     * v1.12 修复：`getStringSet` 不保证插入顺序，原 `reversed()`/`takeLast(20)` 排序无依据。
+     * 改为 JSONArray 存储「时间戳 + 关键词」，读取时按时间戳倒序，保证最新在前。
+     */
     private fun saveHistory(query: String) {
-        val history = historyPrefs.getStringSet("keys", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-        history.remove(query)
-        history.add(query)
-        if (history.size > 20) {
-            val list = history.toList()
-            history.clear()
-            history.addAll(list.takeLast(20))
+        // 读取旧历史：JSONArray（元素为 {"t": 时间戳, "q": 关键词}）
+        val entries = parseHistoryEntries()
+        // 去重：同一关键词只保留最新一次
+        entries.removeAll { it.query == query }
+        entries.add(HistoryEntry(System.currentTimeMillis(), query))
+        // 按时间倒序截断，只保留最近 MAX_HISTORY_COUNT 条
+        val kept = entries.sortedByDescending { it.timestamp }.take(MAX_HISTORY_COUNT)
+
+        val arr = JSONArray()
+        for (entry in kept) {
+            arr.put(JSONObject().put("t", entry.timestamp).put("q", entry.query))
         }
-        historyPrefs.edit { putStringSet("keys", history) }
+        historyPrefs.edit { putString("keys", arr.toString()) }
     }
 
+    /** 读取搜索历史（按时间戳倒序，最新在前） */
     private fun getHistory(): List<String> {
-        return historyPrefs.getStringSet("keys", emptySet())?.toList()?.reversed() ?: emptyList()
+        return parseHistoryEntries().sortedByDescending { it.timestamp }.map { it.query }
+    }
+
+    /** 解析历史存储为实体列表（兼容旧版 StringSet 数据） */
+    private fun parseHistoryEntries(): MutableList<HistoryEntry> {
+        // v1.12 新增 JSONArray 格式：{"keys": "[{\"t\":..., \"q\":...}]"}
+        val json = historyPrefs.getString("keys", null)
+        if (!json.isNullOrBlank()) {
+            val list = mutableListOf<HistoryEntry>()
+            try {
+                val arr = JSONArray(json)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    list.add(HistoryEntry(obj.optLong("t", 0L), obj.optString("q").trim()))
+                }
+                return list.filter { it.query.isNotBlank() }.toMutableList()
+            } catch (_: Exception) {
+                // JSON 损坏则按空历史处理，不阻断搜索
+            }
+        }
+        // 兼容旧版 getStringSet 数据（无顺序，时间戳置 0，按存储逆序近似新在前）
+        val legacy = historyPrefs.getStringSet("keys", emptySet()).orEmpty().toMutableSet()
+        return legacy.map { HistoryEntry(0L, it) }.toMutableList()
     }
 
     /** 立即加载搜索历史（来自SharedPreferences，无需等待数据流） */
     private fun loadHistoryImmediately() {
+        refreshHistoryChips()
+    }
+
+    /** 重建搜索历史 chips（读取最新持久化数据后整体刷新，保证最新在前） */
+    private fun refreshHistoryChips() {
         val history = getHistory()
+        historyChips?.removeAllViews()
         if (history.isNotEmpty()) {
             historySection?.visibility = View.VISIBLE
-            historyChips?.removeAllViews()
             for (item in history) {
                 historyChips?.addView(makeChip(item) {
                     searchInput?.setText(item)
@@ -408,6 +468,8 @@ class SearchFragment : Fragment() {
                     doSearch()
                 })
             }
+        } else {
+            historySection?.visibility = View.GONE
         }
     }
 
@@ -425,22 +487,8 @@ class SearchFragment : Fragment() {
             }
         }
 
-        // 搜索历史（仅在尚未加载时填充，避免重复）
-        if (historyChips?.childCount == 0) {
-            val history = getHistory()
-            if (history.isNotEmpty()) {
-                historySection?.visibility = View.VISIBLE
-                for (item in history) {
-                    historyChips?.addView(makeChip(item) {
-                        searchInput?.setText(item)
-                        searchInput?.setSelection(item.length)
-                        doSearch()
-                    })
-                }
-            } else {
-                historySection?.visibility = View.GONE
-            }
-        }
+        // 搜索历史：v1.12 改为整体刷新（含清除旧 chips），保证与最新持久化数据一致
+        refreshHistoryChips()
     }
 
     private fun makeChip(text: String, onClick: () -> Unit): Chip {
@@ -494,12 +542,23 @@ class SearchFragment : Fragment() {
         suggestAdapter = null
         resultAdapter = null
         chipColors = null
+        // v1.12：视图销毁时释放异步任务引用（协程本身随 viewLifecycleScope 自动取消）
+        nameIndexJob = null
+        searchJob = null
     }
+
+    // ===== 搜索历史实体 =====
+
+    /** 单条搜索历史（时间戳 + 关键词），v1.12 用于保证顺序存储 */
+    private data class HistoryEntry(val timestamp: Long, val query: String)
 
     companion object {
         const val STATE_EMPTY = 0
         const val STATE_SUGGEST = 1
         const val STATE_RESULT = 2
+
+        /** 搜索历史上限（v1.12：原硬编码 20 提为常量） */
+        const val MAX_HISTORY_COUNT = 20
 
         // ===== nameIndex 缓存（跨实例复用，避免每次从零重建） =====
         /** 缓存的推荐搜索索引 */

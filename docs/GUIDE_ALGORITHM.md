@@ -216,7 +216,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 
 ### 两层匹配优先级
 
-1. **内置检测表**：~130 个 SourceGroup，覆盖热门游戏/动漫/影视，优先级最高
+1. **内置检测表**：131 个 SourceGroup，覆盖热门游戏/动漫/影视，优先级最高
 2. **自定义出处**：用户手动添加的分区名（通过长按卡片修改），自动加入识别算法
 
 未匹配的文件归入"其他"。TXT 规则不再用于出处匹配（仅用于作者-文件关联）。
@@ -233,7 +233,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 
 每个 `SourceGroup` 内含 `CharEntry` 角色列表，每个角色有规范名和别名列表：
 
-- `CharEntry("好运姐", listOf("好运姐", "赏金", "赏金猎人", "Miss Fortune", "MF", "厄运小姐"))`
+- `CharEntry("好运姐", listOf("好运姐", "女枪", "厄运小姐", "Miss Fortune", "MF", "赏金", "赏金猎人"))`（v1.12 合并：好运姐/女枪/厄运小姐原为三个 CharEntry 且共享别名 Miss Fortune/MF，违反查重规则，已合并为单一条目并集齐别名）
 - 出处+角色名作为唯一标识，避免跨出处同名混淆（如"安娜"在守望先锋和铁拳中是不同角色）
 - 角色别名按长度降序匹配，确保"Miss Fortune"优先于"MF"匹配
 - `matchCharacters(fileName, sourceName)` 方法：先从文件名中去掉已匹配的出处部分（`stripSourceFromName`），再用剩余部分在角色别名表中做全文子串匹配，返回所有匹配到的角色列表（`List<String>`）。同一 canonical 不会因不同别名被重复添加（去重保护）
@@ -244,7 +244,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 - `matchAll(fileName)` 方法：一次调用同时返回出处和角色列表（`Pair<String?, List<String>>`），避免对同一文件名重复调用 `match()`。支持多出处匹配：文件名含"+"时（如"恶魔战士+铁拳8  莫妮卡+莉莉"），按"+"分割分别匹配出处，再合并所有出处的角色结果，出处显示为"恶魔战士+铁拳"。**结果缓存**（2026-06-22 优化）：按 fileName 缓存到 `matchAllCache`（`ConcurrentHashMap`，容量上限 8192 超限清空重建），批量遍历（如 `groupBySource` 对数千文件、同文件被多页面重复匹配）时命中缓存 O(1)，消除重复的出处+角色匹配 CPU 开销。`updateCustomSources`/`updateTxtWorks` 时清空缓存保证一致性。**charMiss 日志采样**：未命中角色时按 50 次记 1 条（`charMiss(N): file=...`），避免批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
 - `matchCharacter(fileName, sourceName)` 方法：兼容旧接口，内部调用 `matchCharacters` 并用"+"拼接返回
 - 角色匹配只走检索表，不做前缀去除或回退，未匹配归入"其他"
-- 检索表覆盖约 130 个出处，涵盖游戏/动漫/小说，含高人气女角色及热门游戏中的非热门女角色
+- 检索表覆盖 131 个出处，涵盖游戏/动漫/小说，含高人气女角色及热门游戏中的非热门女角色
 
 ### 版本号合并
 
@@ -272,7 +272,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 - 索引版查找：`findCosAuthorForMedia(media, index)` / `findCosCharacterForMedia(media, authorIndex, workIndex)`。
 - `groupByCosAuthor` / `groupByCosWork` 内部已先建索引再遍历，全部页/收藏页/历史页走 groupBy 零改动自动受益。
 - 旧签名 `findCosAuthorForMedia(media, authorMedia, authors)` / `findCosCharacterForMedia(media, authorMedia, authors, cosWorks)` 保留供单次查询与现有测试，**批量/循环场景禁用**（O(文件数×关联数) 嵌套扫描，全库数千 COS 文件时主线程卡顿）。
-- 根因背景：旧实现对每个 COS 文件线性扫描整个 `authorMedia` 列表，复杂度 O(N×M) 且在主线程 `collect` 内执行。卡顿与"当前作者文件数"无关，只取决于全库 COS 规模——这正是"相同文件数量也卡顿"的原因。常规路径不卡：作者页常规用 `authorFiles`（crossRef 精确集合 O(1)），相册常规用 `SourceMatcher.match`（遍历~130 内置变体，常量级），均无 N×M 嵌套。
+- 根因背景：旧实现对每个 COS 文件线性扫描整个 `authorMedia` 列表，复杂度 O(N×M) 且在主线程 `collect` 内执行。卡顿与"当前作者文件数"无关，只取决于全库 COS 规模——这正是"相同文件数量也卡顿"的原因。常规路径不卡：作者页常规用 `authorFiles`（crossRef 精确集合 O(1)），相册常规用 `SourceMatcher.match`（遍历 131 内置变体，常量级），均无 N×M 嵌套。
 
 ### 更新规范
 
@@ -285,12 +285,13 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 3. **variants 完整性**：必须包含中文名（带空格/不带空格）、英文名、常见缩写。例：`listOf("英雄联盟", "League of Legends", "LOL", "撸啊撸")`
 4. **版本号合并**：同一系列不同版本归入同一 SourceGroup，版本号写入 variants。例：`listOf("铁拳8", "铁拳7", "铁拳6", "铁拳", "Tekken 8", "Tekken 7", "Tekken")`
 5. **放置位置**：新 SourceGroup 追加到 `BUILTIN_GROUPS` 末尾（`listOf(` 的最后一个元素之前），不要插入到中间打乱现有顺序
+6. **canonical/variants 拼写校验**：canonical 与 variants 中的英文名拼写必须正确（v1.12 修正：`NIKEE → NIKKE`，canonical 由旧错误拼写修正为"胜利女神 NIKKE"，variants 补充 `Goddess of Victory Nikke`/`Nikke`/`妮姬`）
 
 #### 新增 CharEntry 规则
 
 6. **查重优先**：在同一 SourceGroup 内搜索是否已存在相同角色（canonical 或别名重叠），禁止创建重复 CharEntry
 7. **canonical 命名**：使用最常用的中文角色名。例：`CharEntry("好运姐", ...)` 而非 `CharEntry("Miss Fortune", ...)`
-8. **aliases 完整性**：必须包含 canonical 自身、中文别名、英文名、常见昵称/缩写。例：`listOf("好运姐", "赏金", "赏金猎人", "Miss Fortune", "MF", "厄运小姐")`
+8. **aliases 完整性**：必须包含 canonical 自身、中文别名、英文名、常见昵称/缩写。例：`listOf("好运姐", "女枪", "厄运小姐", "Miss Fortune", "MF", "赏金", "赏金猎人")`
 9. **别名顺序**：canonical 自身放第一个，其余按长度降序排列（长名优先匹配，避免短名误匹配）
 10. **出处+角色名唯一标识**：不同出处下的同名角色是不同角色（如守望先锋的"安娜"和铁拳的"安娜"），各自独立 CharEntry，不合并
 11. **同一出处内禁止重复角色**：如发现同一角色出现两次 CharEntry（如之前的"停云"在星穹铁道中出现两次），必须合并为一个 CharEntry 并合并 aliases

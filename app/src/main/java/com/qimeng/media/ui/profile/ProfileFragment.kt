@@ -163,12 +163,6 @@ class ProfileFragment : Fragment() {
                     }
                 }
                 launch {
-                    val appPrefsManager = (requireActivity().application as com.qimeng.media.QimengApplication).appContainer.appPrefsManager
-                    appPrefsManager.prefs.collect { prefs ->
-                        cachedAutoSync = prefs.autoSync
-                    }
-                }
-                launch {
                     // 空库覆盖防护信号：true 时数据备份弹层显示"建议先导入恢复"提示
                     viewModel.restoreSuggestion.collect { _ -> }
                 }
@@ -573,9 +567,12 @@ class ProfileFragment : Fragment() {
     private fun importAuthorsFromTxt(uri: Uri) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val text = requireContext().contentResolver.openInputStream(uri)?.use {
-                    String(it.readBytes(), Charsets.UTF_8)
-                } ?: ""
+                // v1.12 修复：大 TXT 文件读取移到 IO 线程，避免主线程阻塞；UI 回调保持主线程
+                val text = withContext(Dispatchers.IO) {
+                    requireContext().contentResolver.openInputStream(uri)?.use {
+                        String(it.readBytes(), Charsets.UTF_8)
+                    } ?: ""
+                }
                 val fileName = getFileName(uri)
                 // 持久化URI读取权限，用于后续刷新
                 persistReadPermission(uri)
@@ -635,9 +632,7 @@ class ProfileFragment : Fragment() {
         }
     }
 
-    private var cachedAutoSync = false
-
-
+    // v1.12 删除：cachedAutoSync 只写不读死字段，已移除
 
     fun scrollToTop() {
         (binding.root as? android.widget.ScrollView)?.smoothScrollTo(0, 0)

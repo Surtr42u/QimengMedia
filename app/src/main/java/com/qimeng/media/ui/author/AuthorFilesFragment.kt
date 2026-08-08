@@ -38,6 +38,7 @@ import com.qimeng.media.ui.browser.MediaGroupHelper
 import com.qimeng.media.ui.browser.MediaPillsHelper
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +76,8 @@ class AuthorFilesFragment : Fragment() {
     private var lastRenderHash = ""
     private var mediaFingerprint: String = ""
     private var observeStarted: Boolean = false
+    /** 渲染分组计算协程任务，用于去重与取消（v1.12） */
+    private var renderJob: Job? = null
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
     private var scrollListener: ViewTreeObserver.OnScrollChangedListener? = null
@@ -146,7 +149,7 @@ class AuthorFilesFragment : Fragment() {
             binding.authorFilesSwipeRefresh.isRefreshing = false
         }
         binding.authorFilesFilterButton.setOnClickListener {
-            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FOR_AUTHOR,
+            MediaFilterSheet.show(requireContext(), filterState, cachedAllTags, FilterConfig.FULL,
                 onApply = { next ->
                     filterState = next
                     lastRenderHash = ""
@@ -217,7 +220,14 @@ class AuthorFilesFragment : Fragment() {
                         }
                     }
 
-                    val fp = "${media.size}|${authorFiles.size}|${cosMedia.size}|${media.firstOrNull()?.recordKey.orEmpty()}"
+                    // v1.12 修复：fp 追加 stats/tags 维度，标签增删/浏览统计变化后筛选能随之刷新
+                    val fp = buildString {
+                        append("${media.size}|${authorFiles.size}|${cosMedia.size}|${media.firstOrNull()?.recordKey.orEmpty()}")
+                        append("|stats=")
+                        stats.forEach { append("${it.recordKey}:${it.viewCount + it.playCount},") }
+                        append("|tags=")
+                        tags.forEach { append("${it.recordKey}:${it.tagId},") }
+                    }
                     if (fp != mediaFingerprint || !observeStarted) {
                         mediaFingerprint = fp
                         observeStarted = true
@@ -246,7 +256,10 @@ class AuthorFilesFragment : Fragment() {
         val filtered = MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
 
         // 作品/角色分组（异步计算）
-        lifecycleScope.launch {
+        // v1.12 修复：改用 viewLifecycleOwner.lifecycleScope（onDestroyView 后自动取消），
+        // 并先取消上一轮未完成的渲染任务，避免视图销毁后协程仍在更新已销毁的 UI
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
             val (sourceGroups, charGroups) = computeAuthorGroupsAsync(filtered)
             if (_binding == null) return@launch
             cachedSourceGroups = sourceGroups

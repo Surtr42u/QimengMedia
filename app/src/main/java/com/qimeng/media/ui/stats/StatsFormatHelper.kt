@@ -66,26 +66,36 @@ object StatsFormatHelper {
     }
 
     /**
-     * 按周分组聚合浏览量（全部时间范围），生成折线图数据点。
-     * 从最早记录开始按 7 天分桶，最多 12 个数据点，避免横轴过密。
+     * 按周分组聚合浏览量，生成折线图数据点。
+     * v1.12 修复：原实现从最早记录起截取前 12 周，数据跨度超过 84 天时最新趋势丢失；
+     * 改为从当前时间所在周向前取最近 12 周（含当前周），保证最新趋势始终可见。
      * @param history 浏览历史列表
-     * @return 按时间正序排列的数据点列表
+     * @return 按时间正序排列的数据点列表（最近 12 周，早的在前）
      */
     fun groupByWeek(history: List<ViewHistoryEntity>): List<LineChartView.Point> {
         if (history.isEmpty()) return emptyList()
         val dateFormat = SimpleDateFormat("MM/dd", Locale.getDefault())
-        val sorted = history.sortedBy { it.openedAtMillis }
-        val earliest = sorted.first().openedAtMillis
-        val now = System.currentTimeMillis()
         val weekMillis = 7L * 24 * 60 * 60 * 1000
-        val weekCount = ((now - earliest) / weekMillis).toInt() + 1
         val result = mutableListOf<LineChartView.Point>()
-        for (i in 0 until weekCount.coerceAtMost(12)) {
-            val weekStart = earliest + i * weekMillis
+        for (i in 11 downTo 0) {
+            // 从当前周向前回溯，每个桶对齐到所在周的周一零点
+            val weekStart = alignWeekStart(System.currentTimeMillis()) - i * weekMillis
             val weekEnd = weekStart + weekMillis
             val count = history.count { it.openedAtMillis in weekStart until weekEnd }
             result.add(LineChartView.Point(dateFormat.format(Date(weekStart)), count))
         }
         return result
+    }
+
+    /** 将时间戳对齐到所在周的周一零点 */
+    private fun alignWeekStart(millis: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        return cal.timeInMillis
     }
 }

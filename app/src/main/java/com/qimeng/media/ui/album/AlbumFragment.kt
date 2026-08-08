@@ -37,9 +37,12 @@ class AlbumFragment : Fragment() {
     }
     private var cachedGroups: Map<String, List<MediaFileEntity>> = emptyMap()
     private var cachedCosGroups: Map<String, List<MediaFileEntity>> = emptyMap()
-    private var cachedCosAuthorNameToId: Map<String, String> = emptyMap()  // authorName → authorId
+    // v1.12 删除：cachedCosAuthorNameToId 只写不读死字段（含 cosNameToId 映射构建），已移除
     private var hasReceivedData = false  // Flow首次发射前不显示空状态，避免闪烁
     private var lastRenderHash: String = ""
+    // v1.12：记录上次传入 SourceMatcher 的 customAlbumSources，
+    // 仅在其变化时才调 updateCustomSources（否则 collect 每次发射都清空全局 matchAllCache）
+    private var lastCustomSources: Set<String> = emptySet()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -72,7 +75,12 @@ class AlbumFragment : Fragment() {
                 ) { nonCosMedia, authorMedia, prefs, cosData ->
                     Quad(nonCosMedia, authorMedia, prefs, cosData)
                 }.collect { (nonCosMedia, authorMedia, prefs, cosData) ->
-                    SourceMatcher.updateCustomSources(prefs.customAlbumSources)
+                    // v1.12：仅自定义出处集合变化时才更新 SourceMatcher 全局缓存，
+                    // 避免无关数据变化（如媒体列表刷新）清空所有页面的 matchAllCache
+                    if (prefs.customAlbumSources != lastCustomSources) {
+                        lastCustomSources = prefs.customAlbumSources
+                        SourceMatcher.updateCustomSources(prefs.customAlbumSources)
+                    }
                     computeGroups(nonCosMedia, authorMedia, cosData.cosWorks, cosData.cosMedia.filter { it.isCosFile }, cosData.cosAuthors)
                 }
             }
@@ -96,9 +104,11 @@ class AlbumFragment : Fragment() {
     ) {
         withContext(Dispatchers.Default) {
             // 常规文件按出处分组
+            // v1.12：改用 matchAll().first 走全局缓存，替代无缓存 match()，
+            // 批量分组时同一文件名只匹配一次
             val groups = mutableMapOf<String, MutableList<MediaFileEntity>>()
             for (media in mediaFiles) {
-                val source = SourceMatcher.match(media.fileName) ?: "其他"
+                val source = SourceMatcher.matchAll(media.fileName).first ?: "其他"
                 groups.getOrPut(source) { mutableListOf() }.add(media)
             }
 
@@ -107,14 +117,12 @@ class AlbumFragment : Fragment() {
             val cosRecordKeys = cosMedia.map { it.recordKey }.toSet()
             val cosMediaByKey = cosMedia.associateBy { it.recordKey }
             val cosGroups = mutableMapOf<String, MutableList<MediaFileEntity>>()
-            val cosNameToId = mutableMapOf<String, String>()  // authorName → authorId
             for (ref in authorMedia) {
                 if (!ref.authorId.startsWith("cos_")) continue
                 if (ref.recordKey !in cosRecordKeys) continue
                 val file = cosMediaByKey[ref.recordKey] ?: continue
                 val authorName = cosAuthorIdToName[ref.authorId] ?: continue
                 cosGroups.getOrPut(authorName) { mutableListOf() }.add(file)
-                cosNameToId[authorName] = ref.authorId
             }
 
             val renderHash = buildString {
@@ -127,7 +135,6 @@ class AlbumFragment : Fragment() {
 
             cachedGroups = groups
             cachedCosGroups = cosGroups
-            cachedCosAuthorNameToId = cosNameToId
             hasReceivedData = true
 
             withContext(Dispatchers.Main) {
