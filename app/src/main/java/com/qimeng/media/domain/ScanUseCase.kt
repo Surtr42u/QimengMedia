@@ -346,6 +346,14 @@ class ScanUseCase(
             com.qimeng.media.core.AppLog.d("Scan", "autoRefreshAllSources failed: ${e.message}")
         }
 
+        // 启动自动刷新后重新匹配已有TXT导入，确保新文件也能被关联到作者
+        // （与 scanDirectory/refreshScanSource 行为一致，v1.13 补齐）
+        try {
+            authorImportUseCase.rematchAllTxtImports(this)
+        } catch (e: Exception) {
+            AppLog.d("Scan", "autoRefresh rematchAllTxtImports failed: ${e.message}")
+        }
+
         return autoRefreshMedia
     }
 

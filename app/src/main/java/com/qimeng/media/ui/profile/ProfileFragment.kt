@@ -1,19 +1,12 @@
 package com.qimeng.media.ui.profile
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.edit
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -21,22 +14,15 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.qimeng.media.MainActivity
 import com.qimeng.media.R
-import com.qimeng.media.core.AppLog
-import com.qimeng.media.data.db.entity.AuthorEntity
-import com.qimeng.media.data.db.entity.ScanSourceEntity
-import com.qimeng.media.data.db.entity.SettingEntity
 import com.qimeng.media.data.prefs.RecommendationPrefs
-import com.qimeng.media.resolveThemeColor
-import com.qimeng.media.ui.widget.dp
 import com.qimeng.media.databinding.FragmentProfileBinding
-import com.qimeng.media.domain.ThumbnailProgress
+import com.qimeng.media.resolveThemeColor
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.library.ScanStatus
+import com.qimeng.media.ui.widget.dp
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class ProfileFragment : Fragment() {
     private var _binding: FragmentProfileBinding? = null
@@ -45,36 +31,11 @@ class ProfileFragment : Fragment() {
         ViewModelProvider(requireActivity())[MediaLibraryViewModel::class.java]
     }
     private var lastScanMessage: String = ""
-    private var cachedScanSources: List<ScanSourceEntity> = emptyList()
-    private var cachedCosSources: List<ScanSourceEntity> = emptyList()
-    private var cachedAuthors: List<AuthorEntity> = emptyList()
-    private var cachedImportedTxtFiles: List<String> = emptyList()
-    private var cachedBackupName: String? = null
-    private lateinit var openDirectoryLauncher: ActivityResultLauncher<Uri?>
-    private lateinit var backupLocationLauncher: ActivityResultLauncher<Uri?>
-    private lateinit var authorTxtLauncher: ActivityResultLauncher<Array<String>>
-    private lateinit var cosDirectoryLauncher: ActivityResultLauncher<Uri?>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        openDirectoryLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            uri ?: return@registerForActivityResult
-            persistReadPermission(uri)
-            viewModel.scanDirectory(uri)
-        }
-        backupLocationLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            uri ?: return@registerForActivityResult
-            saveBackupLocation(uri)
-        }
-        authorTxtLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            uri ?: return@registerForActivityResult
-            importAuthorsFromTxt(uri)
-        }
-        cosDirectoryLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            uri ?: return@registerForActivityResult
-            persistReadPermission(uri)
-            viewModel.scanCosDirectory(uri)
-        }
+        // 数据管理/数据备份已迁移至独立页面（DataManagementFragment/DataBackupFragment），
+        // SAF launcher 等逻辑随之迁移，本页不再注册。
     }
 
     override fun onCreateView(
@@ -98,7 +59,11 @@ class ProfileFragment : Fragment() {
         }
 
         binding.dataManagementRow.setOnClickListener {
-            showDataManagementDialog()
+            (requireActivity() as? MainActivity)?.showDataManagement()
+        }
+
+        binding.backupRow.setOnClickListener {
+            (requireActivity() as? MainActivity)?.showDataBackup()
         }
 
         binding.compatCheckRow.setOnClickListener {
@@ -130,640 +95,17 @@ class ProfileFragment : Fragment() {
                     viewModel.scanStatus.collect { status -> renderScanToast(status) }
                 }
                 launch {
+                    // 备份位置状态（数据管理/数据备份已迁移至独立页面，此处仅保留底部状态文字）
                     viewModel.backupDirectoryName.collect { setting ->
-                        cachedBackupName = setting?.value
                         binding.backupLocationStatusText.text = setting?.value?.let { name ->
                             "数据备份：$name"
                         } ?: "数据备份：未设置"
                     }
                 }
-                launch {
-                    viewModel.scanSources.collect { sources ->
-                        cachedScanSources = sources.filter { !it.isBackupDirectory && !it.isCosDirectory }
-                    }
-                }
-                launch {
-                    viewModel.cosScanSources.collect { sources ->
-                        cachedCosSources = sources
-                    }
-                }
-                launch {
-                    viewModel.authors.collect { authors ->
-                        cachedAuthors = authors
-                    }
-                }
-                launch {
-                    viewModel.importedTxtFiles.collect { setting ->
-                        cachedImportedTxtFiles = parseTxtFileList(setting)
-                    }
-                }
-                launch {
-                    viewModel.thumbnailProgress.collect { _ ->
-                        // 缩略图进度现在在缓存与同步弹窗中显示
-                    }
-                }
-                launch {
-                    // 空库覆盖防护信号：true 时数据备份弹层显示"建议先导入恢复"提示
-                    viewModel.restoreSuggestion.collect { _ -> }
-                }
             }
         }
     }
 
-    private fun saveBackupLocation(uri: Uri) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                persistWritePermission(uri)
-                // 在选择的文件夹下创建"绮梦影库"目录结构
-                val (prefsDirUri, appDataDirUri) = withContext(Dispatchers.IO) {
-                    val rootDir = DocumentFile.fromTreeUri(requireContext(), uri) ?: throw Exception("无法访问目录")
-                    val qmDir = rootDir.findFile("绮梦影库") ?: rootDir.createDirectory("绮梦影库")
-                        ?: throw Exception("无法创建绮梦影库目录")
-                    val prefsDir = qmDir.findFile("个人偏好") ?: qmDir.createDirectory("个人偏好")
-                        ?: throw Exception("无法创建个人偏好目录")
-                    val appDataDir = qmDir.findFile("app数据") ?: qmDir.createDirectory("app数据")
-                        ?: throw Exception("无法创建app数据目录")
-                    Pair(prefsDir.uri, appDataDir.uri)
-                }
-                // 保存绮梦影库目录作为备份位置（复用上方 IO 线程中已创建的目录）
-                val qmDir = DocumentFile.fromTreeUri(requireContext(), uri)
-                    ?.findFile("绮梦影库")
-                if (qmDir == null) {
-                    Toast.makeText(requireContext(), "无法找到绮梦影库目录", Toast.LENGTH_LONG).show()
-                    return@launch
-                }
-                viewModel.saveBackupDirectory(qmDir.uri, "绮梦影库") {
-                    // 设置成功后立即导出偏好数据到"个人偏好"子文件夹
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        try {
-                            val db = com.qimeng.media.data.db.AppDatabase.getInstance(requireContext())
-                            val manager = com.qimeng.media.backup.BackupManager(requireContext())
-                            val success = manager.exportPersonalPrefsToFile(prefsDirUri, db)
-                            if (success) {
-                                Toast.makeText(requireContext(), "备份位置已设置，偏好数据已导出", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(requireContext(), "备份位置已设置，但偏好导出失败", Toast.LENGTH_SHORT).show()
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(requireContext(), "偏好导出失败：${e.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                    // 检测备份目录是否已有可恢复数据，有则提示用户导入恢复
-                    // 用途：卸载重装后选了旧备份目录，App 主动提示合并旧数据，避免画像断档
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        val summary = viewModel.peekBackupSummary(qmDir.uri)
-                        if (summary != null && summary.existingFileCount > 0) {
-                            // 防重复：同一目录只提示一次（取消也算知情，不再打扰）
-                            val prefs = requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
-                            val hintKey = "hint_shown_${qmDir.uri}"
-                            if (!prefs.getBoolean(hintKey, false)) {
-                                withContext(Dispatchers.Main) { showRestoreConfirmDialog(summary, hintKey) }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(), "设置失败：${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    /**
-     * 恢复确认弹窗：检测到备份目录有可恢复数据时弹出，提示用户是否导入恢复。
-     * 用户确认或取消后都标记 hintKey 已展示，避免同一目录重复打扰。
-     * 卸载重装后 SharedPreferences 清空，重新选择目录会重新提示。
-     */
-    private fun showRestoreConfirmDialog(
-        summary: com.qimeng.media.backup.BackupSummary,
-        hintKey: String
-    ) {
-        val dateText = summary.exportedAtMillis?.let {
-            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
-                .format(java.util.Date(it))
-        } ?: "未知时间"
-        val message = "该目录已有备份数据（最近备份：$dateText）：\n" +
-            "${summary.authorCount} 位作者 / ${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
-            "是否导入恢复到本地？\n\n" +
-            "（取消则只作为新的备份位置，不恢复旧数据）"
-
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("检测到备份数据")
-            .setMessage(message)
-            .setPositiveButton("导入恢复") { _, _ ->
-                // 标记已展示（即使用户确认，也不再重复弹）
-                requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
-                    .edit { putBoolean(hintKey, true) }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
-                    viewModel.importFromBackupDirectory { count ->
-                        if (count > 0) {
-                            Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            .setNegativeButton("取消") { _, _ ->
-                // 取消也标记已展示，表示用户知情，不再重复打扰
-                requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
-                    .edit { putBoolean(hintKey, true) }
-            }
-            .show()
-    }
-
-    private fun showDataManagementDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "数据管理"))
-        container.addView(SheetUiHelper.sheetAction(ctx, "常规目录") {
-            showScanDirectoryDialog()
-        })
-        container.addView(SheetUiHelper.sheetAction(ctx, "COS目录") {
-            showCosDirectoryDialog()
-        })
-        container.addView(SheetUiHelper.sheetAction(ctx, "TXT导入作者") {
-            showTxtImportDialog()
-        })
-        container.addView(SheetUiHelper.sheetAction(ctx, "数据备份") {
-            showBackupLocationDialog()
-        })
-        container.addView(SheetUiHelper.sheetAction(ctx, "缓存与同步") {
-            showCacheSyncDialog()
-        })
-        dialog.setContentView(container)
-        dialog.show()
-    }
-
-    private fun showScanDirectoryDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "常规目录"))
-
-        val sources = cachedScanSources
-        if (sources.isEmpty()) {
-            container.addView(SheetUiHelper.sheetSubText(ctx, "暂无已添加的目录"))
-        } else {
-            container.addView(SheetUiHelper.sheetLabel(ctx, "已添加目录"))
-            for (source in sources) {
-                container.addView(SheetUiHelper.sheetSourceRow(ctx, source.displayName, source.uriString,
-                    onDelete = {
-                        viewModel.deleteScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "已移除：${source.displayName}", Toast.LENGTH_SHORT).show()
-                    },
-                    onRefresh = {
-                        viewModel.refreshScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "正在增量刷新：${source.displayName}", Toast.LENGTH_SHORT).show()
-                    }
-                ))
-            }
-        }
-
-        container.addView(SheetUiHelper.sheetLabel(ctx, "添加新目录"))
-        container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择文件夹") {
-            if (viewModel.scanStatus.value is ScanStatus.Running) {
-                Toast.makeText(requireContext(), "正在扫描中，请稍候", Toast.LENGTH_SHORT).show()
-                return@sheetActionButton
-            }
-            try {
-                openDirectoryLauncher.launch(null)
-            } catch (e: IllegalStateException) {
-                AppLog.e("Profile", "openDirectoryLauncher unregistered", e)
-                Toast.makeText(requireContext(), "请重试", Toast.LENGTH_SHORT).show()
-            }
-        })
-
-        dialog.setContentView(container)
-        dialog.show()
-    }
-
-    private fun showCosDirectoryDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "COS目录"))
-        container.addView(SheetUiHelper.sheetSubText(ctx, "选择COS文件夹，按 作者/作品/图片 三层结构扫描"))
-
-        val sources = cachedCosSources
-        if (sources.isEmpty()) {
-            container.addView(SheetUiHelper.sheetLabel(ctx, "暂无COS目录"))
-        } else {
-            container.addView(SheetUiHelper.sheetLabel(ctx, "已添加COS目录"))
-            for (source in sources) {
-                container.addView(SheetUiHelper.sheetSourceRow(ctx, source.displayName, source.uriString,
-                    onDelete = {
-                        viewModel.deleteCosScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "已移除：${source.displayName}", Toast.LENGTH_SHORT).show()
-                    },
-                    onRefresh = {
-                        viewModel.refreshCosSource(source.uriString)
-                        Toast.makeText(requireContext(), "正在增量刷新：${source.displayName}", Toast.LENGTH_SHORT).show()
-                    }
-                ))
-            }
-        }
-
-        container.addView(SheetUiHelper.sheetLabel(ctx, "添加COS目录"))
-        container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择COS文件夹") {
-            if (viewModel.scanStatus.value is ScanStatus.Running) {
-                Toast.makeText(requireContext(), "正在扫描中，请稍候", Toast.LENGTH_SHORT).show()
-                return@sheetActionButton
-            }
-            cosDirectoryLauncher.launch(null)
-        })
-
-        dialog.setContentView(container)
-        dialog.show()
-    }
-
-    private fun showBackupLocationDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "数据备份"))
-        container.addView(SheetUiHelper.sheetSubText(ctx, "选择文件夹后，将创建「绮梦影库」目录\n├ 个人偏好/（偏好JSON+报告TXT）\n└ app数据/（自动同步的数据库JSON）"))
-
-        // 空库覆盖防护提示：本地数据为空时自动同步已暂停，建议先导入恢复
-        if (viewModel.restoreSuggestion.value) {
-            container.addView(SheetUiHelper.sheetSubText(ctx, "⚠ 本地数据为空，已暂停自动同步\n建议先导入恢复，避免空数据覆盖旧备份"))
-            container.addView(SheetUiHelper.sheetActionButton(ctx, "导入恢复") {
-                viewLifecycleOwner.lifecycleScope.launch {
-                    Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
-                    viewModel.importFromBackupDirectory { count ->
-                        if (count > 0) {
-                            Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
-                            viewModel.clearRestoreSuggestion()
-                            dialog.dismiss()
-                        } else {
-                            Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            })
-        }
-
-        val currentName = cachedBackupName
-        if (currentName != null) {
-            container.addView(SheetUiHelper.sheetLabel(ctx, "当前备份位置"))
-            container.addView(SheetUiHelper.sheetInfoRow(ctx, currentName))
-
-            // 已设置备份位置时，显示"立即同步"按钮
-            container.addView(SheetUiHelper.sheetLabel(ctx, "手动同步"))
-            container.addView(SheetUiHelper.sheetActionButton(ctx, "立即同步") {
-                if (cachedBackupName == null) {
-                    Toast.makeText(requireContext(), "请先设置备份位置", Toast.LENGTH_SHORT).show()
-                    return@sheetActionButton
-                }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    Toast.makeText(requireContext(), "正在同步...", Toast.LENGTH_SHORT).show()
-                    val app = requireActivity().application as com.qimeng.media.QimengApplication
-                    val success = withContext(Dispatchers.IO) {
-                        app.appContainer.autoSyncUseCase.triggerManualSync()
-                    }
-                    // 空库时 triggerManualSync 返回 false 且置 restoreSuggestion=true，
-                    // 此时提示"数据为空已暂停"而非"同步失败"，避免误导用户
-                    val msg = when {
-                        success -> "同步完成"
-                        viewModel.restoreSuggestion.value -> "本地数据为空，已暂停同步以防覆盖旧备份，建议先导入恢复"
-                        else -> "同步失败，请检查备份目录"
-                    }
-                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
-                }
-            })
-        } else {
-            container.addView(SheetUiHelper.sheetSubText(ctx, "尚未设置备份位置"))
-        }
-
-        container.addView(SheetUiHelper.sheetLabel(ctx, "设置备份位置"))
-        container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择文件夹") {
-            backupLocationLauncher.launch(null)
-        })
-
-        // v1.7：自定义导出报告（章节勾选）
-        container.addView(SheetUiHelper.sheetLabel(ctx, "自定义导出"))
-        container.addView(SheetUiHelper.sheetAction(ctx, "自定义章节导出报告") {
-            showCustomReportExportDialog()
-        })
-
-        dialog.setContentView(container)
-        dialog.show()
-    }
-
-    /**
-     * v1.7：自定义章节导出报告对话框。
-     * 用户勾选要导出的章节，确认后导出到备份目录的"个人偏好"子文件夹。
-     */
-    private fun showCustomReportExportDialog() {
-        if (cachedBackupName == null) {
-            Toast.makeText(requireContext(), "请先设置备份位置", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val sectionNames = arrayOf(
-            "总览（汇总统计）",
-            "总 Top 30（混合排行）",
-            "常规 Top 20",
-            "COS作品 Top 20",
-            "作者 Top 20",
-            "关注作者",
-            "标签 Top 20",
-            "全部标签",
-            "收藏列表"
-        )
-        val checkedItems = booleanArrayOf(true, true, true, true, true, true, true, true, true)
-
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("选择导出章节")
-            .setMultiChoiceItems(sectionNames, checkedItems) { _, which, isChecked ->
-                checkedItems[which] = isChecked
-            }
-            .setPositiveButton("导出") { _, _ ->
-                val options = com.qimeng.media.backup.ReportSectionOptions(
-                    overview = checkedItems[0],
-                    mixedTop = checkedItems[1],
-                    normalTop = checkedItems[2],
-                    cosWorkTop = checkedItems[3],
-                    authorTop = checkedItems[4],
-                    followedAuthors = checkedItems[5],
-                    tagTop = checkedItems[6],
-                    allTags = checkedItems[7],
-                    favorites = checkedItems[8]
-                )
-                if (options.selectedCount == 0) {
-                    Toast.makeText(requireContext(), "请至少选择一个章节", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    Toast.makeText(requireContext(), "正在导出报告...", Toast.LENGTH_SHORT).show()
-                    try {
-                        val db = com.qimeng.media.data.db.AppDatabase.getInstance(requireContext())
-                        val manager = com.qimeng.media.backup.BackupManager(requireContext())
-                        // 从 settings 表获取备份目录 URI，定位"个人偏好"子文件夹
-                        val success = withContext(Dispatchers.IO) {
-                            val backupUriStr = viewModel.getBackupDirectoryUri()
-                            if (backupUriStr == null) {
-                                false
-                            } else {
-                                val rootDir = DocumentFile.fromTreeUri(requireContext(), Uri.parse(backupUriStr))
-                                val prefsDir = rootDir?.findFile("个人偏好")
-                                if (prefsDir != null) {
-                                    manager.exportPersonalPrefsToFile(prefsDir.uri, db, options)
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                        Toast.makeText(requireContext(),
-                            if (success) "报告已导出（${options.selectedCount}/9 章节）" else "导出失败，请检查备份目录",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(requireContext(), "导出失败：${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun showTxtImportDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "TXT导入作者"))
-
-        val txtFiles = cachedImportedTxtFiles
-        if (txtFiles.isEmpty()) {
-            container.addView(SheetUiHelper.sheetSubText(ctx, "暂无已导入的TXT文件"))
-        } else {
-            container.addView(SheetUiHelper.sheetLabel(ctx, "已导入文件（${txtFiles.size}）"))
-            for (fileName in txtFiles) {
-                container.addView(SheetUiHelper.sheetSourceRow(ctx, fileName, fileName,
-                    onDelete = {
-                        viewModel.removeImportedTxtFile(fileName)
-                        Toast.makeText(requireContext(), "已移除：$fileName", Toast.LENGTH_SHORT).show()
-                    },
-                    onRefresh = {
-                        // 直接刷新：从URI重新读取文件，失败则用缓存重新匹配
-                        viewModel.refreshTxtImport(fileName) { fromFile, message ->
-                            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ))
-            }
-        }
-
-        container.addView(SheetUiHelper.sheetLabel(ctx, "导入新文件"))
-        container.addView(SheetUiHelper.sheetSubText(ctx, "支持编号+作者名+来源+作品格式\n或每行一个作者名的旧格式"))
-        container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择 TXT 文件") {
-            authorTxtLauncher.launch(arrayOf("text/plain"))
-        })
-        dialog.setContentView(container)
-        dialog.show()
-    }
-
-    private fun importAuthorsFromTxt(uri: Uri) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                // v1.12 修复：大 TXT 文件读取移到 IO 线程，避免主线程阻塞；UI 回调保持主线程
-                val text = withContext(Dispatchers.IO) {
-                    requireContext().contentResolver.openInputStream(uri)?.use {
-                        String(it.readBytes(), Charsets.UTF_8)
-                    } ?: ""
-                }
-                val fileName = getFileName(uri)
-                // 持久化URI读取权限，用于后续刷新
-                persistReadPermission(uri)
-                viewModel.importAuthorsFromText(text, fileName, uri.toString())
-                Toast.makeText(requireContext(), "作者导入完成", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(), "导入失败：${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    private fun getFileName(uri: Uri): String {
-        val cursor = requireContext().contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex >= 0) return it.getString(nameIndex)
-            }
-        }
-        return uri.lastPathSegment ?: "unknown.txt"
-    }
-
-    private fun persistReadPermission(uri: Uri) {
-        runCatching {
-            requireContext().contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        }
-    }
-
-    private fun persistWritePermission(uri: Uri) {
-        runCatching {
-            requireContext().contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-        }
-    }
-
-    private fun renderScanToast(status: ScanStatus) {
-        val message = when (status) {
-            ScanStatus.Idle -> return
-            ScanStatus.Running -> "正在扫描常规目录..."
-            is ScanStatus.Success -> buildString {
-                append("扫描完成：${status.directoryCount} 个目录，共 ${status.count} 个文件")
-                // v1.7：大文件/大总量警告
-                status.warning?.let { append("\n⚠ $it") }
-            }
-            is ScanStatus.Error -> "扫描失败：${status.message}"
-        }
-        if (message != lastScanMessage) {
-            lastScanMessage = message
-            // 含警告时延长显示时间，确保用户能看到
-            val duration = if (status is ScanStatus.Success && status.warning != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-            Toast.makeText(requireContext(), message, duration).show()
-        }
-    }
-
-    // v1.12 删除：cachedAutoSync 只写不读死字段，已移除
-
-    fun scrollToTop() {
-        (binding.root as? android.widget.ScrollView)?.smoothScrollTo(0, 0)
-    }
-
-    private fun showCacheSyncDialog() {
-        val dialog = BottomSheetDialog(requireContext())
-        val ctx = requireContext()
-        val container = SheetUiHelper.sheetContainer(ctx)
-        container.addView(SheetUiHelper.sheetTitle(ctx, "缓存与同步"))
-
-        // 缩略图缓存进度（实时更新）
-        val cacheStatusText = android.widget.TextView(ctx).apply {
-            setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextPrimary))
-            textSize = 14f
-            setPadding(18.dp(ctx), 12.dp(ctx), 18.dp(ctx), 4.dp(ctx))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        container.addView(cacheStatusText)
-
-        val progressBar = android.widget.ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                8.dp(ctx)
-            ).apply { leftMargin = 18.dp(ctx); rightMargin = 18.dp(ctx); bottomMargin = 8.dp(ctx) }
-            progressDrawable = android.graphics.drawable.LayerDrawable(arrayOf(
-                android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = 4f
-                    setColor(ctx.resolveThemeColor(R.attr.qmColorDivider))
-                },
-                android.graphics.drawable.ClipDrawable(
-                    android.graphics.drawable.GradientDrawable().apply {
-                        cornerRadius = 4f
-                        setColor(ctx.resolveThemeColor(R.attr.qmColorPrimary))
-                    },
-                    android.view.Gravity.START,
-                    android.graphics.drawable.ClipDrawable.HORIZONTAL
-                )
-            )).apply {
-                setId(0, android.R.id.background)
-                setId(1, android.R.id.progress)
-            }
-        }
-        container.addView(progressBar)
-
-        // 实时观察进度
-        val progressJob = viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.thumbnailProgress.collect { progress ->
-                when (progress) {
-                    is ThumbnailProgress.Idle -> {
-                        cacheStatusText.text = "缩略图缓存：空闲"
-                        progressBar.progress = 0
-                    }
-                    is ThumbnailProgress.Running -> {
-                        val percent = if (progress.total > 0) progress.done * 100 / progress.total else 0
-                        cacheStatusText.text = "缩略图缓存（${progress.source.label}）：$percent%（${progress.done}/${progress.total}）"
-                        progressBar.progress = percent
-                    }
-                    is ThumbnailProgress.Done -> {
-                        cacheStatusText.text = "缩略图缓存（${progress.source.label}）：已完成（${progress.total} 个文件）"
-                        progressBar.progress = 100
-                    }
-                }
-            }
-        }
-
-        // 自动同步开关
-        val appPrefsManager = (requireActivity().application as com.qimeng.media.QimengApplication).appContainer.appPrefsManager
-
-        // 开关区域：标题行 + 说明行
-        val switchContainer = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(18.dp(ctx), 12.dp(ctx), 18.dp(ctx), 12.dp(ctx)
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val switchRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val switchLabel = android.widget.TextView(ctx).apply {
-            text = "自动备份"
-            setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextPrimary))
-            textSize = 15f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val switch = com.google.android.material.switchmaterial.SwitchMaterial(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        switchRow.addView(switchLabel)
-        switchRow.addView(switch)
-
-        val switchDesc = android.widget.TextView(ctx).apply {
-            text = "数据变化时自动写入备份目录"
-            setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextSecondary))
-            textSize = 12f
-            setPadding(0, 2.dp(ctx), 0, 0)
-        }
-        switchContainer.addView(switchRow)
-        switchContainer.addView(switchDesc)
-        container.addView(switchContainer)
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            appPrefsManager.prefs.collect { prefs ->
-                switch.setOnCheckedChangeListener(null)
-                switch.isChecked = prefs.autoSync
-                switchDesc.text = if (prefs.autoSync) "已开启 · 数据变化时自动写入备份目录" else "未开启 · 数据仅保存在本地"
-                switch.setOnCheckedChangeListener { _, isChecked ->
-                    appPrefsManager.updateAutoSync(isChecked)
-                }
-            }
-        }
-
-        dialog.setOnDismissListener { progressJob.cancel() }
-        dialog.setContentView(container)
-        dialog.show()
-    }
 
     /** 推荐偏好预设：名称 + 描述 + 各维度权重值 */
     private data class RecPrefPreset(
@@ -892,15 +234,26 @@ class ProfileFragment : Fragment() {
         _binding = null
     }
 
-    private fun parseTxtFileList(setting: SettingEntity?): List<String> {
-        val json = setting?.value ?: return emptyList()
-        return try {
-            val arr = org.json.JSONArray(json)
-            (0 until arr.length()).map { arr.getString(it) }
-        } catch (e: Exception) {
-            com.qimeng.media.core.AppLog.d("Profile", "parseTxtFileList failed: ${e.message}")
-            emptyList()
+    private fun renderScanToast(status: ScanStatus) {
+        val message = when (status) {
+            ScanStatus.Idle -> return
+            ScanStatus.Running -> "正在扫描常规目录..."
+            is ScanStatus.Success -> buildString {
+                append("扫描完成：${status.directoryCount} 个目录，共 ${status.count} 个文件")
+                // v1.7：大文件/大总量警告
+                status.warning?.let { append("\n⚠ $it") }
+            }
+            is ScanStatus.Error -> "扫描失败：${status.message}"
+        }
+        if (message != lastScanMessage) {
+            lastScanMessage = message
+            // 含警告时延长显示时间，确保用户能看到
+            val duration = if (status is ScanStatus.Success && status.warning != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+            Toast.makeText(requireContext(), message, duration).show()
         }
     }
 
+    fun scrollToTop() {
+        (binding.root as? android.widget.ScrollView)?.smoothScrollTo(0, 0)
+    }
 }

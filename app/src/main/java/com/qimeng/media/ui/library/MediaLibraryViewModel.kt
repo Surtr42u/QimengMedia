@@ -221,6 +221,11 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             if (autoRefreshMedia.isNotEmpty()) {
                 thumbnailUseCase.pregenerateThumbnails(autoRefreshMedia, viewModelScope)
             }
+
+            // 自动刷新可能有新增/删除文件或作者关联变化，触发备份自动同步
+            // （v1.13：补齐启动同步；triggerAutoSyncIfNeeded 内置 30 秒防抖 + autoSync 开关前置，
+            // 不会因 App 内频繁操作反复写盘）
+            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -400,6 +405,29 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 )
             } catch (e: Exception) {
                 AppLog.e("ViewModel", "importFromBackupDirectory failed", e)
+                0
+            }
+            // 导入成功后清除"建议恢复"提示
+            if (count > 0) autoSyncUseCase.clearRestoreSuggestion()
+            withContext(Dispatchers.Main) { onComplete(count) }
+        }
+    }
+
+    /**
+     * 从用户主动选择的目录导入恢复数据（数据备份页"选择导入目录并恢复"入口）。
+     * 与 [importFromBackupDirectory]（从已设置备份位置导入）不同，目录由用户临时选择，
+     * 不改变已设置的备份位置。目录内无 "app数据" 子目录时直接读目录本身（BackupManager 兜底）。
+     * @param uri 用户选择的备份根目录 URI（绮梦影库/ 或其 app数据 子目录）
+     * @param onComplete 回调，参数为成功导入的 JSON 文件数（0 表示无数据或失败）
+     */
+    fun importFromDirectoryUri(uri: Uri, onComplete: (Int) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val count = try {
+                appContainer.backupManager.importFromDirectory(
+                    uri, appContainer.database, appContainer.appPrefsManager
+                )
+            } catch (e: Exception) {
+                AppLog.e("ViewModel", "importFromDirectoryUri failed", e)
                 0
             }
             // 导入成功后清除"建议恢复"提示

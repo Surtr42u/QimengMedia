@@ -46,6 +46,7 @@
 - 作者管理：TXT 导入 + COS 扫描自动创建，双向匹配机制
 - 数据统计页：折线趋势/环形分布/柱状排行/横向柱条
 - 数据备份：10 类 JSON 导出导入 + 个人偏好报告 + 自动同步 + 恢复提示 + 空库覆盖防护
+- 我的页数据管理（v1.13 独立页面）：数据管理（`DataManagementFragment`）与数据备份（`DataBackupFragment`）均为独立页面，不再使用弹层；数据管理页平铺 常规目录/COS目录/TXT导入作者 三区块，数据备份页含 备份位置/同步/自定义导出/缓存与同步 区块，导入恢复在数据备份页
 
 ### 主题与图标
 
@@ -174,6 +175,8 @@ QimengMedia/
 │               │   └── SourceGroupsData.kt
 │               ├── profile/
 │               │   ├── ProfileFragment.kt
+│               │   ├── DataManagementFragment.kt   # v1.13 数据管理独立页（常规/COS/TXT 平铺）
+│               │   ├── DataBackupFragment.kt       # v1.13 数据备份独立页（含缓存与同步）
 │               │   └── SheetUiHelper.kt
 │               ├── detail/
 │               │   ├── MediaDetailFragment.kt

@@ -58,7 +58,7 @@
 - 对未知字段忽略但保留兼容空间。
 - 找不到媒体文件时保留未匹配记录。
 - 导入前可提示是否覆盖、合并或跳过冲突。
-- **选目录后自动检测恢复**：用户在数据管理弹层选择备份目录后，`ProfileFragment.saveBackupLocation` 调用 `BackupManager.peekBackupSummary`（只读，不写数据库）检测 `app数据/` 子目录是否已有备份数据。检测到数据则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"，用户确认后调 `importFromDirectory` 恢复。同一目录只提示一次（用独立 SharedPreferences `restore_hint_prefs` 记录，key 为 `hint_shown_<完整URI>`，卸载重装后清空会重新提示）。
+- **选目录后自动检测恢复**：用户在数据备份页选择备份目录后，`DataBackupFragment.saveBackupLocation` 调用 `BackupManager.peekBackupSummary`（只读，不写数据库）检测 `app数据/` 子目录是否已有备份数据。检测到数据则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"，用户确认后调 `importFromDirectory` 恢复。同一目录只提示一次（用独立 SharedPreferences `restore_hint_prefs` 记录，key 为 `hint_shown_<完整URI>`，卸载重装后清空会重新提示）。
 
 ### 导入安全加固（2026-06-20 审查新增）
 
@@ -86,8 +86,10 @@
 ## 数据管理功能
 
 - 保存位置选择：使用 SAF 选择备份保存目录，自动创建「绮梦影库」目录及「app数据」「个人偏好」「格式说明」子文件夹，持久化目录 Uri 和显示名。
-- 自动同步开关：我的页提供自动同步开关（`AppPrefs.autoSync`），开启后数据变化自动写入备份目录。
+- **导入数据（v1.13 在数据备份独立页面 `DataBackupFragment`）**：数据备份页顶部提供「选择导入目录并恢复」按钮（`importDirectoryLauncher`，`OpenDocumentTree`），点击直接弹文件夹选择器，选目录后 `importFromChosenDirectory` 调 `peekBackupSummary` 只读检测——检测到备份数据弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复到本地"，确认后调 `MediaLibraryViewModel.importFromDirectoryUri` → `BackupManager.importFromDirectory` 恢复；无备份数据提示"该目录未找到备份数据"。**不改变已设置的备份位置**（与"设置备份位置"是两个独立动作）。另有两条导入路径：①空库防护提示区"导入恢复"按钮（从已设置备份位置导入，调 `importFromBackupDirectory`）；②选备份目录后自动检测恢复（`saveBackupLocation` → `peekBackupSummary` → `AlertDialog` → 恢复）。
+- 自动同步开关：数据备份页内嵌「缓存与同步」区块提供自动同步开关（`AppPrefs.autoSync`），开启后数据变化自动写入备份目录。
   - 触发时机：
+    - App 启动自动刷新完成（`autoRefreshAllSources`，v1.13 补齐）→ `triggerAutoSyncIfNeeded()`（只写 app数据/）
     - 扫描完成/增量刷新/TXT导入后 → `triggerAutoSyncIfNeeded()`（只写 app数据/）
     - 退出详情页 → `triggerAutoSyncForDetailExit()`（只写 app数据/，JSON 快；覆盖详情页内的点赞/收藏/标签/时间轴标签修改）
     - 标签增删改（addTag/removeTag/deleteTagById/createTag）、时间轴标签增删（addTimelineTag/deleteTimelineTag）、作者关注切换（toggleAuthorFollow）、清空历史（clearHistory）、手动添加作者（addAuthor）、删除扫描源（deleteScanSource/deleteCosScanSource）、自定义相册源（addCustomAlbumSource）→ `triggerAutoSyncIfNeeded()`（只写 app数据/，2026-06-23 补全：这些操作不走详情页流程，此前仅靠 App 进后台全量同步覆盖，存在被杀丢数据风险）
@@ -98,9 +100,9 @@
   - 实现：`AutoSyncUseCase` → `BackupManager.autoSyncToDirectory()` / `BackupManager.fullSyncToDirectory()`
 - 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。空库时被拦截返回 false，Toast 提示"本地数据为空，已暂停同步"。
 - 恢复提示：选择备份目录后，App 用 `BackupManager.peekBackupSummary`（只读）检测目录是否已有备份数据，有则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"。用户确认后调 `importFromDirectory` 恢复；取消也标记已展示，同一目录不重复打扰。用途：卸载重装后选了旧目录，主动提示合并旧数据，避免个人画像断档。
-- 空库覆盖防护：数据备份弹层在 `AutoSyncUseCase.restoreSuggestion` 为 true 时，顶部显示"⚠ 本地数据为空，已暂停自动同步，建议先导入恢复"提示行 + "导入恢复"按钮。用户点"导入恢复"调 `importFromBackupDirectory`，成功后清除提示。防护阈值：`media_files` 表为空即触发。
+- 空库覆盖防护：数据备份页在 `AutoSyncUseCase.restoreSuggestion` 为 true 时，顶部显示"⚠ 本地数据为空，已暂停自动同步，建议先导入恢复"提示行 + "导入恢复"按钮。用户点"导入恢复"调 `importFromBackupDirectory`，成功后清除提示。防护阈值：`media_files` 表为空即触发。
 - 自动同步状态展示。
-- 常规目录：从数据管理弹层添加媒体目录，并和已授权扫描目录一起重新索引。
+- 常规目录：从数据管理页（`DataManagementFragment`）添加媒体目录，并和已授权扫描目录一起重新索引。
 - 清空历史记录。
 - TXT 导入作者入口。
 
@@ -125,7 +127,7 @@
 
 ## 个人偏好导出
 
-通过 ProfileFragment 数据管理弹层"导出偏好数据"触发，导出为 2 个文件（COS 和常规数据合并）：
+通过 ProfileFragment 数据备份页"自定义章节导出报告"触发（v1.13 起数据备份为独立页面 `DataBackupFragment`，导出入口随之移入数据备份页），导出为 2 个文件（COS 和常规数据合并）：
 
 | 文件 | 格式 | 用途 |
 |---|---|---|
@@ -134,7 +136,7 @@
 
 ### 自定义章节导出报告
 
-数据备份弹层新增"自定义导出"入口，用户可勾选要导出的章节（默认全选），确认后导出到备份目录的"个人偏好"子文件夹。
+数据备份页新增"自定义导出"入口，用户可勾选要导出的章节（默认全选），确认后导出到备份目录的"个人偏好"子文件夹。
 
 **实现要点**：
 - `ReportSectionOptions` 数据类（9 个 Boolean 字段，默认全 true 保持向后兼容）封装章节勾选状态

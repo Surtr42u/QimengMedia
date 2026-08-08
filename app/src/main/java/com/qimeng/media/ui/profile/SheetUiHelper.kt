@@ -45,6 +45,15 @@ internal object SheetUiHelper {
         setPadding(0, 12.dp(ctx), 0, 6.dp(ctx))
     }
 
+    /** 页面/弹层内平铺区块的分隔标题（比 sheetLabel 更醒目，用于数据管理/数据备份页多区块平铺） */
+    fun sheetSectionTitle(ctx: Context, value: String): TextView = TextView(ctx).apply {
+        text = value
+        setTextColor(ctx.resolveThemeColor(R.attr.qmColorPrimary))
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(0, 14.dp(ctx), 0, 6.dp(ctx))
+    }
+
     fun sheetInfoRow(ctx: Context, name: String): TextView = TextView(ctx).apply {
         text = name
         setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextPrimary))

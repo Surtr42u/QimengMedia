@@ -2,6 +2,49 @@
 
 本文件归档项目历次代码审查、重构、性能优化的详细记录。当前有效的规则、备案、共享组件表见 `GUIDE_CODE_MAINTENANCE.md`。
 
+## 启动自动刷新补齐 TXT 重匹配与备份同步（2026-08-08）
+
+用户询问"打开 App 是否自带一次同步"，确认缺口后修复：启动自动刷新此前只刷媒体库，不重新关联 TXT 作者、不触发备份写盘。
+
+| 文件 | 改动 |
+|---|---|
+| `ScanUseCase.doAutoRefreshAllSources` | 启动自动刷新所有源完成后追加 `rematchAllTxtImports(this)`，新文件自动关联 TXT 作者（与 scanDirectory/refreshScanSource 行为对齐） |
+| `MediaLibraryViewModel.autoRefreshAllSources` | 刷新完成后追加 `autoSyncUseCase.triggerAutoSyncIfNeeded()`（只写 app数据/） |
+
+**防抖确认**：不会因 App 内频繁操作反复备份——`triggerAutoSyncIfNeeded` 三重保护（30 秒防抖 `lastAutoSyncTime` 全触发点共用同一窗口 + `autoSync` 开关前置 + 空库/无备份目录跳过）；启动刷新自身也有 30 秒防抖，仅在启动/授权后执行一次。
+
+> 最后更新：2026-08-08
+
+## 我的页数据管理/备份改独立页面（2026-08-08）
+
+用户反馈"数据管理三层太复杂，不要弹窗"，将弹层改为两个独立页面。
+
+| 类别 | 改动 |
+|---|---|
+| 新页面 | `DataManagementFragment`（数据管理独立页：常规目录/COS目录/TXT导入作者 三区块平铺，返回栏+可滚动）；`DataBackupFragment`（数据备份独立页：备份位置/立即同步/自定义导出/空库恢复提示 + 内嵌缓存与同步区块） |
+| 路由 | `MainActivity` 新增 `showDataManagement()`/`showDataBackup()`；`syncBottomNavVisibilityWithBackStack` 加入两个新页面类型（进入隐藏底部导航） |
+| 导入入口 | 数据备份页顶部保留「选择导入目录并恢复」按钮（弹文件夹选择器→检测→确认→恢复，不改变备份位置，`importFromDirectoryUri`）；数据管理页不重复提供导入 |
+| ProfileFragment | 从 965 行瘦身到 259 行（绿色区）：删除 6 个弹层方法/4 个 launcher/5 个缓存字段/2 个权限方法/自定义导出/缓存同步区块，全部迁移至新页面；保留推荐偏好/兼容性检查弹层 + 扫描 Toast |
+| 文案 | 数据管理行"数据管理\n常规/COS目录与TXT导入"；数据备份行"数据备份\n备份位置与自动同步" |
+| 文档 | GUIDE_UI（我的页/实现路径）、GUIDE_BACKUP（数据管理功能/个人偏好导出）、GUIDE_SCAN（入口描述）、GUIDE_DATA、DATA_MIGRATION_SPEC（恢复触发方式）、PROJECT_GUIDE（功能列表/目录结构）、GUIDE_README、GUIDE_CODE_MAINTENANCE（ProfileFragment 备案 965→259）、CHANGELOG |
+
+> 最后更新：2026-08-08
+
+## 我的页数据管理两层化（2026-08-08）
+
+用户反馈"数据管理三层太复杂"，将"我的"页数据管理从三层弹层改为两层平铺结构。
+
+| 类别 | 改动 |
+|---|---|
+| 入口行 | 布局新增 `backupRow`「数据备份」独立入口行；`dataManagementRow` 文案改为"数据管理：导入数据、常规目录、COS目录、TXT导入作者" |
+| 数据管理弹层 | 原"数据管理 → 常规/COS/TXT/数据备份/缓存与同步"五子层改为**单弹层平铺四区块**：导入数据 / 常规目录 / COS目录 / TXT导入作者。内容超高时 ScrollView 包裹弹层内滚动 |
+| 导入数据 | 新增 `importDirectoryLauncher`（OpenDocumentTree）+ `importFromChosenDirectory`（peekBackupSummary 检测 → AlertDialog 确认 → 恢复）；`MediaLibraryViewModel` 新增 `importFromDirectoryUri`（不改变已设置备份位置）；选错目录提示"该目录未找到备份数据" |
+| 数据备份弹层 | 独立弹层（原 `showBackupLocationDialog` 改名 `showBackupDialog`），内嵌「缓存与同步」区块（原独立 `showCacheSyncDialog` 删除，缩略图缓存进度 + 自动备份开关原样并入） |
+| 区块组件 | `SheetUiHelper` 新增 `sheetSectionTitle`（区块分隔标题）；三个目录/TXT 弹层改为 `buildScanDirectorySection`/`buildCosDirectorySection`/`buildTxtImportSection` 区块构建函数 |
+| 文档 | GUIDE_UI「我的页」、GUIDE_BACKUP「数据管理功能/个人偏好导出」、GUIDE_DATA「个人偏好数据导出」、DATA_MIGRATION_SPEC「恢复触发方式」、PROJECT_GUIDE、GUIDE_CODE_MAINTENANCE 备案（ProfileFragment 906→965、ViewModel 36→37 方法） |
+
+> 最后更新：2026-08-08
+
 ## 全项目审查与 P0 数据安全修复（2026-08-08）
 
 基于 22 代理（11 主审查 + 11 复核）全项目只读审查，确认 4 项灾难级缺陷并完成修复，DB schema v3→v5。

@@ -176,7 +176,9 @@ class MainActivity : AppCompatActivity() {
             topFragment is BrowseHistoryFragment ||
             topFragment is FavoriteFragment ||
             topFragment is SearchFragment ||
-            topFragment is StatsDetailFragment -> View.GONE
+            topFragment is StatsDetailFragment ||
+            topFragment is com.qimeng.media.ui.profile.DataManagementFragment ||
+            topFragment is com.qimeng.media.ui.profile.DataBackupFragment -> View.GONE
             else -> View.VISIBLE
         }
     }
@@ -305,6 +307,26 @@ class MainActivity : AppCompatActivity() {
         supportFragmentManager.beginTransaction()
             .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
             .add(R.id.fragmentContainer, SearchFragment())
+            .addToBackStack(null)
+            .commit()
+    }
+
+    /** 我的页 → 数据管理独立页面（v1.13，常规/COS/TXT 平铺，替代原弹层） */
+    fun showDataManagement() {
+        binding.bottomNavigation.visibility = View.GONE
+        supportFragmentManager.beginTransaction()
+            .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+            .add(R.id.fragmentContainer, com.qimeng.media.ui.profile.DataManagementFragment.newInstance())
+            .addToBackStack(null)
+            .commit()
+    }
+
+    /** 我的页 → 数据备份独立页面（v1.13，含缓存与同步，替代原弹层） */
+    fun showDataBackup() {
+        binding.bottomNavigation.visibility = View.GONE
+        supportFragmentManager.beginTransaction()
+            .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+            .add(R.id.fragmentContainer, com.qimeng.media.ui.profile.DataBackupFragment.newInstance())
             .addToBackStack(null)
             .commit()
     }

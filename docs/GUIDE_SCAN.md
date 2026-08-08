@@ -10,7 +10,7 @@
 - `MediaStoreObserver`：基于 ContentObserver 监听 MediaStore 变化，自动增量更新已注册的常规扫描目录。5 秒防抖合并变更通知。**只监听常规目录，不监听 COS 目录。**
 - `SafMediaScanner`：基于 SAF `DocumentFile` 递归扫描用户授权目录。MediaStore 查不到时的回退方案。
 - `ScanUtils`：扫描器共享工具方法（`mediaTypeForExtension`、`shortHash`、`buildEntities`），MediaStoreScanner 和 SafMediaScanner 共用，消除重复代码。
-- `ProfileFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；常规目录入口统一放在"数据管理/常规目录"。
+- `DataManagementFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；常规目录入口统一放在"数据管理页/常规目录"。
 - `MediaLibraryViewModel`：触发扫描、读取既有 `ScanSourceEntity`，统一调度双引擎。
 
 ## 两套扫描体系
@@ -20,7 +20,7 @@
 | 维度 | 常规扫描 | COS 扫描 |
 |---|---|---|
 | **用途** | 通用图片/视频文件扫描 | COS 图集专用扫描（按作者/作品目录结构） |
-| **入口** | 数据管理 → 选择文件夹 | 数据管理 → 选择 COS 文件夹 |
+| **入口** | 数据管理页 → 选择文件夹 | 数据管理页 → 选择 COS 文件夹 |
 | **目录结构** | 扁平或任意层级，无固定结构 | 固定三级：`COS根目录/作者名/作品名/文件` |
 | **`isCosDirectory`** | `false` | `true` |
 | **`isCosFile`** | `false` | `true` |
@@ -53,7 +53,7 @@
 
 - `scanDirectory(uri, displayName?)`：首次添加目录
 - `refreshScanSource(uriString)`：增量刷新已有目录
-- `autoRefreshAllSources()`：App 启动（延迟 3 秒）时自动刷新所有常规目录。防抖 30 秒（`AUTO_REFRESH_INTERVAL`），`isAutoRefreshing` AtomicBoolean 防重入，避免与手动刷新并发导致数据库锁竞争
+- `autoRefreshAllSources()`：App 启动（延迟 3 秒）时自动刷新所有常规目录。防抖 30 秒（`AUTO_REFRESH_INTERVAL`），`isAutoRefreshing` AtomicBoolean 防重入，避免与手动刷新并发导致数据库锁竞争。**v1.13 起刷新完成后自动 `rematchAllTxtImports`（新文件关联 TXT 作者）并触发备份自动同步（`triggerAutoSyncIfNeeded`，30 秒防抖 + autoSync 开关前置）**
 
 ### 实时监听
 
@@ -69,7 +69,7 @@
 **关键限制**：目录中存在 `.nomedia` 文件时，MediaStore 完全忽略该目录及其子目录，`ContentObserver` 收不到变更通知，`MediaStoreObserver` 实时监听失效。此时所有扫描回退到 SAF `scanTreeFast`，实时性只能依赖以下两个入口：
 
 - **App 启动自动刷新**：`MainActivity.onCreate` 权限授予后延迟 3 秒调用 `autoRefreshAllSources()`，覆盖"改完文件再开 App"的主场景
-- **手动刷新**：数据管理弹层中每个扫描源行有刷新按钮（`ProfileFragment` 调 `viewModel.refreshScanSource` / `refreshCosSource`），用户主动触发即时扫描
+- **手动刷新**：数据管理页中每个扫描源行有刷新按钮（`DataManagementFragment` 调 `viewModel.refreshScanSource` / `refreshCosSource`），用户主动触发即时扫描
 
 `autoRefreshAllSources()` 防重入：`ScanUseCase.isAutoRefreshing`（AtomicBoolean）保证同一时刻只有一个自动刷新在跑，避免启动刷新与手动刷新并发引发数据库锁竞争；实际执行逻辑在私有方法 `doAutoRefreshAllSources()`，外壳方法用 try-finally 确保异常时也释放标志位。
 

@@ -259,7 +259,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 
 ## 个人偏好数据导出
 
-个人偏好导出通过 ProfileFragment 数据管理弹层"导出偏好数据"触发，导出为 2 个文件（COS 和常规数据合并）：`personal_prefs.json`（完整数据备份）和 `personal_prefs_report.txt`（纯中文文本报告）。
+个人偏好导出通过 ProfileFragment 数据备份页"自定义章节导出报告"触发（v1.13 起数据备份为独立页面 `DataBackupFragment`，导出入口随之移入数据备份页），导出为 2 个文件（COS 和常规数据合并）：`personal_prefs.json`（完整数据备份）和 `personal_prefs_report.txt`（纯中文文本报告）。
 
 **导出流程、data 区域结构、文本报告章节、热度分计算公式、示例文件详见 `GUIDE_BACKUP.md`「个人偏好导出」。** 本节仅记录数据层字段定义。
 
@@ -324,7 +324,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - `importAuthorsFromText` 使用轻量查询 `getNonCosKeysAndFileNames()` + `findMatchingMediaLight()` 替代 `getAllMedia().filter { !it.isCosFile }`，避免加载全量 `MediaFileEntity`。
 - TXT 导入时解析后的结构化数据（AuthorBlock 列表）序列化为 JSON 保存到 settings 表（key 为 `imported_txt_blocks_<fileName>`），用于扫描新文件后重新匹配（`rematchAllTxtImports`）；同时保存 TXT 文件 URI（key 为 `imported_txt_uri_<fileName>`），用于刷新时重新读取文件。
 - `rebuildAssociationsFromBlocks` 是作者关联的**统一重建入口**：从全部已导入 TXT 的 blocks 统一重建关联（遍历全部 TXT → 匹配当前库非 COS 文件 → upsertAllAuthors + deleteCrossRefsByAuthorIds(全部相关作者) + upsertAllAuthorMedia）。被四个场景复用：TXT 导入完成（`importAuthorsFromText` 块格式分支）、TXT 刷新降级（`rematchSingleTxtImport`）、常规扫描完成（`rematchAllTxtImports`）、删除 TXT 后清理残留（`MediaLibraryViewModel.removeImportedTxtFile`）。统一重建保证跨 TXT 同名作者关联取并集，不被单 TXT 删旧插新覆盖。
-- `rematchAllTxtImports` 在常规扫描（scanDirectory/refreshScanSource）完成后自动调用，内部委托 `rebuildAssociationsFromBlocks`，将已导入 TXT 的作品名与当前库中非 COS 文件重新匹配，确保新文件也能被关联到已有作者。
+- `rematchAllTxtImports` 在常规扫描（scanDirectory/refreshScanSource/autoRefreshAllSources）完成后自动调用（v1.13 补齐启动自动刷新场景），内部委托 `rebuildAssociationsFromBlocks`，将已导入 TXT 的作品名与当前库中非 COS 文件重新匹配，确保新文件也能被关联到已有作者。
 - `rematchSingleTxtImport` 对单个 TXT 文件重新匹配，用于刷新按钮的降级方案（URI 不可访问时用已保存 blocks 重新匹配），内部委托 `rebuildAssociationsFromBlocks`（语义为从全部 TXT 重建，避免单 TXT 覆盖跨 TXT 关联）。
 - `refreshTxtImport` 刷新逻辑：先尝试从保存的 URI 重新读取文件内容，成功则重新导入（走 `importAuthorsFromText` 重建）；失败则降级调用 `rematchSingleTxtImport`。
 - `removeImportedTxtFile` 删除 TXT 时先清理 blocks/URI/列表，再调用 `rebuildAssociationsFromBlocks` 从剩余 TXT 重建关联，自动清掉被删 TXT 产生的残留 crossRef。

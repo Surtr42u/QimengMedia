@@ -12,7 +12,9 @@
 | `app/src/main/java/com/qimeng/media/ui/album/AlbumFragment.kt` | 相册出处列表（长按修改分区名） |
 | `app/src/main/java/com/qimeng/media/ui/album/AlbumDetailFragment.kt` | 相册出处详情（角色/类型筛选+药丸+COS支持） |
 | `app/src/main/java/com/qimeng/media/ui/album/SourceMatcher.kt` | 出处匹配引擎（SourceGroup规范名+变体，三层优先级匹配） |
-| `app/src/main/java/com/qimeng/media/ui/profile/ProfileFragment.kt` | 我的：扫描/作者/历史/主题/备份/自动同步/兼容性检查 |
+| `app/src/main/java/com/qimeng/media/ui/profile/ProfileFragment.kt` | 我的：扫描状态/推荐偏好/兼容性检查/数据管理与数据备份入口行 |
+| `app/src/main/java/com/qimeng/media/ui/profile/DataManagementFragment.kt` | 数据管理独立页：常规目录/COS目录/TXT导入作者 平铺（v1.13） |
+| `app/src/main/java/com/qimeng/media/ui/profile/DataBackupFragment.kt` | 数据备份独立页：备份位置/同步/自定义导出/缓存与同步（v1.13） |
 | `app/src/main/java/com/qimeng/media/ui/stats/DataStatsFragment.kt` | 数据统计页：专业数据报表（折线趋势/环形分布/柱状排行/横向柱条） |
 | `app/src/main/java/com/qimeng/media/core/CompatChecker.kt` | 兼容性检查工具（6项检查） |
 | `app/src/main/java/com/qimeng/media/ui/detail/ZoomImageView.kt` | 自定义缩放 ImageView（**智能分层渲染**：`applyOptimalLayerType()` 按图尺寸选层，GIF→`LAYER_TYPE_HARDWARE`，普通图长边≤4096（硬件渲染安全阈值）→`LAYER_TYPE_HARDWARE`（GPU直渲），>4096→`LAYER_TYPE_SOFTWARE`（保正确性，超大图GPU驱动无法正确应用matrix缩放）；手势期间用 `shouldUseHardwareForCurrent()` 同阈值判断；`lastDrawableWidth/Height` 记录实际尺寸防止Coil降采样导致matrix错乱；缩放范围 0.5x~5x，双击放大1.8x，近1.0的scale factor跳过减少无效重绘） |
@@ -269,16 +271,20 @@
 ## 我的页
 
 - 图片/视频数量卡片
-- 收藏 / 浏览历史 / 作者管理 / 主题色彩 / 推荐偏好 / 数据管理
+- 收藏 / 浏览历史 / 作者管理 / 主题色彩 / 推荐偏好 / 数据管理 / 数据备份
 - 行间距统一由 `QimengProfileRow` style 的 `layout_marginBottom="12dp"` 控制
 - 推荐偏好：点击弹出 BottomSheet，显示预设方案列表（均衡推荐/高记忆流行/深度探索/新鲜优先），点击整行应用预设；当前匹配的预设高亮显示（bg_capsule_primary 背景），未选中预设使用 bg_empty_panel 背景
-- 自动同步：在数据管理弹窗中点击"缓存与同步"弹出 BottomSheet 显示缩略图缓存实时进度（百分比+文件数+进度条，观察 thumbnailProgress Flow）和自动备份开关（标题"自动备份"+ SwitchMaterial + 状态说明行：已开启/未开启），开启后数据变化自动写入备份目录（30秒防抖），需先设置备份保存位置
 - 兼容性检查：检查 Android 版本、SAF 授权、存储空间、MediaStore 可用性、备份写入权限、设备信息
-- 数据管理行打开底部弹层，提供常规目录、COS目录、TXT导入作者、数据备份、缓存与同步。
-- 常规目录：点击后弹出子弹层，上方显示已添加目录列表（每行显示目录名+删除按钮），下方"+ 选择文件夹"添加新目录。
-- 数据备份：点击后弹出子弹层，显示目录结构说明（绮梦影库/个人偏好+app数据），当前备份位置，"+ 选择文件夹"设置新位置。选择文件夹后自动创建「绮梦影库」目录，内含「个人偏好」（偏好JSON+报告TXT）和「app数据」（自动同步的数据库JSON）两个子文件夹，并立即导出偏好数据。支持"自定义导出"入口，可勾选 9 个章节导出报告（详见 GUIDE_BACKUP.md）。
-- TXT导入作者：点击后弹出子弹层，上方显示已导入的TXT文件名列表（每行显示文件名+🔄刷新按钮+×删除按钮），下方格式说明 + "+ 选择 TXT 文件"按钮。
-- 数据管理弹层禁止使用系统默认列表对话框，必须使用 `?attr/qmColor*` 或 `resolveThemeColor()` 保持主题一致。
+- **数据管理行**（v1.13 起为独立页面 `DataManagementFragment`，不再是弹层）：`MainActivity.showDataManagement()` 进入。页面平铺三个区块——常规目录 / COS目录 / TXT导入作者，均为完整页面内容（返回栏 + 区块 + 可滚动）。
+  - **常规目录**：已添加目录列表（每行目录名+删除按钮）+ "+ 选择文件夹"添加新目录（扫描中拦截）。
+  - **COS目录**：已添加COS目录列表（含刷新/删除）+ "+ 选择COS文件夹"。
+  - **TXT导入作者**：已导入TXT文件列表（文件名+🔄刷新+×删除）+ 格式说明 + "+ 选择 TXT 文件"。
+  - 导入备份数据不在此页（已移至数据备份页）。
+- **数据备份行**（v1.13 起为独立页面 `DataBackupFragment`）：`MainActivity.showDataBackup()` 进入。页面内容：
+  - **导入数据**（页面顶部）："选择导入目录并恢复"按钮，点击直接弹文件夹选择器，选备份目录后检测到备份数据弹 `AlertDialog` 确认后恢复（不改变已设置的备份位置）。
+  - 备份位置：目录结构说明（绮梦影库/个人偏好+app数据）、当前备份位置、"+ 选择文件夹"设置新位置（选择后自动创建目录结构并立即导出偏好数据）、"立即同步"、"自定义导出"（勾选 9 个章节导出报告，详见 GUIDE_BACKUP.md）、空库覆盖防护提示（⚠ 本地数据为空，建议先导入恢复 + "导入恢复"按钮，从已设置备份目录恢复）。
+  - **缓存与同步区块（并入数据备份页）**：缩略图缓存实时进度（百分比+文件数+进度条，观察 thumbnailProgress Flow）+ 自动备份开关（标题"自动备份"+ SwitchMaterial + 状态说明行：已开启/未开启），开启后数据变化自动写入备份目录（30秒防抖），需先设置备份保存位置。
+- 数据管理/数据备份页面与弹层禁止使用系统默认列表对话框，必须使用 `?attr/qmColor*` 或 `resolveThemeColor()` 保持主题一致。
 - 主题色彩：`themeRow` **不可点击**（仅跟随手机系统明暗模式，无 App 内切换入口）。`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`，点击无任何反应。详见 GUIDE_THEME.md「明暗模式系统」
 
 ## 详情页沉浸浏览
@@ -447,7 +453,7 @@ COS 不是独立页面，而是集成到首页、全部、收藏、浏览历史�
 
 ### COS 扫描
 
-- 入口：我的页 → 数据管理 → COS目录
+- 入口：我的页 → 数据管理（独立页面 `DataManagementFragment`）→ COS目录
 - 选择 COS 根文件夹后，按 作者/作品/图片 三层结构扫描
 - 扫描逻辑详见 `GUIDE_SCAN.md`，目录结构详见 `GUIDE_AUTHOR.md`
 - 重新扫描：添加新 COS 目录时，重新扫描所有 COS 目录并重建 COS 索引

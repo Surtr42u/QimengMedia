@@ -226,10 +226,10 @@
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
 | `MediaDetailFragment` | 1291 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可 |
-| `ProfileFragment` | 906 行 | 黄色（类总行数） | 设置项弹窗编排，硬拆破坏可读性 |
+| `ProfileFragment` | 259 行 | 绿色 | v1.13 数据管理/数据备份迁移至独立页面（DataManagementFragment/DataBackupFragment）后大幅瘦身；保留推荐偏好/兼容性检查弹层编排 |
 | `StatsDetailFragment` | 852 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 辅助图表 + Top 20 排行榜/分布对比，四种模式 + 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
 | `BiliPlayerView` | 819 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度 |
-| `MediaLibraryViewModel` | 36 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
+| `MediaLibraryViewModel` | 37 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
 | `ScanUseCase.scanCosMedia` | 22 | 黄色（合理复杂度） | COS 扫描编排，同上 |
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
@@ -290,7 +290,7 @@
 | `MediaPillsHelper` | `ui/browser/MediaPillsHelper.kt` | 出处/角色/分区/类型药丸渲染 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
 | `MediaRenderHelper` | `ui/browser/MediaRenderHelper.kt` | 渲染共享计算（applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建） | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AuthorFilesFragment（AlbumDetailFragment 仅用 applyTypeFilter/computeDisplayed，不用 buildFingerprint） |
 | `TimelineTagHelper` | `ui/detail/TimelineTagHelper.kt` | 视频时间轴标签弹窗交互 | MediaDetailFragment |
-| `SheetUiHelper` | `ui/profile/SheetUiHelper.kt` | 弹窗 UI 组件构建（标题/行/按钮） | ProfileFragment |
+| `SheetUiHelper` | `ui/profile/SheetUiHelper.kt` | 弹窗 UI 组件构建（标题/行/按钮/区块分隔标题） | ProfileFragment |
 | `DimenExt` | `ui/widget/DimenExt.kt` | dp/dpFloat 尺寸转换扩展函数（Int.dp(Context)/Float.dp(Context)/Int.dpFloat(Context)） | MediaDetailFragment, BiliPlayerView, HomeFragment, AlbumFragment, ZoomImageView, AuthorListFragment, MediaFilterSheet, GroupedMediaAdapter, TimelineTagHelper, SheetUiHelper |
 | `MediaBrowserLogic` | `ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组/格式化工具 | HomeFragment, AllFilesFragment, AlbumDetailFragment, MediaDetailFragment, MediaThumbnailAdapter |
 | `PinchZoomHelper` | `ui/widget/PinchZoomHelper.kt` | 双指缩放列数共享组件（ScaleGestureDetector 缩放逻辑 + GridLayoutManager 创建含 SpanSizeLookup）；ColumnsRef 类包装列数状态 | AllFilesFragment, AlbumDetailFragment, BrowseHistoryFragment, AuthorFilesFragment, FavoriteFragment |
