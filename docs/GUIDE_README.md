@@ -15,11 +15,11 @@
 | 文档 | 管什么 | 核心内容 |
 |---|---|---|
 | `GUIDE_UI.md` | 所有页面的文件路径、布局结构、导航行为、RecyclerView 适配器 | 详情页叠加模式、首页芯片栏、全部页日期分组、筛选面板 |
-| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份 JSON 格式、UseCase 层 | 12 个实体、10 个 DAO、4 个 UseCase、完整文件名主键、10 个 JSON 文件格式 |
+| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份数据段、UseCase 层 | 12 个实体、10 个 DAO、4 个 UseCase、完整文件名主键、单文件全量备份（qimeng_backup.json 16 段） |
 | `GUIDE_THEME.md` | 11 个 `?attr/qmColor*` 颜色属性、明暗模式切换（仅跟随系统）、代码中使用方式 | `values` / `values-night`、`ThemeHelper.resolve()`、系统 DayNight 自动选择、系统栏明暗同步 |
 | `GUIDE_SCAN.md` | SAF 授权目录、双引擎扫描（MediaStore+SAF）、两套扫描体系、COS 路径解析 | MediaStore 优先 + SAF 回退、scanTreeFast、按需元数据解码 |
 | `GUIDE_ALGORITHM.md` | 推荐公式 10 维权重、排行榜周期、筛选面板全字段、排序缓存 | tagRelevance 0.22 + engagement 0.15 + tagCollection 0.15 + discovery 0.15 等 |
-| `GUIDE_BACKUP.md` | 备份目录管理、导入导出流程图、数据备份页功能 | BackupManager、SAF 目录选择、自动同步 |
+| `GUIDE_BACKUP.md` | 备份目录管理、单文件导入导出流程、数据备份页功能 | BackupManager、SAF 目录选择、自动同步、qimeng_backup.json 单文件全量 |
 | `GUIDE_AUTHOR.md` | 作者管理 UI 入口、TXT 解析规则、COS 目录结构 | 常规作者 vs COS 作者、TXT 格式示例、COS 三种目录结构 |
 | `GUIDE_ANIMATION.md` | 已实现动效列表、待实现动效清单、动效原则 | 详情页淡入淡出、系统栏显隐、明暗模式 |
 | `GUIDE_ANDROID_COMPAT.md` | Android 16+ 兼容策略、新系统 10 项检查清单 | SAF 持久授权、targetSdk 升级流程 |

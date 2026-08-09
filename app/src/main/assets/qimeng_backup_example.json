@@ -1,0 +1,189 @@
+{
+  "format": "qimeng_backup",
+  "schemaVersion": 1,
+  "appIdentifier": "com.qimeng.media",
+  "exportedAtMillis": 1700000000000,
+  "data": {
+    "mediaFiles": [
+      {
+        "recordKey": "示例图片A.jpg",
+        "fileName": "示例图片A.jpg",
+        "displayName": "示例图片A",
+        "extension": "jpg",
+        "mediaType": "image",
+        "uriString": "content://media/external/images/media/10001",
+        "folderName": "示例文件夹",
+        "pathHash": "a1b2c3d4",
+        "sizeBytes": 204800,
+        "modifiedAtMillis": 1700000000000,
+        "width": 1920,
+        "height": 1080,
+        "durationMillis": null,
+        "isDuplicateName": false,
+        "isCosFile": false,
+        "indexedAtMillis": 1700000000000,
+        "sourceUri": "content://com.android.externalstorage.documents/tree/primary%3A示例"
+      },
+      {
+        "recordKey": "示例视频B.mp4",
+        "fileName": "示例视频B.mp4",
+        "displayName": "示例视频B",
+        "extension": "mp4",
+        "mediaType": "video",
+        "uriString": "content://media/external/images/media/10002",
+        "folderName": "示例文件夹",
+        "pathHash": "e5f6a7b8",
+        "sizeBytes": 52428800,
+        "modifiedAtMillis": 1700000000000,
+        "width": 1280,
+        "height": 720,
+        "durationMillis": 300000,
+        "isDuplicateName": false,
+        "isCosFile": true,
+        "indexedAtMillis": 1700000000000,
+        "sourceUri": "content://com.android.externalstorage.documents/tree/primary%3ACOS"
+      }
+    ],
+    "settings": [
+      {
+        "key": "imported_txt_files",
+        "value": "示例TXT.txt",
+        "updatedAtMillis": 1700000000000
+      }
+    ],
+    "authors": [
+      {
+        "authorId": "示例作者ID",
+        "displayName": "示例作者",
+        "createdAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      }
+    ],
+    "authorMediaRefs": [
+      {
+        "authorId": "示例作者ID",
+        "recordKey": "示例图片A.jpg",
+        "fileName": "示例图片A.jpg",
+        "isMatched": true
+      }
+    ],
+    "tags": [
+      {
+        "tagId": 0,
+        "name": "示例标签",
+        "createdAtMillis": 1700000000000
+      }
+    ],
+    "mediaTagRefs": [
+      {
+        "recordKey": "示例图片A.jpg",
+        "tagName": "示例标签"
+      }
+    ],
+    "albumRules": [
+      {
+        "sourceName": "示例来源",
+        "enabled": true,
+        "createdAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      }
+    ],
+    "mediaStats": [
+      {
+        "recordKey": "示例图片A.jpg",
+        "fileName": "示例图片A.jpg",
+        "viewCount": 12,
+        "playCount": 0,
+        "totalBrowseSeconds": 3600,
+        "lastOpenedAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例视频B.mp4",
+        "fileName": "示例视频B.mp4",
+        "viewCount": 8,
+        "playCount": 5,
+        "totalBrowseSeconds": 7200,
+        "lastOpenedAtMillis": 1700000000000,
+        "updatedAtMillis": 1700000000000
+      }
+    ],
+    "history": [
+      {
+        "recordKey": "示例图片A.jpg",
+        "fileName": "示例图片A.jpg",
+        "mediaType": "image",
+        "openedAtMillis": 1700000000000
+      },
+      {
+        "recordKey": "示例视频B.mp4",
+        "fileName": "示例视频B.mp4",
+        "mediaType": "video",
+        "openedAtMillis": 1699990000000
+      }
+    ],
+    "scanSources": [
+      {
+        "uriString": "content://com.android.externalstorage.documents/tree/primary%3A示例",
+        "displayName": "示例目录",
+        "isBackupDirectory": false,
+        "isCosDirectory": false,
+        "addedAtMillis": 1700000000000,
+        "lastScannedAtMillis": 1700000000000
+      }
+    ],
+    "timelineTags": [
+      {
+        "recordKey": "示例视频B.mp4",
+        "fileName": "示例视频B.mp4",
+        "timeMillis": 30000,
+        "name": "示例时间轴标签",
+        "createdAtMillis": 1700000000000
+      }
+    ],
+    "cosWorks": [
+      {
+        "authorName": "示例作者",
+        "workName": "示例作品",
+        "folderUri": "/storage/emulated/0/示例文件夹",
+        "fileCount": 1,
+        "indexedAtMillis": 1700000000000,
+        "sourceUri": "content://com.android.externalstorage.documents/tree/primary%3ACOS"
+      }
+    ],
+    "likes": [
+      {
+        "recordKey": "示例图片A.jpg",
+        "likeCount": 3,
+        "lastLikeDate": "2026-01-15"
+      }
+    ],
+    "favorites": [
+      "示例图片A.jpg",
+      "示例视频B.mp4"
+    ],
+    "followedAuthorIds": [
+      "示例作者ID"
+    ],
+    "appPrefs": {
+      "version": 1,
+      "custom_album_sources": [],
+      "theme_mode": "system",
+      "grid_columns_home": 2,
+      "grid_columns_all": 3,
+      "grid_columns_album": 3,
+      "auto_sync": true,
+      "recommendation_prefs": {
+        "tagRelevance": 0.22,
+        "tagCollection": 0.15,
+        "engagement": 0.1,
+        "recency": 0.15,
+        "likeScore": 0.05,
+        "discovery": 0.2,
+        "freshness": 0.05,
+        "browseDepth": 0.03,
+        "maxRandom": 0.3
+      }
+    }
+  }
+}

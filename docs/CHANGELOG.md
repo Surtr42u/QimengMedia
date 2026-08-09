@@ -10,6 +10,39 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 备份 v2.0 单文件全量重构（2026-08-09）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈备份太复杂（三套产物重复）、个人报告与数据 tab 重叠，要求简化：备份改为**单一 `qimeng_backup.json` 全量 JSON**（16 个数据段），删除 App 内个人偏好报告器与 personal_prefs 缝合格式，报告交给 AI 读备份 JSON 现场生成。
+
+| 类别 | 改动 |
+|---|---|
+| 备份格式 | 旧三套产物（app数据 10 分文件 + personal_prefs.json + 9 章节报告 txt + 格式说明/ 示例目录）→ 单文件 `qimeng_backup.json`（format/schemaVersion/appIdentifier/exportedAtMillis + data 16 段） |
+| 核心缺口补齐 | `media_files` 全 16 字段元数据进备份（旧版从未导出）→ 恢复后浏览历史/统计/标签**立即可用**，不依赖重扫，根治旧版重名文件 pathHash key 漂移被 `cleanupStaleRefs` 误删的问题；新增导出 `cos_works`（含 sourceUri）、`AuthorMediaCrossRef.isMatched`、`MediaFileEntity.sourceUri`、AppPrefs 全量（theme_mode/gridColumns/autoSync/customAlbumSources/recommendationPrefs） |
+| 导入合并策略 | 本地 media_files 为空（重装未扫描）→ 导入备份 media_files 全量；本地非空（已扫描）→ 跳过 media_files 保留新 URI，引用数据按稳定 key 合并；跨引用安全（recordKey 不在 media_files 则跳过） |
+| BackupManager | 重写：泛型 exportArray/importArray + 16 段实体↔JSON 映射，原子写（tmp→round-trip 校验→删旧→rename）+ 64MB 读取上限；保留安全加固（数值 coerceAtLeast(0)、likes 5000 上限）；删除 exportPersonalPrefs/buildReportText/全部 append*Section/ReportSectionOptions/exportFormatSpec（约 500 行） |
+| BackupFileNames | 精简为 `QIMENG_BACKUP` 单常量 |
+| AutoSyncUseCase | 4 同步入口合并为 2（triggerAutoSyncIfNeeded 30s 防抖 / triggerFullSync 60s 防抖 / triggerManualSync 无视防抖），统一写单文件；删除重复 3 次的空库防护代码为 1 处 performSync；`triggerAutoSyncForDetailExit` 删除，详情页改调 triggerAutoSyncIfNeeded |
+| UI | DataBackupFragment：删「自定义导出」区块与 `showCustomReportExportDialog`；目录结构文案改单文件；saveBackupLocation 只建「绮梦影库/」根目录并立即写入全量备份；导入/恢复弹窗补"媒体文件数"维度 |
+| assets | 删 FORMAT_SPEC.md、personal_prefs_example.json、app_data_examples/（10 个示例）；新增虚构 `qimeng_backup_example.json` |
+| 死代码清理 | 删除 `LocalMediaRepository.recordHistory` / `DefaultLocalMediaRepository.recordHistory`（无调用方） |
+
+**验证**：`:app:assembleDebug` 构建通过；`:app:testDebugUnitTest` 通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/qimeng/media/backup/BackupManager.kt` | 重写为单文件全量导出/导入（~700 行，原 1567 行） |
+| `app/src/main/java/com/qimeng/media/backup/BackupFileNames.kt` | 精简为单常量 |
+| `app/src/main/java/com/qimeng/media/domain/AutoSyncUseCase.kt` | 合并同步入口，统一写单文件 |
+| `app/src/main/java/com/qimeng/media/ui/profile/DataBackupFragment.kt` | 删自定义导出/改文案/改目录创建 |
+| `app/src/main/java/com/qimeng/media/ui/detail/MediaDetailFragment.kt` | triggerAutoSyncForDetailExit → triggerAutoSyncIfNeeded |
+| `app/src/main/java/com/qimeng/media/data/repository/LocalMediaRepository.kt` + `DefaultLocalMediaRepository.kt` | 删 recordHistory 死代码 |
+| `app/src/main/assets/qimeng_backup_example.json` | 新增虚构示例 |
+| `docs/GUIDE_BACKUP.md` / `GUIDE_DATA.md` / `DATA_MIGRATION_SPEC.md` / `PROJECT_GUIDE.md` / `GUIDE_UI.md` / `GUIDE_README.md` / `CHANGELOG.md` | 重写/更新为新格式 |
+
+> 最后更新：2026-08-09
+
 ## 作者管理加搜索过滤（2026-08-09）
 
 执行 AI：deepseek-v4-flash

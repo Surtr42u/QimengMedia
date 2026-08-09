@@ -139,7 +139,7 @@
 ### 方法规范
 
 - 单方法行数参考三档警戒线（§8 质量指标）：绿色 ≤80 行、黄色 80-120 行（需 KDoc 说明合理理由，如数据汇总/手势回调/扫描编排）、红色 >120 行（必须重构或显式备案）
-- 方法参数不超过 5 个（超过则封装为数据类，参考 `BackupManager.PersonalPrefsReportData`）
+- 方法参数不超过 5 个（超过则封装为数据类，参考 `MediaRenderHelper.FingerprintParams`）
 - 嵌套不超过 3 层（超过则提取方法或使用 early return）
 
 ### 注释规范
@@ -202,7 +202,7 @@
 | 方法参数 | ≤5 | 5-8 | >8 |
 
 **黄色区处理**：在方法/类 KDoc 注释说明"为何超长合理"。典型合理超长场景：
-- 数据汇总/报告生成（如 `BackupManager.exportPersonalPrefs` 汇总 23 个数据源）
+- 数据汇总/事务编排（如 `BackupManager.importFromDirectory` 单事务导入 12 个数据段）
 - 手势回调/事件分发（如 `BiliPlayerView.onTouchEvent` 天然多分支）
 - 扫描编排/流程调度（如 `ScanUseCase.autoRefreshAllSources` 多源顺序刷新）
 - 设置项弹窗编排（如 `ProfileFragment` 多设置项顺序组装）
@@ -213,7 +213,7 @@
 
 | 指标 | 目标 | 当前状态 | 检查方式 |
 |------|------|----------|----------|
-| 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法约 280 行（`BackupManager.exportPersonalPrefs`，数据汇总合理复杂度已备案） | Detekt LongMethod |
+| 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法为 `BackupManager.importFromDirectory`（单事务导入 12 个数据段，事务编排合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
 | 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 7 个核心测试类（140+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest 9 个） | ./gradlew test |
@@ -235,8 +235,7 @@
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
-| `BackupManager` | 1567 行 | 红色（类总行数，合理复杂度备案） | 备份管理天然多方法：10 个 export + 10 个 import + 14 个 appendXxxSection 报告子方法 + 4 个公开入口（export/import/autoSync/fullSync），各方法职责单一。`exportPersonalPrefs` 见下行单独备案。强行拆分（如按 export/import 分两个类）会割裂 companion 常量、私有辅助方法、BackupSummary 内部类的共享，增加跨类耦合，按 §8「合理复杂度」认可 |
-| `BackupManager.exportPersonalPrefs` | ~280 行 | 黄色（方法行数） | 报告生成汇总 23 个数据源，天然复杂，已封装 PersonalPrefsReportData + 章节子方法 |
+| `BackupManager` | 627 行 | 黄色（类总行数） | 备份管理天然多方法：16 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 12 个数据段保持单方法（拆分会破坏事务原子性） |
 | `SourceGroupsData` | 1674 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 历史审查与重构记录
@@ -396,7 +395,7 @@ Fragment/类规模按 §8 三档警戒线判定，不设硬性"必须拆分"行�
 
 以下场景的超长属合理复杂度，应靠备案合法化而非强行拆分：
 
-- **数据汇总/报告生成**：天然需要汇总多数据源（如 `BackupManager.exportPersonalPrefs`）
+- **事务/流程编排**：天然需要顺序编排多步骤（如 `BackupManager.importFromDirectory` 单事务导入 12 个数据段）
 - **手势回调/事件分发**：天然多分支（如 `BiliPlayerView.onTouchEvent`）
 - **扫描编排/流程调度**：多源顺序刷新（如 `ScanUseCase.autoRefreshAllSources`）
 - **纯数据声明**：圈复杂度=0（如 `SourceGroupsData` 1674 行检索表）

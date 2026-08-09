@@ -5,69 +5,64 @@
 目标源码路径：`app/src/main/java/com/qimeng/media/backup/`
 
 当前实现：
-- `BackupManager`：从 Room 读取所有数据表，生成 JSON 文件写入 SAF 授权目录；同时支持从 JSON 读取并恢复数据。
-- `ProfileFragment`：通过"数据管理"行打开项目主题底部弹层，统一承载常规目录、保存位置、相册规则、TXT 导入作者；保存位置写入 `settings` 表。
+- `BackupManager`：从 Room 读取所有数据表 + SharedPreferences + AppPrefs，序列化为**单个** `qimeng_backup.json` 写入 SAF 授权目录；同时支持从该文件读取并恢复数据。
+- `AutoSyncUseCase`：数据变化自动同步、App 进后台兜底同步、手动同步（统一写单文件）。
+- `DataBackupFragment`：数据备份独立页面（我的页 → 数据备份），含备份位置、手动同步、导入恢复、空库防护提示、缓存与同步区块。
 
 ## 职责
 
 管理 App 数据的 JSON 导入、导出和指定目录自动同步。
-各 JSON 文件的格式定义、字段清单、实体映射见 `docs/GUIDE_DATA.md`。
+`qimeng_backup.json` 的格式定义、字段清单、实体映射见 `docs/DATA_MIGRATION_SPEC.md` 与 `docs/GUIDE_DATA.md`。
 
 不管：数据实体字段定义（详见 GUIDE_DATA.md「目标实体」）、扫描流程（详见 GUIDE_SCAN.md「两套扫描体系」）
 
 ## 备份原则
 
 - 只备份 App 自己的数据。
-- 不备份原始媒体文件。
+- 不备份原始媒体文件（只备份 `media_files` 表的元数据：文件名/大小/时间/类型等）。
 - 不写入媒体文件所在目录，除非用户明确把备份目录选在那里。
 - 指定备份文件夹后，数据变化自动同步。
 - 手动导出和导入也必须保留。
 
-## 文件规范
+## 文件规范（v2.0 单文件）
 
-- JSON 使用 UTF-8。
-- 每个 JSON 文件包含 `schemaVersion`。
-- 字段名稳定、可读。
-- 文件名可读（`settings.json`、`authors.json` 等）。
-- 不导出原始媒体内容。
-- 不把绝对路径作为唯一迁移依据。
+- 备份目录 `绮梦影库/` 根目录下只有**一个数据文件** `qimeng_backup.json`（不再拆 app数据/个人偏好/格式说明 三个子目录与 10+ 分文件）。
+- JSON 使用 UTF-8，字段名自解释（fileName/viewCount/openedAtMillis），**AI 可直接读取该文件生成任意报告**，App 不再内置报告器。
+- 顶层含 `format`（固定 `qimeng_backup`）、`schemaVersion`（当前 1）、`appIdentifier`、`exportedAtMillis`、`data`（16 个数据段）。
+- data 段覆盖：mediaFiles / settings / authors / authorMediaRefs / tags / mediaTagRefs / albumRules / mediaStats / history / scanSources / timelineTags / cosWorks / likes / favorites / followedAuthorIds / appPrefs。
 
 ### 隐私保护
 
-- 所有导出文件包含用户个人行为数据，属于隐私数据
-- 项目提供虚构占位数据的示例文件，AI 代理应读取示例文件理解格式，不读取真实导出数据
-- 示例文件位置：
-  - 个人偏好：`app/src/main/assets/personal_prefs_example.json`
-  - App 数据：`app/src/main/assets/app_data_examples/*.json`（10 个文件）
-  - 格式说明目录（导出后）：`绮梦影库/格式说明/`，包含 `FORMAT_SPEC.md`、`personal_prefs_example.json`、`app_data_examples/`（10 个示例文件）
+- 备份文件包含用户个人行为数据，属于隐私数据
+- 项目提供虚构占位数据的示例文件 `app/src/main/assets/qimeng_backup_example.json`，AI 代理应读取示例文件理解格式，不读取真实导出数据
 - 格式规范详见 `docs/DATA_MIGRATION_SPEC.md`
 
 ## 写入原则
 
-- 写入备份目录前确认用户授权。
-- 自动同步使用防抖，避免每次小改动都写盘。
-- 写入时使用临时文件再替换，避免半写入损坏。
+- 写入备份目录前确认用户授权（SAF）。
+- 自动同步使用防抖（数据变化 30 秒 / 后台兜底 60 秒），避免每次小改动都写盘。
+- 写入时使用临时文件再替换（tmp → round-trip 校验 → 删旧 → rename），避免半写入损坏；**校验提前到 rename 之前**（校验 `.tmp` 内容可解析且一致），校验通过才删旧文件、再 rename；校验失败只删 `.tmp`、保留旧备份。
 - 导出失败提示用户，不影响数据库主数据。
-- 写入后立即回读校验（round-trip test）。**v1.12 起校验提前到 rename 之前**（校验 `.tmp` 内容可解析且一致），校验通过才删旧文件、再 rename；校验失败只删 `.tmp`、保留旧备份——旧实现在 rename 之后校验，失败时新旧文件都被删且无旧版回滚。
-- **空库覆盖防护**：自动同步（`syncAppDataOnly`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
+- **空库覆盖防护**：自动同步（`triggerAutoSyncIfNeeded`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
 
 ## 导入原则
 
 - 先解析 `schemaVersion`。
 - 对缺失字段使用默认值。
 - 对未知字段忽略但保留兼容空间。
-- 找不到媒体文件时保留未匹配记录。
+- 找不到媒体文件时跳过未匹配记录（跨引用安全：authorMediaRefs/mediaTagRefs/mediaStats/history/timelineTags 仅当 recordKey 存在于 media_files 时才建立关联）。
 - 导入前可提示是否覆盖、合并或跳过冲突。
-- **选目录后自动检测恢复**：用户在数据备份页选择备份目录后，`DataBackupFragment.saveBackupLocation` 调用 `BackupManager.peekBackupSummary`（只读，不写数据库）检测 `app数据/` 子目录是否已有备份数据。检测到数据则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"，用户确认后调 `importFromDirectory` 恢复。同一目录只提示一次（用独立 SharedPreferences `restore_hint_prefs` 记录，key 为 `hint_shown_<完整URI>`，卸载重装后清空会重新提示）。
+- **media_files 合并策略**：本地 `media_files` 为空（全新重装未扫描）→ 导入备份 media_files 全量 → 浏览历史/统计/标签**立即可见**，无需重新扫描；本地非空（已扫描）→ 跳过 media_files（保留新扫描的有效 URI），引用数据按稳定 key 直接合并。
+- **选目录后自动检测恢复**：用户在数据备份页选择备份目录后，`DataBackupFragment.saveBackupLocation` 调用 `BackupManager.peekBackupSummary`（只读，不写数据库）检测 `qimeng_backup.json` 是否存在。检测到数据则弹 `AlertDialog` 提示"X 个媒体文件 / Y 位作者 / Z 个标签 / W 条统计，是否导入恢复"，用户确认后调 `importFromDirectory` 恢复。同一目录只提示一次（用独立 SharedPreferences `restore_hint_prefs` 记录，key 为 `hint_shown_<完整URI>`，卸载重装后清空会重新提示）。
 
-### 导入安全加固（2026-06-20 审查新增）
+### 导入安全加固
 
 备份 JSON 虽通常为用户自有数据，但仍做防御性加固，防恶意/损坏备份导致异常：
 
-- **JSON 文件大小上限**：`readJson` 单文件最大 64MB（预检 `DocumentFile.length()` + 读取后二次校验 `bytes.size`），超过则跳过并记 `AppLog.w`，防 OOM。正常备份 JSON 仅几 MB，不触及上限。
-- **数值字段范围校验**：`importMediaStats` 的 `viewCount`/`playCount`/`totalBrowseSeconds`/`lastOpenedAtMillis`/`updatedAtMillis`、`importHistory` 的 `openedAtMillis`、`importLikes` 的 `likeCount` 均用 `coerceAtLeast(0)` 钳制非负，防恶意备份注入负数/异常统计。
-- **likes 条目数上限**：`importLikes` 限制最多 5000 条，超过跳过剩余并记日志，防 SharedPreferences 键膨胀。
-- **跨引用注入防护**：`importAuthors` 的 `files[]` recordKey 仅当 `mediaMap` 中存在时才建立 `AuthorMediaCrossRef`，不存在的 key 静默跳过，无法注入任意关联。
+- **JSON 文件大小上限**：读取时单文件最大 64MB（预检 `DocumentFile.length()` + 读取后二次校验 `bytes.size`），超过则跳过并记 `AppLog.w`，防 OOM。正常备份 JSON 仅几 MB（数千文件约 1MB 级），不触及上限。
+- **数值字段范围校验**：`mediaStats` 的 `viewCount`/`playCount`/`totalBrowseSeconds`/`updatedAtMillis`、`history` 的 `openedAtMillis`、`likes` 的 `likeCount`、`cosWorks` 的 `fileCount` 均用 `coerceAtLeast(0)` 钳制非负，防恶意备份注入负数/异常统计。
+- **likes 条目数上限**：最多 5000 条，超过跳过剩余并记日志，防 SharedPreferences 键膨胀。
+- **跨引用注入防护**：`authorMediaRefs`/`mediaTagRefs`/`mediaStats`/`history`/`timelineTags` 的 recordKey 仅当 `media_files` 中存在时才建立关联，不存在的 key 静默跳过，无法注入任意关联。
 - **SAF 重新授权**：导入的 `uriString`（扫描源/备份目录）由 Android `ContentResolver` 在每次访问时重新授权，用户未授权的 URI 直接 `SecurityException`，无法逃逸到任意文件。
 
 ## 冲突处理
@@ -75,138 +70,64 @@
 - 同一完整文件名记录冲突时按更新时间或用户选择处理。
 - 作者、标签、相册规则按名称合并。
 - 重复作者 ID 时合并关联文件。
-- 作者关注状态随个人偏好导出（`personal_prefs.json` 的 `followedAuthorIds` 字段 + 每个作者的 `followed` 和 `viewCount` 字段）。
-- 统计数据可选择覆盖或取最大值，具体以项目文档为准。
-- **标签合并（v1.12）**：`importTags` 忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联。旧实现直插备份 tagId，向已有数据的库合并恢复时本地/备份 tags 的 autoGenerate id 撞号 → 标签及其关联静默丢失。
-- **收藏合并（v1.12）**：`importLikes` 收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏；同时清理备份中已不存在的陈旧点赞键（`like_count_*`/`like_date_*`）。
-- **时间轴标签去重（v1.12）**：`importTimelineTags` 导入前按 `(recordKey, timeMillis, name)` 查重（`TimelineTagDao.findExisting`），已存在则跳过——主键 autoGenerate 使 `@Upsert` 无法去重，重复导入同一备份标签会翻倍。
-- **settings.json 导入（v1.12）**：旧版只导出从不导入，恢复后用户设置（备份目录、TXT 导入 URI 等）永不还原；现已补 `importSettings` 纳入导入流程。
-- **导入事务性（v1.12）**：`importFromDirectory` 先读全部 JSON，再在**单一数据库事务**内导入 settings/authors/tags/album_rules/media_stats/history/scan_sources/timeline_tags，避免旧实现 9 个文件顺序导入中途异常留下"先序已入库、后序未导入"的半恢复状态；likes/recommendation_prefs 为 SharedPreferences 写入，事务外执行。
+- 统计数据按 recordKey 合并，数值钳制非负。
+- **标签合并**：导入忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联，避免 autoGenerate id 撞号导致标签及关联静默丢失。
+- **收藏合并**：收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏；同时清理备份中已不存在的陈旧点赞键（`like_count_*`/`like_date_*`）。
+- **时间轴标签去重**：导入前按 `(recordKey, timeMillis, name)` 查重（`TimelineTagDao.findExisting`），已存在则跳过——主键 autoGenerate 使 `@Upsert` 无法去重。
+- **settings 导入**：纳入导入流程（恢复用户设置），但跳过设备本地键 `backup_directory_uri`/`backup_directory_name`（重装后备份目录 URI 无意义）。
+- **导入事务性**：`importFromDirectory` 先解析全部数据段，再在**单一数据库事务**内导入数据库相关段落，避免中途异常留下"先序已入库、后序未导入"的半恢复状态；likes/favorites/followedAuthorIds/appPrefs 为 SharedPreferences 写入，事务外执行。
 
 ## 数据管理功能
 
-- 保存位置选择：使用 SAF 选择备份保存目录，自动创建「绮梦影库」目录及「app数据」「个人偏好」「格式说明」子文件夹，持久化目录 Uri 和显示名。
-- **导入数据（v1.13 在数据备份独立页面 `DataBackupFragment`）**：数据备份页顶部提供「选择导入目录并恢复」按钮（`importDirectoryLauncher`，`OpenDocumentTree`），点击直接弹文件夹选择器，选目录后 `importFromChosenDirectory` 调 `peekBackupSummary` 只读检测——检测到备份数据弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复到本地"，确认后调 `MediaLibraryViewModel.importFromDirectoryUri` → `BackupManager.importFromDirectory` 恢复；无备份数据提示"该目录未找到备份数据"。**不改变已设置的备份位置**（与"设置备份位置"是两个独立动作）。另有两条导入路径：①空库防护提示区"导入恢复"按钮（从已设置备份位置导入，调 `importFromBackupDirectory`）；②选备份目录后自动检测恢复（`saveBackupLocation` → `peekBackupSummary` → `AlertDialog` → 恢复）。
+- 保存位置选择：使用 SAF 选择备份保存目录，自动创建「绮梦影库」目录（备份主文件 `qimeng_backup.json` 写入其根目录），持久化目录 Uri 和显示名。设置成功后立即写入一份全量备份。
+- **导入数据**：数据备份页顶部提供「选择导入目录并恢复」按钮（`importDirectoryLauncher`，`OpenDocumentTree`），点击直接弹文件夹选择器，选目录后 `importFromChosenDirectory` 调 `peekBackupSummary` 只读检测——检测到备份数据弹 `AlertDialog` 提示"X 个媒体文件 / Y 位作者 / Z 个标签 / W 条统计，是否导入恢复到本地"，确认后调 `MediaLibraryViewModel.importFromDirectoryUri` → `BackupManager.importFromDirectory` 恢复；无备份数据提示"该目录未找到备份数据"。**不改变已设置的备份位置**（与"设置备份位置"是两个独立动作）。另有两条导入路径：①空库防护提示区"导入恢复"按钮（从已设置备份位置导入，调 `importFromBackupDirectory`）；②选备份目录后自动检测恢复（`saveBackupLocation` → `peekBackupSummary` → `AlertDialog` → 恢复）。
 - 自动同步开关：数据备份页内嵌「缓存与同步」区块提供自动同步开关（`AppPrefs.autoSync`），开启后数据变化自动写入备份目录。
   - 触发时机：
-    - App 启动自动刷新完成（`autoRefreshAllSources`，v1.13 补齐）→ `triggerAutoSyncIfNeeded()`（只写 app数据/）
-    - 扫描完成/增量刷新/TXT导入后 → `triggerAutoSyncIfNeeded()`（只写 app数据/）
-    - 退出详情页 → `triggerAutoSyncForDetailExit()`（只写 app数据/，JSON 快；覆盖详情页内的点赞/收藏/标签/时间轴标签修改）
-    - 标签增删改（addTag/removeTag/deleteTagById/createTag）、时间轴标签增删（addTimelineTag/deleteTimelineTag）、作者关注切换（toggleAuthorFollow）、清空历史（clearHistory）、手动添加作者（addAuthor）、删除扫描源（deleteScanSource/deleteCosScanSource）、自定义相册源（addCustomAlbumSource）→ `triggerAutoSyncIfNeeded()`（只写 app数据/，2026-06-23 补全：这些操作不走详情页流程，此前仅靠 App 进后台全量同步覆盖，存在被杀丢数据风险）
-    - App 进入后台 → `triggerFullSync()`（写 app数据/ + 个人偏好/，60秒防抖）
-    - 手动同步 → `triggerManualSync()`（写 app数据/ + 个人偏好/，无视防抖）
-  - 防抖：app数据/ 30秒防抖，全量同步 60秒防抖；**退出详情页同步使用独立防抖字段**（v1.12，不再与扫描后同步共享 30s 窗口，避免扫描刚同步完、紧接的详情页退出同步被吞掉）
+    - App 启动自动刷新完成（`autoRefreshAllSources`）→ `triggerAutoSyncIfNeeded()`（30秒防抖）
+    - 扫描完成/增量刷新/TXT导入后 → `triggerAutoSyncIfNeeded()`
+    - 退出详情页 → `triggerAutoSyncIfNeeded()`（详情页内的点赞/收藏/标签/时间轴标签修改）
+    - 标签增删改、时间轴标签增删、作者关注切换、清空历史、手动添加作者、删除扫描源、自定义相册源 → `triggerAutoSyncIfNeeded()`
+    - App 进入后台 → `triggerFullSync()`（60秒防抖兜底）
+    - 手动同步 → `triggerManualSync()`（无视防抖）
+  - 防抖：数据变化 30 秒 / 后台兜底 60 秒（v2.0 起两个入口统一写单文件，不再区分"只写 app数据"与"全量"——单文件全量成本可接受，流程大幅简化）
   - 前提：需先设置备份保存位置
-  - 实现：`AutoSyncUseCase` → `BackupManager.autoSyncToDirectory()` / `BackupManager.fullSyncToDirectory()`
-- 手动同步：数据备份弹窗中提供"立即同步"按钮，无视防抖立即全量同步两个数据子目录（app数据/ + 个人偏好/）。空库时被拦截返回 false，Toast 提示"本地数据为空，已暂停同步"。
-- 恢复提示：选择备份目录后，App 用 `BackupManager.peekBackupSummary`（只读）检测目录是否已有备份数据，有则弹 `AlertDialog` 提示"X 位作者 / Y 个标签 / Z 条统计，是否导入恢复"。用户确认后调 `importFromDirectory` 恢复；取消也标记已展示，同一目录不重复打扰。用途：卸载重装后选了旧目录，主动提示合并旧数据，避免个人画像断档。
-- 空库覆盖防护：数据备份页在 `AutoSyncUseCase.restoreSuggestion` 为 true 时，顶部显示"⚠ 本地数据为空，已暂停自动同步，建议先导入恢复"提示行 + "导入恢复"按钮。用户点"导入恢复"调 `importFromBackupDirectory`，成功后清除提示。防护阈值：`media_files` 表为空即触发。
-- 自动同步状态展示。
-- 常规目录：从数据管理页（`DataManagementFragment`）添加媒体目录，并和已授权扫描目录一起重新索引。
-- 清空历史记录。
-- TXT 导入作者入口。
+  - 实现：`AutoSyncUseCase` → `BackupManager.exportToDirectory()`
+- 手动同步：数据备份页"立即同步"按钮，无视防抖立即写入单文件。空库时被拦截返回 false，Toast 提示"本地数据为空，已暂停同步"。
+- 恢复提示：选择备份目录后，App 用 `BackupManager.peekBackupSummary`（只读）检测目录是否已有备份数据，有则弹 `AlertDialog` 提示。用户确认后调 `importFromDirectory` 恢复；取消也标记已展示，同一目录不重复打扰。
+- 空库覆盖防护：数据备份页在 `AutoSyncUseCase.restoreSuggestion` 为 true 时，顶部显示"⚠ 本地数据为空，已暂停自动同步，建议先导入恢复"提示行 + "导入恢复"按钮。防护阈值：`media_files` 表为空即触发。
 
 ## 导入导出流程
 
-- 导出：`BackupManager` 读取所有 Room 表 + `AppPrefsManager` 推荐偏好 → 序列化 JSON → 写入备份目录 `绮梦影库/app数据/`。
-- 导入：从备份目录 `绮梦影库/app数据/` 读取 JSON → 反序列化 → 写入 Room + `AppPrefsManager`。
-- 当前导出的 JSON 文件共 10 个：settings、authors、tags、album_rules、media_stats、history、scan_sources、likes、recommendation_prefs、timeline_tags。每个 JSON 文件在 `app/src/main/assets/app_data_examples/` 目录下有对应的虚构占位数据示例文件（如 `settings_example.json`），AI 代理应读取示例文件理解格式，而非读取真实导出数据。
-- 个人偏好导出：写入备份目录 `绮梦影库/个人偏好/`，包含偏好JSON和中文报告TXT（`personal_prefs.json` 和 `personal_prefs_report.txt` 不算在 app数据/ 的文件列表中）。
-- 格式说明目录：`绮梦影库/格式说明/`，包含格式使用指南和示例文件，仅在首次同步时写入，已存在则跳过。
-- 导入时遇到不存在的文件，保留记录但标记未匹配。
+- 导出：`BackupManager.buildBackupJson` 读取所有 Room 表 + SharedPreferences + AppPrefs → 序列化为单个 JSON → 原子写入备份目录 `绮梦影库/qimeng_backup.json`。
+- 导入：从备份目录读取 `qimeng_backup.json` → 反序列化 → 单事务写入 Room + SharedPreferences + AppPrefs。
 - 备份 JSON 损坏时要提示用户，不允许崩溃。
-- **导出过滤**：所有含 recordKey 的导出数据（authors/tags/mediaTags/mediaStats/history/likes/favorites/timeline_tags）均以 `media_files` 表中当前存在的 recordKey 集合为白名单过滤，确保已删除文件的数据不会出现在导出中。此过滤作为兜底机制，即使级联删除有遗漏，导出结果也不会包含残留数据。
+- **导出过滤**：v2.0 起不再按 media_files 白名单过滤（旧版过滤是为避免已删除文件的残留数据出现在导出中）；现在 media_files 本身全量进备份，引用数据与之一致，无需过滤。恢复后引用数据按 recordKey 与 media_files 关联，缺失的引用由跨引用安全跳过兜底。
 
-### schemaVersion 变更记录
+### schemaVersion
 
-| 文件 | 当前版本 | 变更说明 |
-|---|---|---|
-| `authors.json` | 2 | v1→v2：files 数组从空改为填入关联的 recordKey 列表，导入时恢复 AuthorMediaCrossRef；向后兼容 v1（files 为空或缺失时跳过） |
-| `scan_sources.json` | 1 | 2026-06-22 新增导出 `isCosDirectory` 字段（旧备份缺失时导入默认 false，向后兼容，不升版本）；同时修复 `importTags` 漏读 `mediaTags` 数组导致文件-标签关联整体丢失的 bug |
-| 其余8个JSON | 1 | 无变更 |
+- 当前 `schemaVersion = 1`（format = `qimeng_backup`）。
+- v2.0 重做，不兼容旧版三套产物（app数据 10 分文件 / personal_prefs.json / 报告 txt），旧格式备份不再读取。
 
-## 个人偏好导出
+## 个人偏好导出（已移除）
 
-通过 ProfileFragment 数据备份页"自定义章节导出报告"触发（v1.13 起数据备份为独立页面 `DataBackupFragment`，导出入口随之移入数据备份页），导出为 2 个文件（COS 和常规数据合并）：
+- **v2.0 删除**：App 内不再内置"个人偏好报告"生成器（`buildReportText` 9 章节 + `personal_prefs.json` + 自定义章节勾选）。
+- 原因：报告是"展示"不是"数据"，`qimeng_backup.json` 字段自解释，需要报告时把备份文件直接交给 AI 现场生成即可，比 App 内置一套死章节更灵活、零维护。
+- 如需报告，将 `qimeng_backup.json` 提供给任意 AI，AI 按 `docs/DATA_MIGRATION_SPEC.md` 读取并生成（总览/排行/收藏/关注等均可）。
 
-| 文件 | 格式 | 用途 |
-|---|---|---|
-| `personal_prefs.json` | JSON | 完整数据备份，COS+常规统一，含统计/标签/作者/作品 |
-| `personal_prefs_report.txt` | 纯中文文本 | 给用户自己看，人类可读的偏好报告 |
+## 与旧版本的差异（v2.0）
 
-### 自定义章节导出报告
-
-数据备份页新增"自定义导出"入口，用户可勾选要导出的章节（默认全选），确认后导出到备份目录的"个人偏好"子文件夹。
-
-**实现要点**：
-- `ReportSectionOptions` 数据类（9 个 Boolean 字段，默认全 true 保持向后兼容）封装章节勾选状态
-- `BackupManager.exportPersonalPrefsToFile` 接受 `ReportSectionOptions` 参数，`buildReportText` 按选项条件性拼接章节
-- `ProfileFragment.showCustomReportExportDialog()` 使用 `AlertDialog.setMultiChoiceItems` 实现多选
-- 备份目录 URI 从 settings 表 `KEY_BACKUP_DIRECTORY_URI` 读取（通过 `MediaLibraryViewModel.getBackupDirectoryUri()`）
-- 至少需选择 1 个章节，否则提示"请至少选择一个章节"
-
-**可勾选章节**（9 个）：总览、总 Top 30、常规 Top 20、COS作品 Top 20、作者 Top 20、关注作者、标签 Top 20、全部标签、收藏列表
-
-### JSON 文件（完整数据备份）
-
-`data` 区域包含 8 个部分（COS+常规统一）：
-
-| 部分 | 来源 | 说明 |
-|---|---|---|
-| `favorites` | SharedPreferences `favorite_record_keys` | 收藏的文件 recordKey 列表（全部） |
-| `likes` | SharedPreferences `like_count_*` / `like_date_*` | 点赞次数 + 最近点赞日期（全部） |
-| `tags` | Room `TagEntity` | 标签定义（全部） |
-| `mediaTags` | Room `MediaTagCrossRef` + `TagEntity` | 文件与标签关联（全部） |
-| `viewStats` | Room `ViewStatsEntity` + `MediaFileEntity` | 观看/播放次数 + 浏览时长 + mediaType + isCosFile（全部） |
-| `authors` | Room `AuthorEntity` + `AuthorMediaCrossRef` | 作者及关联文件列表 + viewCount + followed + tags（全部，COS+常规统一） |
-| `followedAuthorIds` | SharedPreferences `author_follow_prefs` | 关注的作者 ID 列表 |
-| `cosWorks` | Room `CosWorkEntity` + `ViewStatsEntity` + `MediaFileEntity` | COS 作品数据，含统计/标签/文件列表 |
-
-JSON 可完整还原 TXT 报告（viewStats 含 mediaType 和 isCosFile，可区分图片/视频和 COS/常规）。
-
-格式规范和字段定义详见 `docs/DATA_MIGRATION_SPEC.md`。
-
-### 文本报告（给用户看）
-
-纯中文文本，包含以下章节：
-- 【总览】文件总数（常规/COS）、收藏数（常规/COS）、标签数、作者数、关注作者数、总查看/播放次数、总浏览时长
-- 【总 Top 30】COS作品+常规文件混合，按热度分降序（COS 按作品聚合，常规按单个文件）
-- 【常规 Top 20】非 COS 文件，按单个文件热度分降序
-- 【COS作品 Top 20】按作品聚合，按热度分降序
-- 【作者 Top 20】不分 COS/常规，按偏好度降序
-- 【关注的作者】全部列出
-- 【标签 Top 20】按关联文件数降序
-- 【所有标签】全部列出（名称 + 关联文件数）
-- 【收藏的文件】常规文件逐个列出（文件名可读）；COS 文件按所属文件夹（作品名）聚合显示，同文件夹多个收藏合并为「文件夹名 × N」（COS 文件名多为序号无意义，文件夹名更易识别）
-- 排行说明
-
-热度分计算：
-- 常规图片：viewCount + likeCount + (收藏 ? 5 : 0)
-- 常规视频：viewCount + playCount + floor(浏览秒/60) + likeCount + (收藏 ? 5 : 0)
-- COS作品：作品下所有文件的(viewCount + playCount + floor(浏览秒/60) + likeCount)之和 + 收藏文件数×5
-
-COS 作品排行按作品（文件夹）聚合显示，格式："作者名 - 作品名 [COS作品] — X 个文件 / 查看 X 次 / 点赞 X 次 / ★收藏"。作品中任一文件被收藏即标记 ★收藏。
-
-作者偏好度 = 所有关联文件的 (viewCount + playCount) 之和 + 每个收藏文件 +5 + 每个文件的 likeCount 之和
-
-### 示例文件
-
-`app/src/main/assets/personal_prefs_example.json` 包含虚构占位数据，展示所有字段和结构。AI 代理应读取此示例文件理解格式，而非读取真实导出数据。
-
-### 与旧版本的差异
-
-- COS 偏好不再单独导出（原 `cos_prefs_export.json` 和 `cos_prefs_report.txt` 已删除）
-- COS 数据合并到 `personal_prefs.json` 的 `cosWorks` 部分
-- `personal_prefs_export.json` 重命名为 `personal_prefs.json`
-- 新增 `格式说明/` 子目录，包含 `FORMAT_SPEC.md`、`personal_prefs_example.json`、`app_data_examples/`，仅在首次同步时写入
-- `viewStats` 新增 `mediaType` 和 `isCosFile` 字段
-- `cosWorks` 扩展了统计字段（viewCount/playCount/totalBrowseSeconds/likeCount/favoriteCount/tags/files）
+- 备份目录结构：`绮梦影库/` 根目录单文件 `qimeng_backup.json`（旧：app数据/ 10 分文件 + 个人偏好/ 2 文件 + 格式说明/ 示例目录）。
+- `media_files` 全量元数据进备份（旧版从未导出）→ 恢复后浏览历史/统计/标签立即可用，不依赖重扫。
+- 新增导出：`cos_works` 表（含 sourceUri）、`AuthorMediaCrossRef.isMatched`、`MediaFileEntity.sourceUri`、AppPrefs 全量（theme_mode/gridColumns/autoSync/customAlbumSources/recommendationPrefs）。
+- 删除：个人偏好 JSON + 报告 TXT、格式说明/ 目录、示例文件（10 个 app_data_examples + FORMAT_SPEC.md + personal_prefs_example.json）。
+- 自动同步：两个入口统一写单文件（旧：autoSyncToDirectory 只写 app数据/ 与 fullSyncToDirectory 三子目录）。
+- 死代码清理：`LocalMediaRepository.recordHistory`（无调用方）删除。
 
 ## 修改注意事项
 
-- 新增数据库字段时，JSON 格式必须在 `docs/GUIDE_DATA.md` 中同步定义，本文件只关注读写流程是否有变。
+- 新增数据库字段时，JSON 格式必须在 `docs/DATA_MIGRATION_SPEC.md` 与 `docs/GUIDE_DATA.md` 中同步定义，本文件只关注读写流程是否有变。
 - 修改导入导出逻辑需同步 `docs/GUIDE_ANDROID_COMPAT.md`（确认 SAF 写权限可用）。
-- 数据迁移到新手机时，只需复制 `绮梦影库/` 目录并在新手机上导入。
+- 数据迁移到新手机时，只需复制 `绮梦影库/` 目录（含 `qimeng_backup.json`）并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-09（v2.0 单文件全量重构）

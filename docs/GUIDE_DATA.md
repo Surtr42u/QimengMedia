@@ -133,51 +133,36 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 
 推荐引擎位于 `MediaBrowserLogic.kt` 的 `recommend()` 方法，采用 10 维加权评分模型。完整算法文档见 `GUIDE_ALGORITHM.md`。
 
-## 备份 JSON 格式
+## 备份 JSON 格式（v2.0 单文件全量）
 
-备份数据以 JSON 写入用户指定的 SAF 目录，目录名为 `LocalMediaApp_Data/`。
+备份数据以 JSON 写入用户指定的 SAF 目录 `绮梦影库/` 根目录，**只有一个文件 `qimeng_backup.json`**（不再拆 10 分文件）。
 
-### JSON 文件清单（共 10 个，当前实现 10 个）
+### 文件与数据段（共 16 段）
 
-| 文件 | 状态 | 对应实体 |
-|---|---|---|
-| `settings.json` | 已实现 | `SettingEntity` |
-| `authors.json` | 已实现 | `AuthorEntity` + `AuthorMediaCrossRef` |
-| `tags.json` | 已实现 | `TagEntity` + `MediaTagCrossRef` |
-| `album_rules.json` | 已实现 | `AlbumRuleEntity` |
-| `media_stats.json` | 已实现 | `ViewStatsEntity` |
-| `history.json` | 已实现 | `ViewHistoryEntity` |
-| `scan_sources.json` | 已实现 | `ScanSourceEntity` |
-| `likes.json` | 已实现 | SharedPreferences 点赞+收藏数据 |
-| `recommendation_prefs.json` | 已实现 | `RecommendationPrefs`（AppPrefs 内嵌，9 维推荐权重） |
-| `timeline_tags.json` | 已实现 | `TimelineTagEntity` |
+| 数据段 | 对应实体/存储 |
+|---|---|
+| `mediaFiles` | `MediaFileEntity`（全 16 字段，v2.0 新增全量导出） |
+| `settings` | `SettingEntity` |
+| `authors` | `AuthorEntity` |
+| `authorMediaRefs` | `AuthorMediaCrossRef`（含 isMatched，v2.0 新增） |
+| `tags` | `TagEntity` |
+| `mediaTagRefs` | `MediaTagCrossRef` + `TagEntity`（含 tagName 冗余） |
+| `albumRules` | `AlbumRuleEntity` |
+| `mediaStats` | `ViewStatsEntity` |
+| `history` | `ViewHistoryEntity` |
+| `scanSources` | `ScanSourceEntity` |
+| `timelineTags` | `TimelineTagEntity` |
+| `cosWorks` | `CosWorkEntity`（含 sourceUri，v2.0 新增导出） |
+| `likes` | SharedPreferences `media_detail_prefs` 的 `like_count_*`/`like_date_*` |
+| `favorites` | SharedPreferences `media_detail_prefs` 的 `favorite_record_keys` |
+| `followedAuthorIds` | SharedPreferences `author_follow_prefs` 的 `followed_authors` |
+| `appPrefs` | `AppPrefsManager`（app_prefs.json，v2.0 新增全量：theme_mode/gridColumns/autoSync/customAlbumSources/recommendationPrefs） |
 
-注意：`personal_prefs.json` 不在此列表中，它属于个人偏好导出（写入 `个人偏好/` 目录），详见下方"个人偏好数据导出"章节。
+完整字段定义与示例见 `docs/DATA_MIGRATION_SPEC.md`，读写流程见 `docs/GUIDE_BACKUP.md`。示例文件（虚构数据）：`app/src/main/assets/qimeng_backup_example.json`。
 
-### authors.json 格式示例（schemaVersion=2）
+### mediaFiles 段（recordKey 为关联键）
 
-```json
-{
-  "schemaVersion": 2,
-  "exportedAtMillis": 1718000000000,
-  "data": {
-    "authors": [
-      {
-        "authorId": "kamihikoki_mmd",
-        "displayName": "紙飛行機",
-        "files": [
-          "崩坏 星穹铁道 卡芙卡 1 (1).mp4",
-          "崩坏 星穹铁道 卡芙卡 1 (2).mp4"
-        ],
-        "createdAtMillis": 1718000000000,
-        "updatedAtMillis": 1718000000000
-      }
-    ]
-  }
-}
-```
-
-files 为 recordKey 字符串数组，导入时恢复 AuthorMediaCrossRef；v1 导出的 files 为空数组，导入时跳过不崩溃。
+`mediaFiles` 的 recordKey 是所有引用数据（mediaStats/history/tags 关联/authors 关联/收藏/点赞）的关联键。生成规则（ScanUtils/RecordKeyFactory）：普通文件 = 文件名；重名文件 = 「文件名 @ 文件夹名」（同文件夹内重名追加 `#路径哈希`）。前两类重装重扫后稳定不变。
 
 ## App 偏好持久化
 
@@ -257,34 +242,14 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 | 运行数据 | Room `SettingEntity` | 备份目录 Uri、已导入 TXT 文件列表 |
 | 内容数据 | Room 各实体表 | 媒体文件、统计、标签、作者、历史 |
 
-## 个人偏好数据导出
+## 备份数据段说明（v2.0）
 
-个人偏好导出通过 ProfileFragment 数据备份页"自定义章节导出报告"触发（v1.13 起数据备份为独立页面 `DataBackupFragment`，导出入口随之移入数据备份页），导出为 2 个文件（COS 和常规数据合并）：`personal_prefs.json`（完整数据备份）和 `personal_prefs_report.txt`（纯中文文本报告）。
+备份（`qimeng_backup.json`）的 data 区域共 16 个数据段，完整字段定义见 `docs/DATA_MIGRATION_SPEC.md`，读写流程见 `docs/GUIDE_BACKUP.md`「导入导出流程」。
 
-**导出流程、data 区域结构、文本报告章节、热度分计算公式、示例文件详见 `GUIDE_BACKUP.md`「个人偏好导出」。** 本节仅记录数据层字段定义。
+### 旧版 personal_prefs.json 已移除
 
-### viewStats 新增字段
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `mediaType` | String | "image" 或 "video"，区分图片/视频 |
-| `isCosFile` | Boolean | 是否 COS 文件 |
-
-### cosWorks 完整字段
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `authorName` | String | 作者名 |
-| `workName` | String | 作品名 |
-| `folderUri` | String | 目录 URI |
-| `fileCount` | Int | 文件数 |
-| `viewCount` | Int | 查看次数之和 |
-| `playCount` | Int | 播放次数之和 |
-| `totalBrowseSeconds` | Long | 浏览时长之和（秒） |
-| `likeCount` | Int | 点赞次数之和 |
-| `favoriteCount` | Int | 收藏文件数 |
-| `tags` | Object | 标签名→出现次数 |
-| `files` | String[] | 该作品所有文件 recordKey |
+- v2.0 删除 `personal_prefs.json` 与 `personal_prefs_report.txt`（个人偏好导出体系，含 viewStats 的 mediaType/isCosFile 增强字段、cosWorks 聚合字段、热度分/偏好度公式）。
+- 需要报告时，把 `qimeng_backup.json` 直接交给 AI 按 `DATA_MIGRATION_SPEC.md` 现场生成（总览/排行/收藏/关注等），字段自解释，无需 App 内置报告器。
 
 ### 数据迁移规范
 
@@ -293,10 +258,9 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 ## 修改注意事项
 
 - 新增表或字段必须设计 Room migration。
-- 新增数据库字段时必须同步更新上方的 JSON 格式和 `docs/GUIDE_BACKUP.md` 的导入导出流程。
-- 修改个人偏好导出逻辑需同步 `docs/GUIDE_BACKUP.md` 和 `docs/DATA_MIGRATION_SPEC.md`。
-- `personal_prefs.json` 写入 `个人偏好/` 目录，不在 `app数据/` 目录中。
-- 新增实体时必须同步更新实体列表和 JSON 文件清单。
+- 新增数据库字段时必须同步更新上方备份数据段定义、`docs/DATA_MIGRATION_SPEC.md` 和 `docs/GUIDE_BACKUP.md` 的导入导出流程。
+- 备份数据段覆盖全部 Room 表 + SharedPreferences（收藏/点赞/关注）+ AppPrefs；新增存储时必须同步补入备份段。
+- 新增实体时必须同步更新实体列表和备份数据段清单。
 - 不允许把绝对路径作为唯一迁移依据。
 - 允许保存只读 Uri、父文件夹名和路径哈希用于扫描定位与重复区分。
 - 重建索引（`rebuildMediaIndex()`）只清空并重建 `media_files` 表，不清空统计、历史、标签、作者和设置表。
@@ -311,7 +275,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - 轻量查询方法：`MediaFileDao.getNonCosKeysAndFileNames()` 返回 `NonCosKeyFileName(recordKey, fileName)`，用于作者导入匹配（`importAuthorsFromText`），避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getNonCosKeysAndFileNames()`。
 - `MediaFileDao.getCosKeysAndUris()` 返回 `KeyAndUri(recordKey, uriString)`，用于 `cleanupOrphanFiles()` 中检测 COS 孤立文件，避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getCosKeysAndUris()`。
 - `MediaFileDao.getAllRecordKeys()` 返回所有 recordKey 列表，用于 `cleanupStaleRefs()` 中检测残留数据，避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getAllRecordKeys()`。
-- `MediaFileDao.hasAny()` 用 `SELECT EXISTS(SELECT 1 FROM media_files LIMIT 1)` 命中首行即短路返回，用于 `AutoSyncUseCase` 空库覆盖防护（`syncAppDataOnly`/`triggerFullSync`/`triggerManualSync` 写入前检测 `media_files` 是否为空，空库时跳过写入并通知 UI 提示恢复）。比 `getAllRecordKeys().isEmpty()` 更省内存（不物化 List），仅在 AutoSyncUseCase 内部直接调用 `database.mediaFileDao().hasAny()`，未走 Repository。
+- `MediaFileDao.hasAny()` 用 `SELECT EXISTS(SELECT 1 FROM media_files LIMIT 1)` 命中首行即短路返回，用于 `AutoSyncUseCase` 空库覆盖防护（`triggerAutoSyncIfNeeded`/`triggerFullSync`/`triggerManualSync` 写入前检测 `media_files` 是否为空，空库时跳过写入并通知 UI 提示恢复）。比 `getAllRecordKeys().isEmpty()` 更省内存（不物化 List），仅在 AutoSyncUseCase 内部直接调用 `database.mediaFileDao().hasAny()`，未走 Repository。
 - `MediaFileDao.observeNonCosMedia()` 直接返回 `WHERE isCosFile = 0` 的 Flow，替代各 Fragment 中 `observeAllMedia().filter{!isCosFile}` 的全量加载后 Kotlin 过滤模式。
 - `MediaFileDao.getByType(mediaType)` 按类型查询，替代 `getAllMedia().filter{type}` 全表过滤。
 - `ViewStatsDao.getByRecordKeys(recordKeys)` 批量查询，替代 `getAllByFileName().filter{in recordKeys}`。
@@ -341,7 +305,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 | `ScanUseCase` | 扫描调度 | `scanDirectory`、`refreshScanSource`、`scanCosDirectory`、`refreshCosSource`、`autoRefreshAllSources`（延迟3秒启动，避免Room Flow触发UI闪烁）、`deleteScanSource`、`deleteCosScanSource`、`cleanupOrphanFiles`、`generateAuthorId` |
 | `ThumbnailUseCase` | 缩略图预生成 | `pregenerateThumbnails`、`progress`（StateFlow：Idle/Running/Done，Running/Done 携带 `ThumbnailSource` 标识常规/COS来源）；队列机制：新请求排队等待当前任务完成后再执行，不会跳过（COS文件等也能被预生成） |
 | `AuthorImportUseCase` | 作者导入 | `importAuthorsFromText`、`findMatchingMediaLight`、`rebuildAssociationsFromBlocks`（统一重建入口：从全部已导入 TXT 重建作者关联，被导入/刷新/删除/扫描四个场景复用，避免跨 TXT 同名作者关联被单 TXT 删旧插新覆盖）、`rebuildAssociationsOnceIfNeeded`（启动时一次性重建，用 flag `author_rebuild_v2_done` 保证仅首次执行，修复升级前历史脏数据）、`rematchAllTxtImports`（扫描后调用，内部委托 rebuild）、`rematchSingleTxtImport`（刷新降级，内部委托 rebuild）、`saveTxtUri`、`loadTxtUri`、`removeImportedTxtBlocks`、`removeImportedTxtUri` |
-| `AutoSyncUseCase` | 自动同步 | `triggerAutoSyncIfNeeded`（扫描后，只写app数据/）、`triggerAutoSyncForDetailExit`（退出详情页，只写app数据/）、`triggerFullSync`（App后台，全量同步）、`triggerManualSync`（手动同步，全量，无视防抖） |
+| `AutoSyncUseCase` | 自动同步 | `triggerAutoSyncIfNeeded`（数据变化后，30秒防抖）、`triggerFullSync`（App后台兜底，60秒防抖）、`triggerManualSync`（手动，无视防抖）——统一写单文件 `qimeng_backup.json` |
 
 - ViewModel 通过 `AppContainer` 获取 UseCase 实例，委托调用
 - ViewModel 保留：数据观察（Flow 属性）、ScanStatus 状态、统计记录、设置管理、标签管理、作者管理

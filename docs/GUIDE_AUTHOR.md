@@ -17,7 +17,7 @@
 
 管理作者列表、作者详情、作者编辑、作者与媒体文件关联、作者 TXT 导入。
 
-不管：数据实体定义（详见 GUIDE_DATA.md「目标实体」）、备份 JSON 格式（详见 GUIDE_BACKUP.md「JSON 文件」）
+不管：数据实体定义（详见 GUIDE_DATA.md「目标实体」）、备份 JSON 格式（详见 GUIDE_BACKUP.md「文件规范」）
 
 ## UI 入口
 

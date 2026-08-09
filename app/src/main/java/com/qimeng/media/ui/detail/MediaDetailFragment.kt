@@ -1232,7 +1232,7 @@ class MediaDetailFragment : Fragment() {
             ProcessLifecycleOwner.get().lifecycleScope.launch(
                 kotlinx.coroutines.Dispatchers.IO
             ) {
-                autoSyncUseCase.triggerAutoSyncForDetailExit()
+                autoSyncUseCase.triggerAutoSyncIfNeeded()
             }
         }
         _binding = null

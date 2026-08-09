@@ -14,7 +14,7 @@
 | `app/src/main/java/com/qimeng/media/ui/album/SourceMatcher.kt` | 出处匹配引擎（SourceGroup规范名+变体，三层优先级匹配） |
 | `app/src/main/java/com/qimeng/media/ui/profile/ProfileFragment.kt` | 我的：扫描状态/推荐偏好/兼容性检查/数据管理与数据备份入口行 |
 | `app/src/main/java/com/qimeng/media/ui/profile/DataManagementFragment.kt` | 数据管理独立页：常规目录/COS目录/TXT导入作者 平铺（v1.13） |
-| `app/src/main/java/com/qimeng/media/ui/profile/DataBackupFragment.kt` | 数据备份独立页：备份位置/同步/自定义导出/缓存与同步（v1.13） |
+| `app/src/main/java/com/qimeng/media/ui/profile/DataBackupFragment.kt` | 数据备份独立页：备份位置/同步/导入恢复/缓存与同步（v1.13，v2.0 移除自定义导出） |
 | `app/src/main/java/com/qimeng/media/ui/stats/DataStatsFragment.kt` | 数据统计页：专业数据报表（折线趋势/环形分布/柱状排行/横向柱条） |
 | `app/src/main/java/com/qimeng/media/core/CompatChecker.kt` | 兼容性检查工具（6项检查） |
 | `app/src/main/java/com/qimeng/media/ui/detail/ZoomImageView.kt` | 自定义缩放 ImageView（**智能分层渲染**：`applyOptimalLayerType()` 按图尺寸选层，GIF→`LAYER_TYPE_HARDWARE`，普通图长边≤4096（硬件渲染安全阈值）→`LAYER_TYPE_HARDWARE`（GPU直渲），>4096→`LAYER_TYPE_SOFTWARE`（保正确性，超大图GPU驱动无法正确应用matrix缩放）；手势期间用 `shouldUseHardwareForCurrent()` 同阈值判断；`lastDrawableWidth/Height` 记录实际尺寸防止Coil降采样导致matrix错乱；缩放范围 0.5x~5x，双击放大1.8x，近1.0的scale factor跳过减少无效重绘） |
@@ -282,8 +282,9 @@
   - 导入备份数据不在此页（已移至数据备份页）。
 - **数据备份行**（v1.13 起为独立页面 `DataBackupFragment`）：`MainActivity.showDataBackup()` 进入。页面内容：
   - **导入数据**（页面顶部）："选择导入目录并恢复"按钮，点击直接弹文件夹选择器，选备份目录后检测到备份数据弹 `AlertDialog` 确认后恢复（不改变已设置的备份位置）。
-  - 备份位置：目录结构说明（绮梦影库/个人偏好+app数据）、当前备份位置、"+ 选择文件夹"设置新位置（选择后自动创建目录结构并立即导出偏好数据）、"立即同步"、"自定义导出"（勾选 9 个章节导出报告，详见 GUIDE_BACKUP.md）、空库覆盖防护提示（⚠ 本地数据为空，建议先导入恢复 + "导入恢复"按钮，从已设置备份目录恢复）。
+  - 备份位置：目录结构说明（选择文件夹后创建「绮梦影库」目录，备份数据 `qimeng_backup.json` 写入其中）、当前备份位置、"+ 选择文件夹"设置新位置（选择后自动创建「绮梦影库」目录并立即写入一份全量备份）、"立即同步"、空库覆盖防护提示（⚠ 本地数据为空，建议先导入恢复 + "导入恢复"按钮，从已设置备份目录恢复）。
   - **缓存与同步区块（并入数据备份页）**：缩略图缓存实时进度（百分比+文件数+进度条，观察 thumbnailProgress Flow）+ 自动备份开关（标题"自动备份"+ SwitchMaterial + 状态说明行：已开启/未开启），开启后数据变化自动写入备份目录（30秒防抖），需先设置备份保存位置。
+  - v2.0 起移除"自定义导出/自定义章节导出报告"入口（App 不再内置报告器，报告交给 AI 读备份 JSON 生成）。
 - 数据管理/数据备份页面与弹层禁止使用系统默认列表对话框，必须使用 `?attr/qmColor*` 或 `resolveThemeColor()` 保持主题一致。
 - 主题色彩：`themeRow` **不可点击**（仅跟随手机系统明暗模式，无 App 内切换入口）。`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`，点击无任何反应。详见 GUIDE_THEME.md「明暗模式系统」
 
@@ -459,9 +460,9 @@ COS 不是独立页面，而是集成到首页、全部、收藏、浏览历史�
 - 重新扫描：添加新 COS 目录时，重新扫描所有 COS 目录并重建 COS 索引
 - 删除 COS 目录：删除扫描源及关联的作品和媒体文件，级联清理作者关联
 
-### COS 偏好导出
+### COS 数据备份
 
-COS 偏好导出格式和算法详见 `GUIDE_DATA.md`「个人偏好数据导出」和 `GUIDE_BACKUP.md`
+COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文件 `qimeng_backup.json` 全量导出，格式详见 `DATA_MIGRATION_SPEC.md` 和 `GUIDE_BACKUP.md`
 
 - 使用原生 View + XML + ViewBinding，不主动引入 Compose
 - Fragment 不直接访问数据库，不直接执行长耗时扫描

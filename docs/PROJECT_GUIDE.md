@@ -45,8 +45,8 @@
 - 详情页：图片原图加载 + 智能分层渲染 + 左右预加载；视频 BiliPlayerView（B站风格控制器）+ 时间轴标签
 - 作者管理：TXT 导入 + COS 扫描自动创建，双向匹配机制；作者列表支持按作者名搜索过滤
 - 数据统计页：折线趋势/环形分布/柱状排行/横向柱条
-- 数据备份：10 类 JSON 导出导入 + 个人偏好报告 + 自动同步 + 恢复提示 + 空库覆盖防护
-- 我的页数据管理（v1.13 独立页面）：数据管理（`DataManagementFragment`）与数据备份（`DataBackupFragment`）均为独立页面，不再使用弹层；数据管理页平铺 常规目录/COS目录/TXT导入作者 三区块，数据备份页含 备份位置/同步/自定义导出/缓存与同步 区块，导入恢复在数据备份页
+- 数据备份：单文件全量 JSON（`qimeng_backup.json`，16 个数据段含 media_files 元数据）+ 自动同步 + 恢复提示 + 空库覆盖防护（v2.0 重构）
+- 我的页数据管理（v1.13 独立页面）：数据管理（`DataManagementFragment`）与数据备份（`DataBackupFragment`）均为独立页面，不再使用弹层；数据管理页平铺 常规目录/COS目录/TXT导入作者 三区块，数据备份页含 备份位置/同步/导入恢复/缓存与同步 区块（v2.0 起移除自定义章节导出报告）
 
 ### 主题与图标
 
@@ -149,8 +149,7 @@ QimengMedia/
 │           │   └── ScanUtils.kt
 │           ├── backup/
 │           │   ├── BackupManager.kt
-│           │   ├── BackupFileNames.kt
-│           │   └── BackupRepository.kt
+│           │   └── BackupFileNames.kt
 │           ├── domain/
 │           │   ├── ScanUseCase.kt
 │           │   ├── ThumbnailUseCase.kt

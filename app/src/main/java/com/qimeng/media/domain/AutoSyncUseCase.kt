@@ -12,16 +12,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 自动同步 UseCase：负责在数据变化时自动写入备份目录。
- * 内置防抖机制，30秒内不重复触发。
+ * 自动同步 UseCase：负责在数据变化时自动写入备份目录的单文件全量 JSON（qimeng_backup.json）。
+ * 内置防抖机制，30 秒内不重复触发。
  *
  * 触发时机：
- * - 扫描/刷新后 → triggerAutoSyncIfNeeded()（只写 app数据/）
- * - 退出详情页 → triggerAutoSyncForDetailExit()（只写 app数据/）
- * - App 进入后台 → triggerFullSync()（写 app数据/ + 个人偏好/）
- * - 手动同步 → triggerManualSync()（写 app数据/ + 个人偏好/，无视防抖）
+ * - 扫描/刷新/标签/收藏/历史等数据变化后 → triggerAutoSyncIfNeeded()（30 秒防抖）
+ * - App 进入后台 → triggerFullSync()（60 秒防抖，兜底同步）
+ * - 手动同步 → triggerManualSync()（无视防抖）
  *
- * 空库覆盖防护：三个写入点在调用 BackupManager 前检测 media_files 是否为空，
+ * 空库覆盖防护：所有写入点在调用 BackupManager 前检测 media_files 是否为空，
  * 空库时跳过写入并置 [restoreSuggestion] 为 true，通知 UI 提示用户先导入恢复，
  * 避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。
  */
@@ -33,10 +32,6 @@ class AutoSyncUseCase(
 ) {
     private var lastAutoSyncTime = 0L
     private var lastFullSyncTime = 0L
-    // v1.12：退出详情页同步使用独立防抖字段——旧实现与 triggerAutoSyncIfNeeded 共享
-    // lastAutoSyncTime，任一入口同步成功即占用另一入口的 30s 窗口（如扫描刚同步完，
-    // 紧接着退出详情页的同步被防抖吞掉，个人偏好/统计延迟落盘）
-    private var lastDetailExitSyncTime = 0L
 
     /**
      * "建议恢复"信号：空库时自动同步/手动同步被拦截后置 true，UI 据此显示提示。
@@ -47,7 +42,7 @@ class AutoSyncUseCase(
 
     fun clearRestoreSuggestion() { _restoreSuggestion.value = false }
 
-    /** 扫描/刷新后触发：只写 app数据/，30秒防抖 */
+    /** 数据变化后触发：写单文件全量备份，30 秒防抖 */
     suspend fun triggerAutoSyncIfNeeded() {
         val now = System.currentTimeMillis()
         if (now - lastAutoSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
@@ -56,98 +51,56 @@ class AutoSyncUseCase(
         if (!appPrefs.autoSync) return
 
         lastAutoSyncTime = now
-        syncAppDataOnly()
+        performSync("自动同步")
     }
 
-    /** 退出详情页触发：只写 app数据/（JSON 快），30秒防抖（独立字段，v1.12） */
-    suspend fun triggerAutoSyncForDetailExit() {
-        val now = System.currentTimeMillis()
-        if (now - lastDetailExitSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
-
-        val appPrefs = appPrefsManager.prefs.value
-        if (!appPrefs.autoSync) return
-
-        lastDetailExitSyncTime = now
-        syncAppDataOnly()
-    }
-
-    /** App 进入后台触发：全量同步（app数据/ + 个人偏好/），60秒防抖 */
+    /** App 进入后台触发：写单文件全量备份，60 秒防抖 */
     suspend fun triggerFullSync() {
         val now = System.currentTimeMillis()
         if (now - lastFullSyncTime < FULL_SYNC_DEBOUNCE_MS) return
 
-        val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
-        if (backupUri.isNullOrBlank()) return
-
-        // 空库覆盖防护：media_files 为空时跳过写入，避免空数据覆盖旧备份
-        if (!database.mediaFileDao().hasAny()) {
-            AppLog.w("AutoSync", "数据库为空，跳过全量同步以防覆盖旧备份")
-            _restoreSuggestion.value = true
-            return
-        }
-
         lastFullSyncTime = now
         lastAutoSyncTime = now
-        try {
-            val manager = BackupManager(application)
-            manager.fullSyncToDirectory(backupUri.toUri(), database, appPrefsManager)
-            AppLog.d("AutoSync", "全量同步完成（后台触发）")
-        } catch (e: Exception) {
-            AppLog.e("AutoSync", "全量同步失败", e)
-        }
+        performSync("全量同步（后台触发）")
     }
 
-    /** 手动同步：无视防抖，立即全量同步，返回是否成功 */
+    /** 手动同步：无视防抖，立即写单文件全量备份，返回是否成功 */
     suspend fun triggerManualSync(): Boolean {
+        lastFullSyncTime = System.currentTimeMillis()
+        lastAutoSyncTime = System.currentTimeMillis()
+        return performSync("手动同步")
+    }
+
+    /**
+     * 统一写备份文件：读备份 URI → 空库覆盖防护 → BackupManager 单文件导出。
+     * 空库时跳过写入并置 [restoreSuggestion]，避免空数据覆盖旧备份。
+     */
+    private suspend fun performSync(logTag: String): Boolean {
         val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
         if (backupUri.isNullOrBlank()) return false
 
-        // 空库覆盖防护：手动同步空库也会覆盖备份，拦截并提示用户先恢复
         if (!database.mediaFileDao().hasAny()) {
-            AppLog.w("AutoSync", "数据库为空，手动同步被拦截以防覆盖旧备份")
+            AppLog.w("AutoSync", "数据库为空，跳过${logTag}以防覆盖旧备份")
             _restoreSuggestion.value = true
             return false
         }
 
-        lastFullSyncTime = System.currentTimeMillis()
-        lastAutoSyncTime = System.currentTimeMillis()
         return try {
             val manager = BackupManager(application)
-            val result = manager.fullSyncToDirectory(backupUri.toUri(), database, appPrefsManager)
-            AppLog.d("AutoSync", "手动同步完成")
+            val result = manager.exportToDirectory(backupUri.toUri(), database, appPrefsManager) > 0
+            AppLog.d("AutoSync", "${logTag}完成")
             result
         } catch (e: Exception) {
-            AppLog.e("AutoSync", "手动同步失败", e)
+            AppLog.e("AutoSync", "${logTag}失败", e)
             false
-        }
-    }
-
-    /** 只同步 app数据/ 子目录 */
-    private suspend fun syncAppDataOnly() {
-        try {
-            val backupUri = repository.getSetting(KEY_BACKUP_DIRECTORY_URI)?.value
-            if (backupUri.isNullOrBlank()) return
-
-            // 空库覆盖防护：media_files 为空时跳过写入，避免空数据覆盖旧备份
-            if (!database.mediaFileDao().hasAny()) {
-                AppLog.w("AutoSync", "数据库为空，跳过自动同步以防覆盖旧备份")
-                _restoreSuggestion.value = true
-                return
-            }
-
-            val manager = BackupManager(application)
-            manager.autoSyncToDirectory(backupUri.toUri(), database, appPrefsManager)
-            AppLog.d("AutoSync", "自动同步完成（app数据）")
-        } catch (e: Exception) {
-            AppLog.e("AutoSync", "自动同步失败", e)
         }
     }
 
     companion object {
         const val KEY_BACKUP_DIRECTORY_URI = "backup_directory_uri"
-        /** 30秒防抖（app数据/） */
+        /** 30 秒防抖（数据变化自动同步） */
         private const val AUTO_SYNC_DEBOUNCE_MS = 30_000L
-        /** 60秒防抖（全量同步） */
+        /** 60 秒防抖（后台兜底同步） */
         private const val FULL_SYNC_DEBOUNCE_MS = 60_000L
     }
 }

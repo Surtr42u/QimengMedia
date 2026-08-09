@@ -149,13 +149,6 @@ class DefaultLocalMediaRepository(
         }
     }
 
-    override suspend fun recordHistory(history: ViewHistoryEntity) {
-        database.withTransaction {
-            viewHistoryDao.upsert(history)
-            viewHistoryDao.pruneToLimit(LocalMediaRepository.HISTORY_LIMIT)
-        }
-    }
-
     override suspend fun upsertStats(stats: ViewStatsEntity) {
         viewStatsDao.upsert(stats)
     }

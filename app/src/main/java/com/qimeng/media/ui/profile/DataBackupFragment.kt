@@ -103,7 +103,7 @@ class DataBackupFragment : Fragment() {
     private fun rebuildContent(container: LinearLayout) {
         container.removeAllViews()
         val ctx = requireContext()
-        container.addView(SheetUiHelper.sheetSubText(ctx, "选择文件夹后，将创建「绮梦影库」目录\n├ 个人偏好/（偏好JSON+报告TXT）\n└ app数据/（自动同步的数据库JSON）"))
+        container.addView(SheetUiHelper.sheetSubText(ctx, "选择文件夹后，将创建「绮梦影库」目录\n备份数据（qimeng_backup.json）将写入其中"))
 
         // 导入数据区块：选择备份目录直接恢复（不改变已设置的备份位置）
         container.addView(SheetUiHelper.sheetSectionTitle(ctx, "📥 导入数据"))
@@ -157,12 +157,6 @@ class DataBackupFragment : Fragment() {
             backupLocationLauncher.launch(null)
         })
 
-        // v1.7：自定义导出报告（章节勾选）
-        container.addView(SheetUiHelper.sheetLabel(ctx, "自定义导出"))
-        container.addView(SheetUiHelper.sheetAction(ctx, "自定义章节导出报告") {
-            showCustomReportExportDialog()
-        })
-
         // 内嵌「缓存与同步」区块：缩略图缓存进度 + 自动备份开关
         buildCacheSyncSection(container)
     }
@@ -198,7 +192,8 @@ class DataBackupFragment : Fragment() {
                     .format(java.util.Date(it))
             } ?: "未知时间"
             val message = "该目录已有备份数据（最近备份：$dateText）：\n" +
-                "${summary.authorCount} 位作者 / ${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
+                "${summary.mediaFileCount} 个媒体文件 / ${summary.authorCount} 位作者 / " +
+                "${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
                 "是否导入恢复到本地？"
             androidx.appcompat.app.AlertDialog.Builder(requireContext())
                 .setTitle("导入数据")
@@ -220,53 +215,39 @@ class DataBackupFragment : Fragment() {
         }
     }
 
-    /** 选择备份目录：创建目录结构、保存位置、立即导出偏好、检测旧备份提示恢复 */
+    /** 选择备份目录：创建「绮梦影库」目录、保存位置、立即写入一份全量备份、检测旧备份提示恢复 */
     private fun saveBackupLocation(uri: Uri) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 persistWritePermission(uri)
-                // 在选择的文件夹下创建"绮梦影库"目录结构
-                val (prefsDirUri, appDataDirUri) = withContext(Dispatchers.IO) {
+                // 在选择的文件夹下创建"绮梦影库"目录（备份主文件 qimeng_backup.json 写入其根目录）
+                val qmDirUri = withContext(Dispatchers.IO) {
                     val rootDir = DocumentFile.fromTreeUri(requireContext(), uri) ?: throw Exception("无法访问目录")
                     val qmDir = rootDir.findFile("绮梦影库") ?: rootDir.createDirectory("绮梦影库")
                         ?: throw Exception("无法创建绮梦影库目录")
-                    val prefsDir = qmDir.findFile("个人偏好") ?: qmDir.createDirectory("个人偏好")
-                        ?: throw Exception("无法创建个人偏好目录")
-                    val appDataDir = qmDir.findFile("app数据") ?: qmDir.createDirectory("app数据")
-                        ?: throw Exception("无法创建app数据目录")
-                    Pair(prefsDir.uri, appDataDir.uri)
+                    qmDir.uri
                 }
-                // 保存绮梦影库目录作为备份位置（复用上方 IO 线程中已创建的目录）
-                val qmDir = DocumentFile.fromTreeUri(requireContext(), uri)
-                    ?.findFile("绮梦影库")
-                if (qmDir == null) {
-                    Toast.makeText(requireContext(), "无法找到绮梦影库目录", Toast.LENGTH_LONG).show()
-                    return@launch
-                }
-                viewModel.saveBackupDirectory(qmDir.uri, "绮梦影库") {
-                    // 设置成功后立即导出偏好数据到"个人偏好"子文件夹
+                viewModel.saveBackupDirectory(qmDirUri, "绮梦影库") {
+                    // 设置成功后立即写入一份全量备份（单文件 qimeng_backup.json）
                     viewLifecycleOwner.lifecycleScope.launch {
-                        try {
-                            val db = com.qimeng.media.data.db.AppDatabase.getInstance(requireContext())
-                            val manager = com.qimeng.media.backup.BackupManager(requireContext())
-                            val success = manager.exportPersonalPrefsToFile(prefsDirUri, db)
-                            if (success) {
-                                Toast.makeText(requireContext(), "备份位置已设置，偏好数据已导出", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(requireContext(), "备份位置已设置，但偏好导出失败", Toast.LENGTH_SHORT).show()
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(requireContext(), "偏好导出失败：${e.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(requireContext(), "正在写入备份...", Toast.LENGTH_SHORT).show()
+                        val app = requireActivity().application as com.qimeng.media.QimengApplication
+                        val success = withContext(Dispatchers.IO) {
+                            app.appContainer.autoSyncUseCase.triggerManualSync()
                         }
+                        Toast.makeText(requireContext(),
+                            if (success) "备份位置已设置，数据已写入 qimeng_backup.json"
+                            else "备份位置已设置，但写入失败",
+                            Toast.LENGTH_SHORT).show()
                     }
                     // 检测备份目录是否已有可恢复数据，有则提示用户导入恢复
                     // 用途：卸载重装后选了旧备份目录，App 主动提示合并旧数据，避免画像断档
                     viewLifecycleOwner.lifecycleScope.launch {
-                        val summary = viewModel.peekBackupSummary(qmDir.uri)
+                        val summary = viewModel.peekBackupSummary(qmDirUri)
                         if (summary != null && summary.existingFileCount > 0) {
                             // 防重复：同一目录只提示一次（取消也算知情，不再打扰）
                             val prefs = requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
-                            val hintKey = "hint_shown_${qmDir.uri}"
+                            val hintKey = "hint_shown_$qmDirUri"
                             if (!prefs.getBoolean(hintKey, false)) {
                                 withContext(Dispatchers.Main) { showRestoreConfirmDialog(summary, hintKey) }
                             }
@@ -292,7 +273,8 @@ class DataBackupFragment : Fragment() {
                 .format(java.util.Date(it))
         } ?: "未知时间"
         val message = "该目录已有备份数据（最近备份：$dateText）：\n" +
-            "${summary.authorCount} 位作者 / ${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
+            "${summary.mediaFileCount} 个媒体文件 / ${summary.authorCount} 位作者 / " +
+            "${summary.tagCount} 个标签 / ${summary.statsCount} 条统计\n\n" +
             "是否导入恢复到本地？\n\n" +
             "（取消则只作为新的备份位置，不恢复旧数据）"
 
@@ -310,80 +292,6 @@ class DataBackupFragment : Fragment() {
                 requireContext().getSharedPreferences("restore_hint_prefs", android.content.Context.MODE_PRIVATE)
                     .edit { putBoolean(hintKey, true) }
             }
-            .show()
-    }
-
-    /** v1.7：自定义章节导出报告对话框（勾选章节 → 导出到"个人偏好"子文件夹） */
-    private fun showCustomReportExportDialog() {
-        if (cachedBackupName == null) {
-            Toast.makeText(requireContext(), "请先设置备份位置", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val sectionNames = arrayOf(
-            "总览（汇总统计）",
-            "总 Top 30（混合排行）",
-            "常规 Top 20",
-            "COS作品 Top 20",
-            "作者 Top 20",
-            "关注作者",
-            "标签 Top 20",
-            "全部标签",
-            "收藏列表"
-        )
-        val checkedItems = booleanArrayOf(true, true, true, true, true, true, true, true, true)
-
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("选择导出章节")
-            .setMultiChoiceItems(sectionNames, checkedItems) { _, which, isChecked ->
-                checkedItems[which] = isChecked
-            }
-            .setPositiveButton("导出") { _, _ ->
-                val options = com.qimeng.media.backup.ReportSectionOptions(
-                    overview = checkedItems[0],
-                    mixedTop = checkedItems[1],
-                    normalTop = checkedItems[2],
-                    cosWorkTop = checkedItems[3],
-                    authorTop = checkedItems[4],
-                    followedAuthors = checkedItems[5],
-                    tagTop = checkedItems[6],
-                    allTags = checkedItems[7],
-                    favorites = checkedItems[8]
-                )
-                if (options.selectedCount == 0) {
-                    Toast.makeText(requireContext(), "请至少选择一个章节", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    Toast.makeText(requireContext(), "正在导出报告...", Toast.LENGTH_SHORT).show()
-                    try {
-                        val db = com.qimeng.media.data.db.AppDatabase.getInstance(requireContext())
-                        val manager = com.qimeng.media.backup.BackupManager(requireContext())
-                        // 从 settings 表获取备份目录 URI，定位"个人偏好"子文件夹
-                        val success = withContext(Dispatchers.IO) {
-                            val backupUriStr = viewModel.getBackupDirectoryUri()
-                            if (backupUriStr == null) {
-                                false
-                            } else {
-                                val rootDir = DocumentFile.fromTreeUri(requireContext(), Uri.parse(backupUriStr))
-                                val prefsDir = rootDir?.findFile("个人偏好")
-                                if (prefsDir != null) {
-                                    manager.exportPersonalPrefsToFile(prefsDir.uri, db, options)
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                        Toast.makeText(requireContext(),
-                            if (success) "报告已导出（${options.selectedCount}/9 章节）" else "导出失败，请检查备份目录",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(requireContext(), "导出失败：${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-            .setNegativeButton("取消", null)
             .show()
     }
 
