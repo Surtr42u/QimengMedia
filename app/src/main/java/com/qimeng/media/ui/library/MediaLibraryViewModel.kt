@@ -54,6 +54,8 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     val allTags = repository.observeAllTags()
     val allMediaTags = repository.observeAllMediaTagNames()
     val history = repository.observeLatestHistory()
+    /** v1.14：按天浏览聚合（无限保留，统计页趋势/窗口排行/沉浸时长唯一数据来源） */
+    val dailyBrowse = repository.observeDailyBrowse()
     val backupDirectoryName = repository.observeSetting(KEY_BACKUP_DIRECTORY_NAME)
     val importedTxtFiles = repository.observeSetting(KEY_IMPORTED_TXT_FILES)
     val allAuthorMedia = repository.observeAllAuthorMedia()
@@ -327,6 +329,14 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 repository.recordView(recordKey, media.fileName)
             }
             withContext(Dispatchers.Main) { onLoaded(media) }
+        }
+    }
+
+    /** v1.14：视频真正开始播放时记一次播放（修复 playCount 从无写入点的问题） */
+    fun recordPlay(recordKey: String, fileName: String) {
+        if (recordKey.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.recordPlay(recordKey, fileName)
         }
     }
 

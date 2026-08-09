@@ -5,6 +5,7 @@ import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorFileCount
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.MediaTagCrossRef
 import com.qimeng.media.data.db.entity.ScanSourceEntity
@@ -52,7 +53,11 @@ interface LocalMediaRepository {
     suspend fun getNonCosKeysAndFileNames(): List<MediaFileDao.NonCosKeyFileName>
     suspend fun getAllRecordKeys(): List<String>
     suspend fun recordView(recordKey: String, fileName: String)
+    /** v1.14：视频真正开始播放时记一次播放（view_stats.playCount + daily_browse.playCount 原子 +1） */
+    suspend fun recordPlay(recordKey: String, fileName: String)
     suspend fun upsertStats(stats: ViewStatsEntity)
+    /** v1.14：按天浏览聚合（无限保留，统计页趋势/窗口排行/沉浸时长唯一数据来源） */
+    fun observeDailyBrowse(): Flow<List<DailyBrowseEntity>>
     suspend fun upsertAuthor(author: AuthorEntity)
     suspend fun upsertAllAuthors(authors: List<AuthorEntity>)
     suspend fun upsertAuthorMedia(crossRef: AuthorMediaCrossRef)

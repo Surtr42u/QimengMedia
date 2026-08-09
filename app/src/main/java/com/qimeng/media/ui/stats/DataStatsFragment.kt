@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -11,38 +13,28 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.qimeng.media.MainActivity
 import com.qimeng.media.R
-import com.qimeng.media.data.db.entity.ViewHistoryEntity
-import com.qimeng.media.data.db.entity.ViewStatsEntity
-import com.qimeng.media.data.model.MediaType
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
+import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.databinding.FragmentDataStatsBinding
 import com.qimeng.media.resolveThemeColor
 import com.qimeng.media.ui.library.MediaLibraryViewModel
-import com.qimeng.media.ui.widget.BarChartView
-import com.qimeng.media.ui.widget.BrowseStatsChartView
-import com.qimeng.media.ui.widget.LineChartView
-import com.qimeng.media.ui.widget.PieChartView
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * 数据统计页（v1.7 新增）。
+ * 数据统计页（v1.7 新增，v1.14 重构）。
  *
  * 专业数据报表页面，包含：
- * - 时间范围切换（7天/30天/全部）
- * - 总览数字卡片（总浏览/总播放/总时长/总文件数/总占用空间/平均浏览深度）
- * - 浏览趋势折线图
- * - 分布统计卡片（类型分布 + 来源分布，两个环形图合并展示）
- * - 热门文件 Top 5 柱状图卡片（点击弹出完整排行榜 BottomSheet）
- * - 作者文件数 Top 5 横向柱条卡片（点击弹出完整排行榜 BottomSheet）
- * - 标签文件数 Top 5 横向柱条卡片（点击弹出完整排行榜 BottomSheet）
+ * - 时间范围切换（7天/30天/全部，全局联动所有统计）
+ * - 总览数字卡片（总浏览/总播放/总时长/总文件数/总占用空间/平均浏览次数）
+ * - 浏览趋势折线图（点击进入分类型趋势详情）
+ * - 分布统计小入口（纯文字，点击进入原分布详情页）
+ * - 常看文件卡片（文件名+浏览次数紧凑列表，点击进入常看详情）
+ * - 常看作者与标签卡片（作者/标签混合 3 行，点击进入常看详情）
  *
- * 交互设计：
- * - 点击热门文件/作者/标签卡片 → 弹出 BottomSheet 显示完整 Top 20 排行榜
- * - 排行榜条目可点击跳转文件详情页/作者文件页
- * - 环形图纯展示，无点击交互
- * - 图表入场动画
- * - 时间范围切换重新聚合数据
+ * v1.14 数据口径：窗口内统计（浏览/播放/时长/排行）全部基于按天浏览聚合
+ * （daily_browse，无限保留），趋势图基于浏览历史明细（最近 500 条）；
+ * 总文件数/总占用空间为库存静态值，不随时间变化。
  */
 class DataStatsFragment : Fragment() {
     private var _binding: FragmentDataStatsBinding? = null
@@ -52,11 +44,13 @@ class DataStatsFragment : Fragment() {
     }
 
     private var currentRange: TimeRange = TimeRange.DAYS_7
-    private var cachedHistory: List<ViewHistoryEntity> = emptyList()
-    private var cachedStats: List<ViewStatsEntity> = emptyList()
-    private var cachedMedia: List<com.qimeng.media.data.db.entity.MediaFileEntity> = emptyList()
+    private var cachedHistory: List<com.qimeng.media.data.db.entity.ViewHistoryEntity> = emptyList()
+    private var cachedMedia: List<MediaFileEntity> = emptyList()
+    private var cachedDaily: List<DailyBrowseEntity> = emptyList()
     private var cachedAuthorData: List<Triple<String, String, Int>> = emptyList()
     private var cachedTagData: List<Pair<String, Int>> = emptyList()
+    private var cachedAuthorMedia: List<com.qimeng.media.data.db.entity.AuthorMediaCrossRef> = emptyList()
+    private var cachedMediaTags: List<com.qimeng.media.data.db.model.MediaTagName> = emptyList()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -84,7 +78,7 @@ class DataStatsFragment : Fragment() {
                     else -> TimeRange.ALL
                 }
                 updateRangeSelection(index)
-                renderCharts()
+                renderAll()
             }
         }
         updateRangeSelection(0)
@@ -105,14 +99,14 @@ class DataStatsFragment : Fragment() {
     }
 
     private fun setupCardClicks() {
+        binding.trendCard.setOnClickListener {
+            showStatsDetail(StatsDetailFragment.MODE_TYPE_TREND)
+        }
         binding.topFilesCard.setOnClickListener {
-            showStatsDetail(StatsDetailFragment.MODE_FILES)
+            showStatsDetail(StatsDetailFragment.MODE_FAVORITES)
         }
         binding.topAuthorsCard.setOnClickListener {
             showStatsDetail(StatsDetailFragment.MODE_AUTHORS)
-        }
-        binding.topTagsCard.setOnClickListener {
-            showStatsDetail(StatsDetailFragment.MODE_TAGS)
         }
         binding.distributionCard.setOnClickListener {
             showStatsDetail(StatsDetailFragment.MODE_DISTRIBUTION)
@@ -128,13 +122,6 @@ class DataStatsFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.allStats.collect { stats ->
-                        cachedStats = stats
-                        renderOverview()
-                        renderTopFiles()
-                    }
-                }
-                launch {
                     viewModel.history.collect { history ->
                         cachedHistory = history
                         renderTrend()
@@ -143,152 +130,177 @@ class DataStatsFragment : Fragment() {
                 launch {
                     viewModel.allMedia.collect { media ->
                         cachedMedia = media
-                        renderTypeDistribution()
-                        renderSourceDistribution()
                         renderOverviewExtra()
+                        renderTopFiles()
+                        renderTopAuthors()
                     }
                 }
                 launch {
-                    combine(viewModel.authors, viewModel.authorFileCounts) { authors, counts ->
-                        val authorMap = authors.associateBy { it.authorId }
-                        counts.mapNotNull { afc ->
-                            authorMap[afc.authorId]?.let { author ->
-                                Triple(author.authorId, author.displayName, afc.fileCount)
-                            }
-                        }.sortedByDescending { it.third }
-                    }.collect { authorData ->
-                        cachedAuthorData = authorData
+                    viewModel.allAuthorMedia.collect { authorMedia ->
+                        cachedAuthorMedia = authorMedia
+                        renderTopAuthors()
+                    }
+                }
+                launch {
+                    viewModel.dailyBrowse.collect { daily ->
+                        cachedDaily = daily
+                        renderOverview()
+                        renderTopFiles()
                         renderTopAuthors()
                     }
                 }
                 launch {
                     viewModel.allMediaTags.collect { mediaTags ->
-                        // 按标签名聚合文件数
+                        cachedMediaTags = mediaTags
                         cachedTagData = mediaTags
                             .groupBy { it.name }
                             .map { (name, list) -> name to list.size }
                             .sortedByDescending { it.second }
-                        renderTopTags()
+                        renderTopAuthors()
                     }
                 }
             }
         }
     }
 
-    /** 渲染总览数字卡片（第一行：浏览/播放/时长） */
+    /** 当前时间范围名字（与 StatsDetailFragment 时间胶囊约定一致） */
+    private val currentRangeName: String get() = currentRange.name
+
+    /** 窗口内浏览聚合（次数+播放+时长） */
+    private fun windowDaily(): List<DailyBrowseEntity> {
+        val cutoff = StatsFormatHelper.cutoffForRange(currentRangeName)
+        return if (currentRange == TimeRange.ALL) cachedDaily else cachedDaily.filter { it.dayStartMillis >= cutoff }
+    }
+
+    /** 渲染总览数字卡片（第一行：浏览/播放/时长，随时间范围联动） */
     private fun renderOverview() {
-        val totalViews = cachedStats.sumOf { it.viewCount }
-        val totalPlays = cachedStats.sumOf { it.playCount }
-        val totalMinutes = cachedStats.sumOf { it.totalBrowseSeconds } / 60
+        val window = windowDaily()
+        val totalViews = window.sumOf { it.viewCount }
+        val totalPlays = window.sumOf { it.playCount }
+        val totalMinutes = window.sumOf { it.totalBrowseSeconds } / 60
         binding.totalViewsValue.text = StatsFormatHelper.formatNumber(totalViews)
         binding.totalPlayValue.text = StatsFormatHelper.formatNumber(totalPlays)
         binding.totalBrowseTimeValue.text = formatDuration(totalMinutes)
     }
 
-    /** 渲染总览数字卡片（第二行：文件数/占用空间/平均浏览深度） */
+    /** 渲染总览数字卡片（第二行：文件数/占用空间/平均浏览次数） */
     private fun renderOverviewExtra() {
         binding.totalFilesValue.text = StatsFormatHelper.formatNumber(cachedMedia.size)
         val totalBytes = cachedMedia.sumOf { it.sizeBytes }
         binding.totalSizeValue.text = StatsFormatHelper.formatSize(totalBytes)
-        // 平均浏览深度 = 总浏览次数 / 有浏览记录的文件数
-        val filesWithViews = cachedStats.count { it.viewCount + it.playCount > 0 }
-        val totalViews = cachedStats.sumOf { it.viewCount + it.playCount }
-        val avgDepth = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
-        binding.avgBrowseValue.text = String.format(java.util.Locale.US, "%.1f", avgDepth)
+        // 平均浏览次数 = 窗口内总浏览次数 / 窗口内有浏览记录的文件数
+        val window = windowDaily()
+        val filesWithViews = window.filter { it.viewCount + it.playCount > 0 }.map { it.recordKey }.distinct().size
+        val totalViews = window.sumOf { it.viewCount + it.playCount }
+        val avgViews = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
+        binding.avgBrowseValue.text = String.format(Locale.US, "%.1f", avgViews)
     }
 
-    /** 渲染浏览趋势折线图 */
+    /** 渲染浏览趋势折线图（基于浏览历史明细，随时间范围联动） */
     private fun renderTrend() {
-        val now = System.currentTimeMillis()
-        val cutoff = when (currentRange) {
-            TimeRange.DAYS_7 -> now - 7L * 24 * 60 * 60 * 1000
-            TimeRange.DAYS_30 -> now - 30L * 24 * 60 * 60 * 1000
-            TimeRange.ALL -> 0L
-        }
-        val filtered = cachedHistory.filter { it.openedAtMillis >= cutoff }
         val points = when (currentRange) {
-            TimeRange.DAYS_7 -> StatsFormatHelper.groupByDay(filtered, 7)
-            TimeRange.DAYS_30 -> StatsFormatHelper.groupByDay(filtered, 30)
-            TimeRange.ALL -> StatsFormatHelper.groupByWeek(filtered)
+            TimeRange.DAYS_7 -> StatsFormatHelper.groupByDay(cachedHistory, 7)
+            TimeRange.DAYS_30 -> StatsFormatHelper.groupByDay(cachedHistory, 30)
+            TimeRange.ALL -> StatsFormatHelper.groupByWeek(cachedHistory)
         }
         binding.trendChart.setData(points)
     }
 
-    /**
-     * 类型分布配置：媒体类型 → 显示名称。
-     * 未来新增 MediaType 时只需在此列表追加一项，渲染自动适配。
-     */
-    private val typeDistributionConfig = listOf(
-        MediaType.IMAGE to "图片",
-        MediaType.VIDEO to "视频",
-        MediaType.ANIMATED_IMAGE to "动图"
-    )
-
-    /** 渲染类型分布环形图（纯展示，无点击，始终显示所有类型含0值） */
-    private fun renderTypeDistribution() {
-        // 数据驱动渲染，未来新增类型只需在 typeDistributionConfig 追加一项
-        val slices = typeDistributionConfig.map { (type, displayName) ->
-            val count = cachedMedia.count { it.mediaType == type }
-            PieChartView.Slice(displayName, count)
-        }
-        binding.typeDistributionChart.setData(slices)
-    }
-
-    /** 渲染来源分布环形图（纯展示，无点击，始终显示所有来源含0值） */
-    private fun renderSourceDistribution() {
-        val cosCount = cachedMedia.count { it.isCosFile }
-        val normalCount = cachedMedia.count { !it.isCosFile }
-        val slices = listOf(
-            PieChartView.Slice("常规", normalCount),
-            PieChartView.Slice("COS", cosCount)
-        )
-        binding.sourceDistributionChart.setData(slices)
-    }
-
-    /** 渲染热门文件 Top 5 柱状图（卡片内预览） */
+    /** 渲染常看文件列表（窗口内浏览聚合 Top 3，文件名 + 浏览次数） */
     private fun renderTopFiles() {
-        val top5 = cachedStats
+        val window = windowDaily()
+        val top3 = window
             .filter { it.viewCount + it.playCount > 0 }
-            .sortedByDescending { it.viewCount + it.playCount }
-            .take(5)
-            .map { entity ->
-                BarChartView.BarEntry(
-                    label = entity.fileName,
-                    value = entity.viewCount + entity.playCount,
-                    id = entity.recordKey
-                )
-            }
-        binding.topFilesChart.setData(top5)
+            .groupBy { it.recordKey }
+            .map { (key, list) -> Triple(key, list.first().fileName, list.sumOf { it.viewCount + it.playCount }) }
+            .sortedByDescending { it.third }
+            .take(3)
+        renderTextList(binding.topFilesList, top3.map { Triple(it.second, "${it.third} 次", it.first) })
     }
 
-    /** 渲染作者文件数 Top 5 横向柱条（卡片内预览） */
+    /**
+     * 渲染常看作者与标签列表（作者/标签混合 Top 3）。
+     * 作者浏览 = 该作者关联文件在窗口内浏览聚合的次数和（allAuthorMedia → recordKey 匹配窗口浏览 key）。
+     */
     private fun renderTopAuthors() {
-        val top5 = cachedAuthorData.take(5).map { (authorId, name, count) ->
-            BrowseStatsChartView.BarEntry(
-                label = name,
-                value = count,
-                id = authorId
-            )
-        }
-        binding.topAuthorsChart.setData(top5)
+        val window = windowDaily()
+        val viewsByKey = window.associate { it.recordKey to (it.viewCount + it.playCount) }
+        val browsedKeys = viewsByKey.filterValues { it > 0 }.keys
+
+        // 作者浏览聚合（按浏览数值降序取前 2）
+        val authorRows = cachedAuthorData.mapNotNull { (authorId, name, _) ->
+            val views = cachedAuthorMedia
+                .filter { it.authorId == authorId && it.recordKey in browsedKeys }
+                .sumOf { viewsByKey[it.recordKey] ?: 0 }
+            if (views > 0) Triple(name, views, authorId) else null
+        }.sortedByDescending { it.second }.take(2)
+
+        // 标签浏览聚合（按浏览数值降序取前 2）
+        val tagRows = cachedMediaTags
+            .filter { it.recordKey in browsedKeys }
+            .groupBy { it.name }
+            .map { (name, list) -> Triple(name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }, name) }
+            .sortedByDescending { it.second }
+            .take(2)
+
+        // 混合：作者在前 + 标签在后，共 3 行
+        val mixed = (authorRows.map { Triple(it.first, "${it.second} 次", it.third) } +
+            tagRows.map { Triple(it.first, "${it.second} 次", it.third) }).take(3)
+        renderTextList(binding.topAuthorsList, mixed)
     }
 
-    /** 渲染标签文件数 Top 5 横向柱条（卡片内预览） */
-    private fun renderTopTags() {
-        val top5 = cachedTagData.take(5).map { (name, count) ->
-            BrowseStatsChartView.BarEntry(
-                label = name,
-                value = count,
-                id = null // 标签暂不支持跳转
-            )
+    /** 渲染紧凑文本列表（标题 + 副标题 + 隐藏点击 id，整卡可点击进详情） */
+    private fun renderTextList(container: LinearLayout, items: List<Triple<String, String, String>>) {
+        container.removeAllViews()
+        items.forEach { (title, subtitle, _) ->
+            val row = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 6f.dp(requireContext()).toInt()
+                }
+            }
+            val titleView = TextView(requireContext()).apply {
+                text = title
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    weight = 1f
+                    marginEnd = 8f.dp(requireContext()).toInt()
+                }
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+            val valueView = TextView(requireContext()).apply {
+                text = subtitle
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorPrimary))
+                textSize = 12f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            row.addView(titleView)
+            row.addView(valueView)
+            container.addView(row)
         }
-        binding.topTagsChart.setData(top5)
+        if (items.isEmpty()) {
+            val empty = TextView(requireContext()).apply {
+                text = "暂无数据"
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
+                textSize = 12f
+            }
+            container.addView(empty)
+        }
     }
 
-    private fun renderCharts() {
+    private fun renderAll() {
         renderOverview()
+        renderOverviewExtra()
         renderTrend()
         renderTopFiles()
+        renderTopAuthors()
     }
 
     private fun formatDuration(minutes: Long): String {
@@ -299,6 +311,12 @@ class DataStatsFragment : Fragment() {
             else -> "${minutes}分"
         }
     }
+
+    private fun Float.dp(context: android.content.Context): Float =
+        this * context.resources.displayMetrics.density
+
+    private fun Int.dp(context: android.content.Context): Int =
+        (this * context.resources.displayMetrics.density).toInt()
 
     override fun onDestroyView() {
         super.onDestroyView()

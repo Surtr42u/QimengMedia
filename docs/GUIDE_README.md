@@ -15,7 +15,7 @@
 | 文档 | 管什么 | 核心内容 |
 |---|---|---|
 | `GUIDE_UI.md` | 所有页面的文件路径、布局结构、导航行为、RecyclerView 适配器 | 详情页叠加模式、首页芯片栏、全部页日期分组、筛选面板 |
-| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份数据段、UseCase 层 | 12 个实体、10 个 DAO、4 个 UseCase、完整文件名主键、单文件全量备份（qimeng_backup.json 16 段） |
+| `GUIDE_DATA.md` | Room 实体、DAO、主键策略、统计规则、收藏、备份数据段、UseCase 层 | 13 个实体、11 个 DAO、4 个 UseCase、完整文件名主键、单文件全量备份（qimeng_backup.json 17 段含 dailyBrowse） |
 | `GUIDE_THEME.md` | 11 个 `?attr/qmColor*` 颜色属性、明暗模式切换（仅跟随系统）、代码中使用方式 | `values` / `values-night`、`ThemeHelper.resolve()`、系统 DayNight 自动选择、系统栏明暗同步 |
 | `GUIDE_SCAN.md` | SAF 授权目录、双引擎扫描（MediaStore+SAF）、两套扫描体系、COS 路径解析 | MediaStore 优先 + SAF 回退、scanTreeFast、按需元数据解码 |
 | `GUIDE_ALGORITHM.md` | 推荐公式 10 维权重、排行榜周期、筛选面板全字段、排序缓存 | tagRelevance 0.22 + engagement 0.15 + tagCollection 0.15 + discovery 0.15 等 |

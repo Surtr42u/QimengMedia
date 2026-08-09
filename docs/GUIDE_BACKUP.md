@@ -28,8 +28,9 @@
 
 - 备份目录 `绮梦影库/` 根目录下只有**一个数据文件** `qimeng_backup.json`（不再拆 app数据/个人偏好/格式说明 三个子目录与 10+ 分文件）。
 - JSON 使用 UTF-8，字段名自解释（fileName/viewCount/openedAtMillis），**AI 可直接读取该文件生成任意报告**，App 不再内置报告器。
-- 顶层含 `format`（固定 `qimeng_backup`）、`schemaVersion`（当前 1）、`appIdentifier`、`exportedAtMillis`、`data`（16 个数据段）。
-- data 段覆盖：mediaFiles / settings / authors / authorMediaRefs / tags / mediaTagRefs / albumRules / mediaStats / history / scanSources / timelineTags / cosWorks / likes / favorites / followedAuthorIds / appPrefs。
+- 顶层含 `format`（固定 `qimeng_backup`）、`schemaVersion`（当前 1）、`appIdentifier`、`exportedAtMillis`、`data`（17 个数据段）。
+- data 段覆盖：mediaFiles / settings / authors / authorMediaRefs / tags / mediaTagRefs / albumRules / mediaStats / dailyBrowse / history / scanSources / timelineTags / cosWorks / likes / favorites / followedAuthorIds / appPrefs。
+- **dailyBrowse 段（v1.14 新增）**：按天浏览聚合（每文件每天一行：次数/播放/时长），无限保留，是统计页趋势/窗口排行/沉浸时长的真相来源。备份聚合而非浏览历史明细——明细（history）仍只导出最近 1000 条供轻量展示，恢复后窗口统计与备份时完全一致。
 
 ### 隐私保护
 

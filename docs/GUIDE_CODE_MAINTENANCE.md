@@ -202,7 +202,7 @@
 | 方法参数 | ≤5 | 5-8 | >8 |
 
 **黄色区处理**：在方法/类 KDoc 注释说明"为何超长合理"。典型合理超长场景：
-- 数据汇总/事务编排（如 `BackupManager.importFromDirectory` 单事务导入 12 个数据段）
+- 数据汇总/事务编排（如 `BackupManager.importFromDirectory` 单事务导入 13 个数据段）
 - 手势回调/事件分发（如 `BiliPlayerView.onTouchEvent` 天然多分支）
 - 扫描编排/流程调度（如 `ScanUseCase.autoRefreshAllSources` 多源顺序刷新）
 - 设置项弹窗编排（如 `ProfileFragment` 多设置项顺序组装）
@@ -213,7 +213,7 @@
 
 | 指标 | 目标 | 当前状态 | 检查方式 |
 |------|------|----------|----------|
-| 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法为 `BackupManager.importFromDirectory`（单事务导入 12 个数据段，事务编排合理复杂度已备案） | Detekt LongMethod |
+| 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法为 `BackupManager.importFromDirectory`（单事务导入 13 个数据段，事务编排合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
 | 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 7 个核心测试类（140+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest 9 个） | ./gradlew test |
@@ -227,7 +227,7 @@
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
 | `MediaDetailFragment` | 1291 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可 |
 | `ProfileFragment` | 259 行 | 绿色 | v1.13 数据管理/数据备份迁移至独立页面（DataManagementFragment/DataBackupFragment）后大幅瘦身；保留推荐偏好/兼容性检查弹层编排 |
-| `StatsDetailFragment` | 852 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 辅助图表 + Top 20 排行榜/分布对比，四种模式 + 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
+| `StatsDetailFragment` | 823 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
 | `BiliPlayerView` | 819 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度 |
 | `MediaLibraryViewModel` | 37 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
@@ -235,7 +235,7 @@
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
-| `BackupManager` | 627 行 | 黄色（类总行数） | 备份管理天然多方法：16 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 12 个数据段保持单方法（拆分会破坏事务原子性） |
+| `BackupManager` | 627 行 | 黄色（类总行数） | 备份管理天然多方法：17 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 13 个数据段保持单方法（拆分会破坏事务原子性） |
 | `SourceGroupsData` | 1674 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 历史审查与重构记录
@@ -294,15 +294,12 @@
 | `DimenExt` | `ui/widget/DimenExt.kt` | dp/dpFloat 尺寸转换扩展函数（Int.dp(Context)/Float.dp(Context)/Int.dpFloat(Context)） | MediaDetailFragment, BiliPlayerView, HomeFragment, AlbumFragment, ZoomImageView, AuthorListFragment, MediaFilterSheet, GroupedMediaAdapter, TimelineTagHelper, SheetUiHelper |
 | `MediaBrowserLogic` | `ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组/格式化工具 | HomeFragment, AllFilesFragment, AlbumDetailFragment, MediaDetailFragment, MediaThumbnailAdapter |
 | `PinchZoomHelper` | `ui/widget/PinchZoomHelper.kt` | 双指缩放列数共享组件（ScaleGestureDetector 缩放逻辑 + GridLayoutManager 创建含 SpanSizeLookup）；ColumnsRef 类包装列数状态 | AllFilesFragment, AlbumDetailFragment, BrowseHistoryFragment, AuthorFilesFragment, FavoriteFragment |
-| `BrowseStatsChartView` | `ui/widget/BrowseStatsChartView.kt` | 浏览统计柱状图（自绘 Canvas，水平柱条 + 主题色 + 空状态提示，Top N 文件热度展示） | DataStatsFragment |
 | `LineChartView` | `ui/widget/LineChartView.kt` | 折线/面积趋势图（自绘 Canvas，渐变面积 + 折线 + 数据点 + 入场动画 + 点击数据点高亮并显示数值气泡，48dp 命中阈值，气泡位置自适应上下） | DataStatsFragment, StatsDetailFragment |
-| `BarChartView` | `ui/widget/BarChartView.kt` | 竖向柱状图（自绘 Canvas，渐变填充 + 点击高亮 + 入场动画） | DataStatsFragment |
-| `PieChartView` | `ui/widget/PieChartView.kt` | 环形图（自绘 Canvas，多色调色板 + 中心总览 + 纵向图例 + 入场动画，纯展示不消费触摸事件，0值在图例显示但不绘制扇区） | DataStatsFragment |
 | `RankListAdapter` | `ui/stats/RankListAdapter.kt` | 通用排行榜列表 Adapter（点击跳转，前三名高亮，副标题可选，进度条相对第一名百分比，DiffUtil 局部更新） | DataStatsFragment, StatsDetailFragment |
-| `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+辅助图表+Top 20 排行榜/分布对比卡片，四种模式，文件模式支持热度/时长排序切换，分布模式显示类型/来源两张对比卡片，浏览趋势图支持点击数据点显示数值气泡） | DataStatsFragment |
+| `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+趋势图表+Top 20 排行榜/分布对比，四种模式，常看文件模式支持热度/时长排序切换，标签条目可跳搜索页） | DataStatsFragment |
 | `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
 | `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置，放开超大图解码原图）, ZoomImageView（仅诊断日志显示 gpuMax；渲染层判断改用 `HARDWARE_RENDER_SAFE_SIZE=4096` 常量，不再用 maxTextureSize——见 GUIDE_UI.md「智能分层渲染」阈值根因） |
-| `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
+| `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶 + v1.14 按天浏览聚合计算 cutoffForRange/groupDailyByDay/Week/ByType/aggregateDailyByType/BySource/typeDisplayName，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
 
 ### 共享胶囊筛选体系
 
@@ -395,7 +392,7 @@ Fragment/类规模按 §8 三档警戒线判定，不设硬性"必须拆分"行�
 
 以下场景的超长属合理复杂度，应靠备案合法化而非强行拆分：
 
-- **事务/流程编排**：天然需要顺序编排多步骤（如 `BackupManager.importFromDirectory` 单事务导入 12 个数据段）
+- **事务/流程编排**：天然需要顺序编排多步骤（如 `BackupManager.importFromDirectory` 单事务导入 13 个数据段）
 - **手势回调/事件分发**：天然多分支（如 `BiliPlayerView.onTouchEvent`）
 - **扫描编排/流程调度**：多源顺序刷新（如 `ScanUseCase.autoRefreshAllSources`）
 - **纯数据声明**：圈复杂度=0（如 `SourceGroupsData` 1674 行检索表）

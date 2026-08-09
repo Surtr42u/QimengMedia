@@ -15,7 +15,7 @@
 | `app/src/main/java/com/qimeng/media/ui/profile/ProfileFragment.kt` | 我的：扫描状态/推荐偏好/兼容性检查/数据管理与数据备份入口行 |
 | `app/src/main/java/com/qimeng/media/ui/profile/DataManagementFragment.kt` | 数据管理独立页：常规目录/COS目录/TXT导入作者 平铺（v1.13） |
 | `app/src/main/java/com/qimeng/media/ui/profile/DataBackupFragment.kt` | 数据备份独立页：备份位置/同步/导入恢复/缓存与同步（v1.13，v2.0 移除自定义导出） |
-| `app/src/main/java/com/qimeng/media/ui/stats/DataStatsFragment.kt` | 数据统计页：专业数据报表（折线趋势/环形分布/柱状排行/横向柱条） |
+| `app/src/main/java/com/qimeng/media/ui/stats/DataStatsFragment.kt` | 数据统计页：专业数据报表（总览数字卡/浏览趋势/常看文件/常看作者标签/分布入口，v1.14 时间范围全局联动） |
 | `app/src/main/java/com/qimeng/media/core/CompatChecker.kt` | 兼容性检查工具（6项检查） |
 | `app/src/main/java/com/qimeng/media/ui/detail/ZoomImageView.kt` | 自定义缩放 ImageView（**智能分层渲染**：`applyOptimalLayerType()` 按图尺寸选层，GIF→`LAYER_TYPE_HARDWARE`，普通图长边≤4096（硬件渲染安全阈值）→`LAYER_TYPE_HARDWARE`（GPU直渲），>4096→`LAYER_TYPE_SOFTWARE`（保正确性，超大图GPU驱动无法正确应用matrix缩放）；手势期间用 `shouldUseHardwareForCurrent()` 同阈值判断；`lastDrawableWidth/Height` 记录实际尺寸防止Coil降采样导致matrix错乱；缩放范围 0.5x~5x，双击放大1.8x，近1.0的scale factor跳过减少无效重绘） |
 | `app/src/main/java/com/qimeng/media/ui/detail/BiliPlayerView.kt` | B站风格视频播放器（手势控制/倍速/静音/进度拖拽） |
@@ -192,77 +192,45 @@
 
 ## 数据统计页
 
-专业数据报表页面，位于底部导航"数据"Tab（相册与我的之间）。
+专业数据报表页面，位于底部导航"数据"Tab（相册与我的之间）。v1.14 重构为「浏览导向」：时间范围全局联动，窗口统计基于按天浏览聚合（daily_browse，无限保留），删除库存排行（作者/标签文件数 Top5）。
 
 **页面结构**（卡片式布局，所有卡片统一使用 `bg_stat_card` 背景）：
-- 时间范围切换胶囊组（7天/30天/全部，`bg_capsule_soft` 容器 + 选中项 `bg_capsule_primary` 填充）
-- 总览数字卡片（两行 6 个指标）：
-  - 第一行：总浏览次数 / 总播放次数 / 总浏览时长
-  - 第二行：总文件数 / 总占用空间 / 平均浏览深度（总浏览次数 / 有浏览记录的文件数）
-- 浏览趋势折线图卡片（`LineChartView`，按天/周聚合浏览量，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**）
-- 分布统计卡片（类型分布 + 来源分布合并展示，两个 `PieChartView` 横向排列，**纯展示无点击**，**点击卡片进入分布详情页**）
-- 热门文件 Top 5 柱状图卡片（`BarChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
-- 作者文件数 Top 5 横向柱条卡片（`BrowseStatsChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
-- 标签文件数 Top 5 横向柱条卡片（`BrowseStatsChartView`，卡片内预览 Top 5，**点击卡片进入详情页**）
+- 时间范围切换胶囊组（7天/30天/全部，`bg_capsule_soft` 容器 + 选中项 `bg_capsule_primary` 填充），**全局联动**：切换后数字卡/趋势/排行/分布浏览全部跟随过滤
+- 总览数字卡片（两行 6 个指标，前 4 个随时间范围联动，总文件数/总占用为库存静态值）：
+  - 第一行：总浏览次数 / 总播放次数 / 总浏览时长（窗口内聚合）
+  - 第二行：总文件数 / 总占用空间 / 平均浏览次数（窗口内总浏览 ÷ 窗口内有浏览的文件数，v1.14 由「平均浏览深度」改名）
+- 浏览趋势折线图卡片（`LineChartView`，基于浏览历史明细，按天/周聚合浏览量，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**；**点击卡片进入分类型趋势详情**，右上角"分类型趋势 ›"）
+- 分布统计小入口卡片（纯文字「类型与来源的库存构成 / 查看详情 ›」，**点击进入原分布详情页**；v1.14 移除库存环形图，简化外形）
+- 常看文件卡片（文件名 + 浏览次数紧凑文本列表 Top 3，**点击进入常看详情**）
+- 常看作者与标签卡片（作者/标签按窗口浏览聚合混合 Top 3，**点击进入常看详情**）
 
 **交互设计**：
-- 点击热门文件/作者/标签/分布统计卡片 → 进入 `StatsDetailFragment` 全新详情界面（`MainActivity.showStatsDetail`）
-- 详情页排行榜条目可点击跳转：文件 → 文件详情页，作者 → 作者文件页，标签 → 暂不支持跳转
-- 环形图纯展示，不消费触摸事件（便于父卡片接收点击）
-- 图表入场动画（折线从左到右展开、柱条从底部生长、扇区从 0 度展开，DecelerateInterpolator）
-- 时间范围切换重新聚合数据（7天/30天按天分组，全部按周分组）
+- 点击趋势/常看文件/常看作者与标签/分布统计卡片 → 进入 `StatsDetailFragment` 全新详情界面（`MainActivity.showStatsDetail`），携带当前时间范围
+- 详情页排行榜条目可点击跳转：文件 → 文件详情页，作者 → 作者文件页，标签 → 搜索页（v1.14 修复原标签不可跳转问题）
+- 时间范围切换重新聚合所有区块（7天/30天按天分组，全部按周分组）
 - 排行榜前三名排名数字高亮（主题色）
 - 卡片右上角"查看全部 ›"/"查看详情 ›"提示可点击展开
 
-**统计详情页**（`StatsDetailFragment`）：
-- 顶部返回栏 + 动态标题
-- 统计摘要卡片（2列网格，根据模式动态生成：总和/均值/峰值等）
-- 数据洞察卡片（自动生成的文字摘要，如"最热门文件占总浏览量X%"、"第一名热度是第二名的X倍"等，运动健康 app 风格的数据洞察）
-- 辅助图表（文件模式显示浏览趋势折线图）
+**统计详情页**（`StatsDetailFragment`，v1.14 重构为四种模式）：
+- 顶部返回栏 + 动态标题（含时间范围后缀"· 近7天/近30天/全部"）
+- 统计摘要卡片（2列网格，根据模式动态生成）
+- 数据洞察卡片（自动生成的文字摘要）
 - 完整 Top 20 排行榜列表（`RankListAdapter`，`nestedScrollingEnabled=false` 随 ScrollView 滚动，每行带相对第一名的进度条）
-- 四种模式：`MODE_FILES`（文件浏览）、`MODE_AUTHORS`（作者文件数）、`MODE_TAGS`（标签文件数）、`MODE_DISTRIBUTION`（分布统计：类型/来源对比）
+- 四种模式：
+  - `MODE_TYPE_TREND`：类型浏览趋势——图片/视频/动图三张折线图横向排列（7天/30天按天、全部按周），下方常规 vs COS 来源趋势两张折线图；基于按天浏览聚合
+  - `MODE_FAVORITES`：常看文件——窗口内浏览聚合排行，支持「按热度/按时长」排序切换（副标题含停留时长）
+  - `MODE_AUTHORS`：常看作者与标签——按窗口浏览聚合的作者排行（Top 20）+ 标签排行（Top 20），标签条目可点击跳搜索页
+  - `MODE_DISTRIBUTION`：分布统计详情——类型/来源 ×（库存数量/大小 + 窗口浏览）对比卡片
 
-**文件模式排序切换交互**：
-- 排行榜标题右侧"按热度/按时长"胶囊切换按钮
-- 按热度：按 viewCount + playCount 降序
-- 按时长：按 totalBrowseSeconds 降序，数值显示为可读时长（如"1小时23分"）
-- 切换时使用缓存数据重新渲染，无需重新查询数据库
-
-**分布统计模式（无排行榜，改为分布对比卡片）**：
-- 隐藏排行榜区域，显示分布对比区域
-- 卡片1：类型分布对比（图片/视频/动图的数量、大小、浏览量三维度横向进度条对比）
-- 卡片2：来源分布对比（常规 vs COS 的数量、大小、浏览量对比）
-- 卡片间 12dp 留白（`distributionCardParams`），避免视觉重叠
-- 每个指标项：名称 + 进度条（相对最大值百分比）+ 数值，三列横向排列
-
-**浏览趋势图点击交互**（`LineChartView`）：
-- 点击数据点（48dp 命中阈值内）高亮该点并显示数值气泡（如"06/15  12次"）
-- 气泡位置优先在点上方，空间不足时切换到下方
-- 点击空白处取消选中
-- 动画进行中不响应点击（`animatedProgress >= 0.95f` 才响应）
-
-**排行榜 item 设计**（`item_rank_list.xml`）：
-- 绒布卡片背景（`bg_stat_card`），与统计页卡片风格一致
-- 排名数字（前三名主题色高亮）+ 标题 + 副标题 + 进度条（相对第一名百分比）+ 数值
-- 进度条 drawable：`bg_rank_progress`（圆角细条，主题色填充）
-
-**分布统计扩展性**：
-- 类型分布渲染由 `typeDistributionConfig` 列表驱动（MediaType → 显示名称），未来新增 MediaType 只需在列表追加一项，渲染自动适配
-- PieChartView 始终显示所有类型（含0值），0值在图例显示但不在环形图绘制扇区
-- 分布对比卡片的指标项通过 `DistributionMetric` 数据驱动，未来新增维度只需追加指标项
-
-**数据源**：
-- 浏览统计：`viewModel.allStats`（ViewStatsEntity 全量内存聚合）
-- 浏览趋势：`viewModel.history`（ViewHistoryEntity，按 openedAtMillis 时间分桶）
-- 类型/来源分布：`viewModel.allMedia`（MediaFileEntity，按 mediaType/isCosFile 内存分组）
-- 作者排行：`viewModel.authors` + `viewModel.authorFileCounts`（关联 authorId → displayName）
-- 标签排行：`viewModel.allMediaTags`（MediaTagName，按 name 分组计数）
+**数据源**（v1.14 起）：
+- 窗口统计/排行/沉浸时长：`viewModel.dailyBrowse`（按天浏览聚合，无限保留，唯一真相来源）
+- 浏览趋势：`viewModel.history`（ViewHistoryEntity 明细，按 openedAtMillis 分桶）
+- 类型/来源分布库存：`viewModel.allMedia`（MediaFileEntity，按 mediaType/isCosFile 内存分组）
+- 作者浏览聚合：`viewModel.authors` + `viewModel.allAuthorMedia`（关联 recordKey 匹配窗口浏览）
+- 标签浏览聚合：`viewModel.allMediaTags`（MediaTagName，关联 recordKey 匹配窗口浏览）
 
 **自绘图表组件**（`ui/widget/`）：
-- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签
-- `BarChartView`：竖向柱状图，渐变填充 + 点击高亮 + 数值标签，BarEntry 携带 id 支持跳转
-- `PieChartView`：环形图，多色调色板 + 中心总览 + 底部图例（纵向排列避免窄空间挤压，纯展示不消费触摸事件）
-- `BrowseStatsChartView`：横向柱条，BarEntry 携带 id 支持跳转
+- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签（v1.14 起为统计页唯一图表组件；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除）
 
 **排行榜组件**（`ui/stats/`）：
 - `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
@@ -482,7 +450,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 禁止只做"白底列表 + 默认按钮"的普通工具 UI
 - 禁止为了美观牺牲文件名、作者、统计等核心信息可读性
 - 视频详情页使用 Media3 ExoPlayer + 自定义 BiliPlayerView（B站风格控制器），控制层按 B 站式需求定制
-- 视频点击播放按钮即计一次播放，同一次详情打开只计一次
+- 视频点击播放按钮即计一次播放，同一次详情打开只计一次（v1.14 起真实写入 playCount：`startVideoPlayback` 时经 `ViewModel.recordPlay` 上报，预览→播放→退预览→再播放不重复计数）
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 

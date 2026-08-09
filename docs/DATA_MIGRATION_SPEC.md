@@ -41,7 +41,7 @@
   "schemaVersion": 1,
   "appIdentifier": "com.qimeng.media",
   "exportedAtMillis": 1700000000000,
-  "data": { ... 16 个数据段，见下 ... }
+  "data": { ... 17 个数据段，见下 ... }
 }
 ```
 
@@ -51,9 +51,9 @@
 | schemaVersion | Int | 格式版本，当前 1 |
 | appIdentifier | String | 固定 `com.qimeng.media` |
 | exportedAtMillis | Long | 导出时间戳 |
-| data | Object | 16 个数据段 |
+| data | Object | 17 个数据段 |
 
-## 4. data 区域 — 16 个数据段
+## 4. data 区域 — 17 个数据段
 
 | 数据段 | 说明 | 对应实体/存储 |
 |---|---|---|
@@ -65,6 +65,7 @@
 | mediaTagRefs | 文件-标签关联（含 tagName 冗余） | Room `media_tag_cross_refs` |
 | albumRules | 相册/出处规则 | Room `album_rules` |
 | mediaStats | 查看/播放/浏览时长统计 | Room `view_stats` |
+| dailyBrowse | 按天浏览聚合（**v1.14 新增**，每文件每天一行，无限保留，窗口统计真相来源） | Room `daily_browse` |
 | history | 浏览历史 | Room `view_history` |
 | scanSources | 扫描源 | Room `scan_sources` |
 | timelineTags | 视频时间轴标签 | Room `timeline_tags` |
@@ -220,6 +221,29 @@
 | mediaType | String | image / video |
 | openedAtMillis | Long | 打开时间戳 |
 
+### dailyBrowse（v1.14 新增）
+
+按天浏览聚合段，每文件每天一行，**无限保留**（不做裁剪）。恢复后统计页的趋势图、窗口排行、沉浸时长与备份时完全一致。备份的是聚合数据而非浏览历史明细（明细 history 仅保留最近 1000 条）。
+
+```json
+"dailyBrowse": [{
+  "recordKey": "示例文件A.mp4", "fileName": "示例文件A.mp4", "mediaType": "video",
+  "dayStartMillis": 1700000000000, "viewCount": 3, "playCount": 1,
+  "totalBrowseSeconds": 120, "updatedAtMillis": 1700000100000
+}]
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| recordKey | String | 关联 mediaFiles.recordKey |
+| fileName | String | 文件名 |
+| mediaType | String | image / video / animated_image |
+| dayStartMillis | Long | 当天零点时间戳（天粒度分桶键） |
+| viewCount | Int | 当天浏览次数 |
+| playCount | Int | 当天播放次数 |
+| totalBrowseSeconds | Long | 当天累计浏览时长（秒） |
+| updatedAtMillis | Long | 当天最后更新时间戳 |
+
 ### scanSources
 
 ```json
@@ -333,7 +357,7 @@
 | 作者信息 | authors + authorMediaRefs + followedAuthorIds | 按 authorId 创建作者，authorMediaRefs 建关联，followedAuthorIds 标记关注 |
 | 收藏状态 | favorites | recordKey 列表，找到文件就标记收藏 |
 | 点赞数据 | likes | recordKey + likeCount，写入点赞计数 |
-| 浏览统计 | mediaStats | recordKey + 各计数字段 |
+| 浏览统计 | mediaStats + dailyBrowse | mediaStats 各计数字段；dailyBrowse 按天聚合（每文件每天次数/播放/时长，恢复窗口统计） |
 | 浏览历史 | history | recordKey + openedAtMillis，按时间倒序还原 |
 | COS 作品结构 | cosWorks + mediaFiles（isCosFile=true） | 重建作品层级 |
 | 视频时间轴标签 | timelineTags | recordKey + timeMillis + name |
@@ -372,6 +396,7 @@
 | authorMediaRefs | upsert 关联 | recordKey 本地不存在则跳过 |
 | albumRules | upsert 规则 | 按 sourceName 合并 |
 | mediaStats | upsert 统计 | recordKey 本地不存在则跳过，数值钳制非负 |
+| dailyBrowse | upsert 按天聚合 | recordKey 本地不存在则跳过，数值钳制非负（v1.14 新增） |
 | history | upsert 历史 | recordKey 本地不存在则跳过 |
 | scanSources | upsert 扫描源 | 按 uriString 合并 |
 | timelineTags | upsert，按 (recordKey,timeMillis,name) 查重 | 已存在则跳过 |

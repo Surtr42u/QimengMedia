@@ -1,6 +1,8 @@
 package com.qimeng.media.ui.stats
 
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
+import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.ui.widget.LineChartView
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -8,7 +10,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 数据统计页共享格式化与聚合工具（v1.7）。
+ * 数据统计页共享格式化与聚合工具（v1.7，v1.14 增加按天浏览聚合计算）。
  *
  * 提取自 DataStatsFragment 与 StatsDetailFragment 中逐字重复的工具方法，
  * 消除重复代码（遵循 GUIDE_CODE_MAINTENANCE §9 共享逻辑原则）。
@@ -36,6 +38,99 @@ object StatsFormatHelper {
             bytes >= 1024L -> String.format(us, "%.1fKB", bytes / 1024.0)
             else -> "${bytes}B"
         }
+    }
+
+    // ===== v1.14：按天浏览聚合计算（daily_browse，无限保留，统计唯一真相来源） =====
+
+    /** 时间范围（7天/30天/全部）的截止时刻。全部 = 0（不过滤）。 */
+    fun cutoffForRange(rangeName: String, now: Long = System.currentTimeMillis()): Long = when (rangeName) {
+        "DAYS_7" -> now - 7L * 24 * 60 * 60 * 1000
+        "DAYS_30" -> now - 30L * 24 * 60 * 60 * 1000
+        else -> 0L
+    }
+
+    /** 按天浏览聚合 → 折线图数据点（最近 days 天，按天对齐，正序） */
+    fun groupDailyByDay(rows: List<DailyBrowseEntity>, days: Int, now: Long = System.currentTimeMillis()): List<LineChartView.Point> {
+        val dateFormat = SimpleDateFormat("MM/dd", Locale.getDefault())
+        val result = mutableListOf<LineChartView.Point>()
+        val cutoff = now - days.toLong() * 24 * 60 * 60 * 1000
+        for (i in days - 1 downTo 0) {
+            val cal = Calendar.getInstance()
+            cal.timeInMillis = now
+            cal.set(Calendar.HOUR_OF_DAY, 0)
+            cal.set(Calendar.MINUTE, 0)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            cal.add(Calendar.DAY_OF_YEAR, -i)
+            val dayStart = cal.timeInMillis
+            val count = rows.filter { it.dayStartMillis == dayStart }.sumOf { it.viewCount + it.playCount }
+            result.add(LineChartView.Point(dateFormat.format(Date(dayStart)), count))
+        }
+        return result
+    }
+
+    /** 按天浏览聚合 → 折线图数据点（最近 12 周，对齐周一，正序） */
+    fun groupDailyByWeek(rows: List<DailyBrowseEntity>, now: Long = System.currentTimeMillis()): List<LineChartView.Point> {
+        val dateFormat = SimpleDateFormat("MM/dd", Locale.getDefault())
+        val weekMillis = 7L * 24 * 60 * 60 * 1000
+        val result = mutableListOf<LineChartView.Point>()
+        for (i in 11 downTo 0) {
+            val weekStart = alignWeekStart(now) - i * weekMillis
+            val weekEnd = weekStart + weekMillis
+            val count = rows.filter { it.dayStartMillis in weekStart until weekEnd }
+                .sumOf { it.viewCount + it.playCount }
+            result.add(LineChartView.Point(dateFormat.format(Date(weekStart)), count))
+        }
+        return result
+    }
+
+    /** 按类型浏览聚合 → 折线图数据点（mediaType 过滤，dayStart 对齐） */
+    fun groupDailyByType(rows: List<DailyBrowseEntity>, mediaType: String, days: Int, now: Long = System.currentTimeMillis()): List<LineChartView.Point> {
+        val filtered = rows.filter { it.mediaType == mediaType }
+        return groupDailyByDay(filtered, days, now)
+    }
+
+    /** 按类型浏览聚合 → 折线图数据点（12 周粒度） */
+    fun groupDailyByTypeWeek(rows: List<DailyBrowseEntity>, mediaType: String, now: Long = System.currentTimeMillis()): List<LineChartView.Point> {
+        val filtered = rows.filter { it.mediaType == mediaType }
+        return groupDailyByWeek(filtered, now)
+    }
+
+    /** 按类型 + 时间窗口聚合（次数+播放+时长），返回 key → 聚合值 */
+    fun aggregateDailyByType(
+        rows: List<DailyBrowseEntity>,
+        rangeName: String,
+        now: Long = System.currentTimeMillis()
+    ): Map<String, Triple<Int, Int, Long>> {
+        val cutoff = cutoffForRange(rangeName, now)
+        return rows.filter { it.dayStartMillis >= cutoff }.groupBy { it.mediaType }.mapValues { (_, list) ->
+            Triple(
+                list.sumOf { it.viewCount + it.playCount },
+                list.sumOf { it.playCount },
+                list.sumOf { it.totalBrowseSeconds }
+            )
+        }
+    }
+
+    /** 来源（常规/COS）浏览聚合，key → 次数 */
+    fun aggregateDailyBySource(
+        rows: List<DailyBrowseEntity>,
+        cosKeys: Set<String>,
+        rangeName: String,
+        now: Long = System.currentTimeMillis()
+    ): Map<Boolean, Int> {
+        val cutoff = cutoffForRange(rangeName, now)
+        return rows.filter { it.dayStartMillis >= cutoff }.groupBy { it.recordKey in cosKeys }.mapValues { (_, list) ->
+            list.sumOf { it.viewCount + it.playCount }
+        }
+    }
+
+    /** 类型显示名（与 MediaType 常量对应） */
+    fun typeDisplayName(mediaType: String): String = when (mediaType) {
+        MediaType.IMAGE -> "图片"
+        MediaType.VIDEO -> "视频"
+        MediaType.ANIMATED_IMAGE -> "动图"
+        else -> mediaType
     }
 
     /**

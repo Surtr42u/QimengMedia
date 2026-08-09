@@ -10,6 +10,7 @@ import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorFileCount
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.MediaTagCrossRef
 import com.qimeng.media.data.db.entity.ScanSourceEntity
@@ -20,6 +21,7 @@ import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.data.db.model.MediaTagName
 import kotlinx.coroutines.flow.Flow
+import java.util.Calendar
 
 class DefaultLocalMediaRepository(
     private val database: AppDatabase,
@@ -63,6 +65,9 @@ class DefaultLocalMediaRepository(
     override fun observeScanSources(): Flow<List<ScanSourceEntity>> = scanSourceDao.observeSources()
 
     override fun observeAllStats(): Flow<List<ViewStatsEntity>> = viewStatsDao.observeAllByFileName()
+
+    override fun observeDailyBrowse(): Flow<List<DailyBrowseEntity>> =
+        database.dailyBrowseDao().observeSince(0L, Int.MAX_VALUE)
 
     override fun observeAllTags(): Flow<List<TagEntity>> = database.tagDao().observeTags()
 
@@ -146,7 +151,94 @@ class DefaultLocalMediaRepository(
                 )
             )
             viewHistoryDao.pruneToLimit(LocalMediaRepository.HISTORY_LIMIT)
+
+            recordDailyBrowse(recordKey, fileName, mediaType, now) { dayKey, dayStart ->
+                val updated = database.dailyBrowseDao().incrementViewCount(dayKey, now)
+                if (updated == 0) {
+                    database.dailyBrowseDao().upsert(
+                        DailyBrowseEntity(
+                            recordKeyDay = dayKey,
+                            recordKey = recordKey,
+                            fileName = fileName,
+                            mediaType = mediaType,
+                            dayStartMillis = dayStart,
+                            viewCount = 1,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+            }
         }
+    }
+
+    override suspend fun recordPlay(recordKey: String, fileName: String) {
+        database.withTransaction {
+            val now = System.currentTimeMillis()
+            val mediaFile = mediaFileDao.getByRecordKey(recordKey)
+            val mediaType = mediaFile?.mediaType ?: "video"
+
+            val existing = viewStatsDao.getByRecordKey(recordKey)
+            val stats = if (existing != null) {
+                existing.copy(
+                    playCount = existing.playCount + 1,
+                    updatedAtMillis = now
+                )
+            } else {
+                ViewStatsEntity(
+                    recordKey = recordKey,
+                    fileName = fileName,
+                    viewCount = 0,
+                    playCount = 1,
+                    updatedAtMillis = now
+                )
+            }
+            viewStatsDao.upsert(stats)
+
+            recordDailyBrowse(recordKey, fileName, mediaType, now) { dayKey, dayStart ->
+                val updated = database.dailyBrowseDao().incrementPlayCount(dayKey, now)
+                if (updated == 0) {
+                    database.dailyBrowseDao().upsert(
+                        DailyBrowseEntity(
+                            recordKeyDay = dayKey,
+                            recordKey = recordKey,
+                            fileName = fileName,
+                            mediaType = mediaType,
+                            dayStartMillis = dayStart,
+                            viewCount = 0,
+                            playCount = 1,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 按天浏览聚合的通用写入：优先原子 +1/追加，命中 0 行时（当天首条）upsert 新行。
+     * 事务内调用；[block] 接收 (recordKeyDay, dayStartMillis) 并执行实际的增量/建行逻辑。
+     */
+    private suspend fun recordDailyBrowse(
+        recordKey: String,
+        fileName: String,
+        mediaType: String,
+        now: Long,
+        block: suspend (dayKey: String, dayStart: Long) -> Unit
+    ) {
+        val dayStart = dayStartOf(now)
+        val dayKey = "$recordKey@$dayStart"
+        block(dayKey, dayStart)
+    }
+
+    /** 将时间戳对齐到当天零点（聚合表天粒度分桶键） */
+    private fun dayStartOf(millis: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 
     override suspend fun upsertStats(stats: ViewStatsEntity) {
@@ -220,6 +312,7 @@ class DefaultLocalMediaRepository(
             database.tagDao().deleteCrossRefsByRecordKeys(chunk)
             viewStatsDao.deleteByRecordKeys(chunk)
             viewHistoryDao.deleteByRecordKeys(chunk)
+            database.dailyBrowseDao().deleteByRecordKeys(chunk)
             database.timelineTagDao().deleteByRecordKeys(chunk)
             mediaFileDao.deleteByRecordKeys(chunk)
         }
@@ -389,13 +482,36 @@ class DefaultLocalMediaRepository(
     override suspend fun updateBrowseSeconds(recordKey: String, seconds: Long) {
         // 读-改-写包事务，避免快速连续退出详情页时并发累计丢失更新
         database.withTransaction {
+            val now = System.currentTimeMillis()
             val existing = viewStatsDao.getByRecordKey(recordKey) ?: return@withTransaction
             viewStatsDao.upsert(
                 existing.copy(
                     totalBrowseSeconds = existing.totalBrowseSeconds + seconds,
-                    updatedAtMillis = System.currentTimeMillis()
+                    updatedAtMillis = now
                 )
             )
+
+            // 按天聚合同步累计（mediaType 从 media_files 查，聚合行缺失时补建）
+            val mediaFile = mediaFileDao.getByRecordKey(recordKey)
+            val mediaType = mediaFile?.mediaType ?: existing.fileName.substringAfterLast('.', "").let { ext ->
+                if (ext.equals("gif", ignoreCase = true)) "animated_image" else if (ext.equals("mp4", ignoreCase = true) || ext.equals("mov", ignoreCase = true)) "video" else "image"
+            }
+            recordDailyBrowse(recordKey, existing.fileName, mediaType, now) { dayKey, dayStart ->
+                val updated = database.dailyBrowseDao().addBrowseSeconds(dayKey, seconds, now)
+                if (updated == 0) {
+                    database.dailyBrowseDao().upsert(
+                        DailyBrowseEntity(
+                            recordKeyDay = dayKey,
+                            recordKey = recordKey,
+                            fileName = existing.fileName,
+                            mediaType = mediaType,
+                            dayStartMillis = dayStart,
+                            viewCount = 0,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+            }
         }
     }
 

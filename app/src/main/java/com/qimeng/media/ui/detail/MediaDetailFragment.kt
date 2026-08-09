@@ -94,6 +94,8 @@ class MediaDetailFragment : Fragment() {
     private var currentMedia: MediaFileEntity? = null
     private var currentRecordKey: String? = null
     private var enterTimeMillis = 0L
+    /** v1.14：同一次详情打开视频是否已记过播放（预览→播放→退预览→再播放不重复计数） */
+    private var playRecordedForCurrentMedia = false
     private var chromeVisible = true
     // v1.12 删除：tagJob 仅服务于 observeTags 空 collect（collect{} 丢弃全部值），随死代码一并移除
     private var timelineTagJob: Job? = null
@@ -365,6 +367,8 @@ class MediaDetailFragment : Fragment() {
         currentMedia = media
         currentRecordKey = media.recordKey
         enterTimeMillis = System.currentTimeMillis()
+        // v1.14：同一次详情打开视频只计一次播放（预览→播放→退预览→再播放不重复计数）
+        playRecordedForCurrentMedia = false
 
         // 分页加载：接近边界时增量加载新数据
         loadMoreIfNeeded()
@@ -574,6 +578,12 @@ class MediaDetailFragment : Fragment() {
         setChromeVisible(false)
         player.setVideoUri(media.uriString)
         player.startPlayback()
+        // v1.14：视频真正开始播放时记一次播放（修复 playCount 从无写入点，恒为 0 的问题）
+        // 同一次详情打开只计一次：退到预览再播放不重复计数
+        if (!playRecordedForCurrentMedia) {
+            playRecordedForCurrentMedia = true
+            viewModel.recordPlay(media.recordKey, media.fileName)
+        }
     }
 
     private fun stopVideoPlayback() {

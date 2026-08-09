@@ -10,6 +10,7 @@ import com.qimeng.media.data.db.entity.AlbumRuleEntity
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.MediaTagCrossRef
 import com.qimeng.media.data.db.entity.ScanSourceEntity
@@ -154,6 +155,14 @@ class BackupManager(private val context: Context) {
             stats.forEach { database.viewStatsDao().upsert(it) }
             if (stats.isNotEmpty()) count++
 
+            // 7.1 按天浏览聚合（v1.14）：无限历史统计的真相来源，恢复后趋势/窗口排行/沉浸时长全回来
+            val dailyBrowse = importArray(data.optJSONArray("dailyBrowse")) { it.toDailyBrowseEntity() }
+                .filter { it.recordKey in mediaMap }
+            if (dailyBrowse.isNotEmpty()) {
+                dailyBrowse.forEach { database.dailyBrowseDao().upsert(it) }
+                count++
+            }
+
             // 8. history
             val history = importArray(data.optJSONArray("history")) { it.toViewHistoryEntity() }
                 .filter { it.recordKey in mediaMap }
@@ -250,6 +259,7 @@ class BackupManager(private val context: Context) {
                 })
                 put("albumRules", exportArray(db.albumRuleDao().getEnabledRulesByPriority()) { it.toBackupJson() })
                 put("mediaStats", exportArray(db.viewStatsDao().getAllByFileName()) { it.toBackupJson() })
+                put("dailyBrowse", exportArray(db.dailyBrowseDao().getAll()) { it.toBackupJson() })
                 put("history", exportArray(db.viewHistoryDao().getLatest(HISTORY_EXPORT_LIMIT)) { it.toBackupJson() })
                 put("scanSources", exportArray(db.scanSourceDao().getAllSources()) { it.toBackupJson() })
                 put("timelineTags", exportArray(db.timelineTagDao().getAll()) { it.toBackupJson() })
@@ -324,6 +334,14 @@ class BackupManager(private val context: Context) {
         put("viewCount", viewCount); put("playCount", playCount)
         put("totalBrowseSeconds", totalBrowseSeconds)
         put("lastOpenedAtMillis", lastOpenedAtMillis ?: JSONObject.NULL)
+        put("updatedAtMillis", updatedAtMillis)
+    }
+
+    private fun DailyBrowseEntity.toBackupJson() = JSONObject().apply {
+        put("recordKey", recordKey); put("fileName", fileName); put("mediaType", mediaType)
+        put("dayStartMillis", dayStartMillis)
+        put("viewCount", viewCount); put("playCount", playCount)
+        put("totalBrowseSeconds", totalBrowseSeconds)
         put("updatedAtMillis", updatedAtMillis)
     }
 
@@ -417,6 +435,18 @@ class BackupManager(private val context: Context) {
         fileName = optString("fileName", ""),
         mediaType = optString("mediaType", "image"),
         openedAtMillis = optLong("openedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
+    )
+
+    private fun JSONObject.toDailyBrowseEntity() = DailyBrowseEntity(
+        recordKeyDay = optString("recordKey", "") + "@" + optLong("dayStartMillis", 0L),
+        recordKey = optString("recordKey", ""),
+        fileName = optString("fileName", ""),
+        mediaType = optString("mediaType", "image"),
+        dayStartMillis = optLong("dayStartMillis", 0L).coerceAtLeast(0L),
+        viewCount = optInt("viewCount", 0).coerceAtLeast(0),
+        playCount = optInt("playCount", 0).coerceAtLeast(0),
+        totalBrowseSeconds = optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
+        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
     )
 
     private fun JSONObject.toScanSourceEntity() = ScanSourceEntity(

@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import com.qimeng.media.data.db.dao.AlbumRuleDao
 import com.qimeng.media.data.db.dao.AuthorDao
 import com.qimeng.media.data.db.dao.CosWorkDao
+import com.qimeng.media.data.db.dao.DailyBrowseDao
 import com.qimeng.media.data.db.dao.MediaFileDao
 import com.qimeng.media.data.db.dao.ScanSourceDao
 import com.qimeng.media.data.db.dao.SettingDao
@@ -18,6 +19,7 @@ import com.qimeng.media.data.db.entity.AlbumRuleEntity
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.MediaTagCrossRef
 import com.qimeng.media.data.db.entity.ScanSourceEntity
@@ -40,15 +42,17 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
         AuthorMediaCrossRef::class,
         SettingEntity::class,
         ScanSourceEntity::class,
-        CosWorkEntity::class
+        CosWorkEntity::class,
+        DailyBrowseEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun mediaFileDao(): MediaFileDao
     abstract fun viewStatsDao(): ViewStatsDao
     abstract fun viewHistoryDao(): ViewHistoryDao
+    abstract fun dailyBrowseDao(): DailyBrowseDao
     abstract fun tagDao(): TagDao
     abstract fun timelineTagDao(): TimelineTagDao
     abstract fun albumRuleDao(): AlbumRuleDao
@@ -97,13 +101,33 @@ abstract class AppDatabase : RoomDatabase() {
             it.execSQL("CREATE INDEX IF NOT EXISTS index_cos_works_folderUri ON cos_works(folderUri)")
         }
 
+        // v1.14：新增按天浏览聚合表 daily_browse（每文件每天一行，无限保留，
+        // 统计页趋势/窗口排行/沉浸时长的唯一数据来源）。仅建新表，无数据迁移。
+        private val MIGRATION_5_6 = androidx.room.migration.Migration(5, 6) {
+            it.execSQL(
+                "CREATE TABLE IF NOT EXISTS daily_browse (" +
+                    "recordKeyDay TEXT NOT NULL, " +
+                    "recordKey TEXT NOT NULL, " +
+                    "fileName TEXT NOT NULL, " +
+                    "mediaType TEXT NOT NULL, " +
+                    "dayStartMillis INTEGER NOT NULL, " +
+                    "viewCount INTEGER NOT NULL, " +
+                    "playCount INTEGER NOT NULL, " +
+                    "totalBrowseSeconds INTEGER NOT NULL, " +
+                    "updatedAtMillis INTEGER NOT NULL, " +
+                    "PRIMARY KEY(recordKeyDay))"
+            )
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_daily_browse_dayStartMillis ON daily_browse(dayStartMillis)")
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_daily_browse_recordKey ON daily_browse(recordKey)")
+        }
+
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .build().also { instance = it }
         }
     }

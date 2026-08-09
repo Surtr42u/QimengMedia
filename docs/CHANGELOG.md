@@ -10,6 +10,38 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 数据统计页重构 + 播放计数修复 + 按天浏览聚合（v1.14，2026-08-09）
+
+执行 AI：deepseek-v4-flash
+
+用户要求数据 tab 从"盘点库存"改为"指导喜好"（回答"我常看什么"），经多轮讨论定稿：上半部数字卡微调、分布统计简化、删除库存排行、新增常看排行、时间范围全局联动；同时修复 playCount 从无写入点恒为 0 的问题；引入按天浏览聚合表作为统计真相来源。
+
+| 类别 | 改动 |
+|---|---|
+| 数据层 | 新增 `daily_browse` 按天浏览聚合表（每文件每天一行：次数/播放/时长，**无限保留**，统计页趋势/窗口排行/沉浸时长的唯一真相来源）；数据库 v5→v6 迁移建表；`recordView`/`updateBrowseSeconds`/新增 `recordPlay` 均同步写聚合（原子 +1/追加，miss 时 upsert 建行）；级联删除纳入 `deleteMediaAndRefs`/`deleteCosScanSource` |
+| playCount 修复 | 全项目原无 `recordPlay` 写入点（图片/视频统一只记 viewCount，playCount 仅备份导入恢复）→ 新增 Repository `recordPlay` + DAO 原子 +1 + ViewModel `recordPlay` + `MediaDetailFragment.startVideoPlayback` 上报；同一次详情打开只计一次（预览→播放→退预览→再播放不重复，字段 `playRecordedForCurrentMedia`） |
+| 主页面 | 时间胶囊**全局联动**（数字卡浏览/播放/时长、趋势、常看排行全随 7天/30天/全部 过滤，总文件数/总占用为库存静态值）；「平均浏览深度」改名「平均浏览次数」；删除库存环形图（分布卡改纯文字小入口）+ 作者/标签文件数 Top5 卡；新增「常看文件」卡（文件名+次数 Top3 文本列表）与「常看作者与标签」卡（窗口浏览聚合混合 Top3）；浏览趋势卡可点击进分类型趋势 |
+| 详情页 | StatsDetailFragment 重构为四种模式：`MODE_TYPE_TREND`（图片/视频/动图趋势 + 常规 vs COS 来源趋势，均基于聚合表）、`MODE_FAVORITES`（常看文件，按热度/时长排序切换）、`MODE_AUTHORS`（常看作者+标签浏览排行，**标签条目可点击跳搜索页**，修复原 id=null 不可跳转）、`MODE_DISTRIBUTION`（原分布对比 + 窗口浏览维度）；删除旧 `MODE_FILES`/`MODE_TAGS` 模式；标题带时间范围后缀 |
+| 图表组件 | 删除无使用者的 `BarChartView`/`PieChartView`/`BrowseStatsChartView`（分布环形图与柱状排行卡移除后零引用）；`StatsFormatHelper` 新增按天聚合计算（groupDailyByDay/Week/ByType/aggregateDailyByType/BySource/cutoffForRange/typeDisplayName） |
+| 备份 | `qimeng_backup.json` 16→17 段，新增 `dailyBrowse` 段（备份聚合而非明细；恢复后窗口统计与备份时一致） |
+
+**验证**：`:app:assembleDebug` 构建通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `data/db/entity/DailyBrowseEntity.kt` | 新增聚合实体 |
+| `data/db/dao/DailyBrowseDao.kt` | 新增聚合 DAO（observeSince/getAll/incrementViewCount/incrementPlayCount/addBrowseSeconds/upsert/deleteByRecordKeys/clearAll） |
+| `data/db/AppDatabase.kt` | 注册实体+DAO，v5→v6 迁移建表 |
+| `data/repository/LocalMediaRepository.kt` + `DefaultLocalMediaRepository.kt` | 新增 `recordPlay`/`observeDailyBrowse`；`recordView`/`updateBrowseSeconds` 同步写聚合；级联删除聚合 |
+| `ui/library/MediaLibraryViewModel.kt` | 新增 `dailyBrowse` Flow + `recordPlay` |
+| `ui/detail/MediaDetailFragment.kt` | `startVideoPlayback` 上报播放（同次详情只计一次） |
+| `ui/stats/DataStatsFragment.kt` | 全局联动 + 常看文件/常看作者标签卡 + 分布小入口 |
+| `ui/stats/StatsDetailFragment.kt` | 四种新模式，删除旧 Modes，标签可跳转 |
+| `ui/stats/StatsFormatHelper.kt` | 按天聚合计算扩展 |
+| `backup/BackupManager.kt` | dailyBrowse 段导出/导入 |
+| `ui/widget/BarChartView.kt`/`PieChartView.kt`/`BrowseStatsChartView.kt` | 删除（无使用者） |
+| `res/layout/fragment_data_stats.xml` | 新卡片结构 |
+
 ## 备份 v2.0 单文件全量重构（2026-08-09）
 
 执行 AI：deepseek-v4-flash

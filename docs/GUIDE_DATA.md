@@ -33,6 +33,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 - `MediaFileEntity`：媒体索引。
 - `ViewStatsEntity`：播放/查看次数和浏览时长。
 - `ViewHistoryEntity`：浏览历史，最多 500 条。
+- `DailyBrowseEntity`：按天浏览聚合（每文件每天一行：次数+播放+时长，**无限保留**，v1.14 新增；统计页趋势/窗口排行/沉浸时长的唯一数据来源，与 view_history 明细并存）。
 - `TagEntity`：全局标签。
 - `MediaTagCrossRef`：文件与标签关联。
 - `TimelineTagEntity`：视频时间轴标签（recordKey + timeMillis + name，按视频内时间点标记，DAO 已有 observeForVideo/upsert/deleteById）。**与文件标签完全独立**：不同实体、不同表、不同 DAO、不同备份 JSON（`tags.json` vs `timeline_tags.json`），无外键或数据交叉；文件标签是整个文件级别，时间轴标签是视频内某个时间点级别。
@@ -69,6 +70,8 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 | `view_stats` | `lastOpenedAtMillis` | 按最近浏览时间排序 |
 | `view_history` | `openedAtMillis` | 按浏览时间排序 |
 | `view_history` | `mediaType` | 按类型过滤 |
+| `daily_browse` | `dayStartMillis` | 按天分桶查询（趋势/窗口聚合） |
+| `daily_browse` | `recordKey` | 按文件查询聚合（级联清理） |
 | `timeline_tags` | `recordKey` | 按视频查询时间轴标签 |
 | `timeline_tags` | `fileName` | 按文件名查询时间轴标签 |
 
@@ -83,13 +86,15 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 | 3 | `media_files.uriString` 索引（加速 LIKE 前缀查询） |
 | 4 | `media_files.sourceUri` 归属列（扫描源 tree URI，根治 URI 前缀跨命名空间匹配失败的误删问题） |
 | 5 | `cos_works.sourceUri` 归属列；唯一约束从 `(authorName, workName)` 改为 `(sourceUri, authorName, workName)`，支持多 COS 扫描源共存 |
+| 6 | 新增 `daily_browse` 按天浏览聚合表（v1.14） |
 
 ## 统计规则
 
 - 图片进入详情页后查看次数 +1，同一次打开只计一次。
-- 视频进入详情页后点击播放按钮播放次数 +1，同一次打开只计一次。
+- 视频进入详情页后点击播放按钮播放次数 +1，同一次打开只计一次（v1.14 补真实写入点：`startVideoPlayback` 时经 ViewModel.recordPlay → repository.recordPlay → view_stats.playCount + daily_browse.playCount 原子 +1；修复旧版 playCount 从无写入点恒为 0 的问题）。
 - 浏览时长记录详情页停留秒数。
 - 历史记录同一文件只保留最新一条，上限 500 条。
+- **按天浏览聚合（v1.14）**：每次浏览/播放/时长更新同步写 `daily_browse`（每文件每天一行，`recordKeyDay = recordKey@当天零点毫秒`），无限保留不做裁剪；是统计页趋势图、窗口内排行、沉浸时长的唯一数据来源。浏览历史明细（view_history）仅作最近轻量展示，不入备份。
 
 ## 标签数据规则
 
@@ -137,7 +142,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 
 备份数据以 JSON 写入用户指定的 SAF 目录 `绮梦影库/` 根目录，**只有一个文件 `qimeng_backup.json`**（不再拆 10 分文件）。
 
-### 文件与数据段（共 16 段）
+### 文件与数据段（共 17 段）
 
 | 数据段 | 对应实体/存储 |
 |---|---|
@@ -149,6 +154,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 | `mediaTagRefs` | `MediaTagCrossRef` + `TagEntity`（含 tagName 冗余） |
 | `albumRules` | `AlbumRuleEntity` |
 | `mediaStats` | `ViewStatsEntity` |
+| `dailyBrowse` | `DailyBrowseEntity`（v1.14 新增，按天聚合段：recordKey/fileName/mediaType/dayStartMillis/viewCount/playCount/totalBrowseSeconds/updatedAtMillis） |
 | `history` | `ViewHistoryEntity` |
 | `scanSources` | `ScanSourceEntity` |
 | `timelineTags` | `TimelineTagEntity` |
@@ -244,7 +250,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 
 ## 备份数据段说明（v2.0）
 
-备份（`qimeng_backup.json`）的 data 区域共 16 个数据段，完整字段定义见 `docs/DATA_MIGRATION_SPEC.md`，读写流程见 `docs/GUIDE_BACKUP.md`「导入导出流程」。
+备份（`qimeng_backup.json`）的 data 区域共 17 个数据段，完整字段定义见 `docs/DATA_MIGRATION_SPEC.md`，读写流程见 `docs/GUIDE_BACKUP.md`「导入导出流程」。
 
 ### 旧版 personal_prefs.json 已移除
 
@@ -267,10 +273,10 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - 备份保存位置属于 App 偏好，使用 `settings` 表保存目录 Uri 和显示名。
 - 扫描源使用 `ScanSourceEntity` 保存多个 SAF 目录；重新扫描时合并所有非备份扫描源后重建 `media_files` 索引。
 - 删除扫描源时，自动清理不属于任何剩余扫描源的媒体文件（通过 URI 前缀匹配判断归属），同时级联删除对应的 `author_media_cross_refs`、`media_tag_cross_refs`，并清理无关联文件的孤立作者。
-- 删除 COS 扫描源时（`deleteCosScanSource`），在事务中级联删除 `author_media_cross_refs`、`media_tag_cross_refs`、`view_stats`、`view_history`、`timeline_tags`、`media_files`、`cos_works`，清理孤立 COS 作者；事务外清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存），与 `deleteMediaAndRefs` 级联范围一致。
+- 删除 COS 扫描源时（`deleteCosScanSource`），在事务中级联删除 `author_media_cross_refs`、`media_tag_cross_refs`、`view_stats`、`view_history`、`daily_browse`、`timeline_tags`、`media_files`、`cos_works`，清理孤立 COS 作者；事务外清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存），与 `deleteMediaAndRefs` 级联范围一致。
 - **启动时孤立文件清理**：`ScanUseCase.cleanupOrphanFiles()` 在 ViewModel 初始化时自动执行，检测并删除没有对应扫描源的残留媒体文件（包括非COS和COS），修复历史遗留的孤立数据问题；同时调用 `cleanupStaleRefs()` 清理 view_stats/view_history/timeline_tags/SharedPreferences 中引用了已删除文件的残留数据。
 - **启动时一次性重建作者关联**：`AuthorImportUseCase.rebuildAssociationsOnceIfNeeded()` 在 ViewModel 初始化时自动执行，用 settings flag `author_rebuild_v2_done` 保证**仅升级后首次启动执行一次**，调用 `rebuildAssociationsFromBlocks` 从全部已导入 TXT 重建关联，修复 v2 统一重建之前的版本遗留的脏数据（跨 TXT 同名作者关联被单 TXT 导入覆盖清空为 0）。重建失败不标记 flag，下次启动自动重试。这样用户覆盖安装新版后首次打开即自动修复，无需卸载重装或手动重新扫描。
-- `deleteMediaAndRefs(recordKeys)` 在事务中依次删除作者关联、标签关联、观看统计、浏览历史、时间轴标签、媒体文件，保证数据一致性；**v1.12 起按 500 分块执行**（SQLite 绑定参数上限旧设备为 999，删除数千文件的扫描源时单条 `DELETE IN(:大列表)` 会抛 SQLiteException 导致整体回滚）；事务外同步清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存）。
+- `deleteMediaAndRefs(recordKeys)` 在事务中依次删除作者关联、标签关联、观看统计、浏览历史、按天浏览聚合、时间轴标签、媒体文件，保证数据一致性；**v1.12 起按 500 分块执行**（SQLite 绑定参数上限旧设备为 999，删除数千文件的扫描源时单条 `DELETE IN(:大列表)` 会抛 SQLiteException 导致整体回滚）；事务外同步清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存）。
 - `deleteOrphanAuthors()` 删除 `author_media_cross_refs` 中无记录的作者，防止作者列表出现空壳条目。
 - 轻量查询方法：`MediaFileDao.getNonCosKeysAndFileNames()` 返回 `NonCosKeyFileName(recordKey, fileName)`，用于作者导入匹配（`importAuthorsFromText`），避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getNonCosKeysAndFileNames()`。
 - `MediaFileDao.getCosKeysAndUris()` 返回 `KeyAndUri(recordKey, uriString)`，用于 `cleanupOrphanFiles()` 中检测 COS 孤立文件，避免全量加载 `MediaFileEntity`；Repository 接口和实现均已提供对应方法 `getCosKeysAndUris()`。

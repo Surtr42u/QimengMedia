@@ -238,33 +238,9 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 浏览趋势折线图卡片 -->
+        <!-- 浏览趋势折线图卡片（点击进入分类型趋势详情） -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/bg_stat_card"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="浏览趋势"
-                android:textColor="?attr/qmColorTextPrimary"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <com.qimeng.media.ui.widget.LineChartView
-                android:id="@+id/trendChart"
-                android:layout_width="match_parent"
-                android:layout_height="180dp"
-                android:layout_marginTop="8dp" />
-        </LinearLayout>
-
-        <!-- 类型 + 来源分布合并卡片（两个环形图横向排列，点击进入分布详情） -->
-        <LinearLayout
-            android:id="@+id/distributionCard"
+            android:id="@+id/trendCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -284,6 +260,48 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:text="浏览趋势"
+                    android:textColor="?attr/qmColorTextPrimary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="分类型趋势 ›"
+                    android:textColor="?attr/qmColorPrimary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.qimeng.media.ui.widget.LineChartView
+                android:id="@+id/trendChart"
+                android:layout_width="match_parent"
+                android:layout_height="180dp"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
+        <!-- 分布统计小入口卡片（纯文字，点击进入原分布详情页） -->
+        <LinearLayout
+            android:id="@+id/distributionCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_stat_card"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="分布统计"
                     android:textColor="?attr/qmColorTextPrimary"
                     android:textSize="14sp"
@@ -292,60 +310,21 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="查看详情 ›"
-                    android:textColor="?attr/qmColorPrimary"
+                    android:layout_marginTop="2dp"
+                    android:text="类型与来源的库存构成"
+                    android:textColor="?attr/qmColorTextSecondary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:text="类型分布"
-                        android:textColor="?attr/qmColorTextSecondary"
-                        android:textSize="12sp" />
-
-                    <com.qimeng.media.ui.widget.PieChartView
-                        android:id="@+id/typeDistributionChart"
-                        android:layout_width="match_parent"
-                        android:layout_height="220dp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:text="来源分布"
-                        android:textColor="?attr/qmColorTextSecondary"
-                        android:textSize="12sp" />
-
-                    <com.qimeng.media.ui.widget.PieChartView
-                        android:id="@+id/sourceDistributionChart"
-                        android:layout_width="match_parent"
-                        android:layout_height="220dp" />
-                </LinearLayout>
-            </LinearLayout>
+                android:text="查看详情 ›"
+                android:textColor="?attr/qmColorPrimary"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- 热门文件 Top 5 柱状图卡片（点击弹出详细排行榜） -->
+        <!-- 常看文件卡片（文件名 + 浏览次数紧凑列表，点击进入常看详情） -->
         <LinearLayout
             android:id="@+id/topFilesCard"
             android:layout_width="match_parent"
@@ -367,7 +346,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="热门文件 Top 5"
+                    android:text="常看文件"
                     android:textColor="?attr/qmColorTextPrimary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -380,14 +359,15 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <com.qimeng.media.ui.widget.BarChartView
-                android:id="@+id/topFilesChart"
+            <LinearLayout
+                android:id="@+id/topFilesList"
                 android:layout_width="match_parent"
-                android:layout_height="200dp"
-                android:layout_marginTop="8dp" />
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
         </LinearLayout>
 
-        <!-- 作者文件数 Top 5 横向柱条卡片（点击弹出详细排行榜） -->
+        <!-- 常看作者与标签卡片（作者/标签混合 3 行，点击进入常看详情） -->
         <LinearLayout
             android:id="@+id/topAuthorsCard"
             android:layout_width="match_parent"
@@ -409,7 +389,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="作者文件数 Top 5"
+                    android:text="常看作者与标签"
                     android:textColor="?attr/qmColorTextPrimary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -421,54 +401,13 @@
                     android:textColor="?attr/qmColorPrimary"
                     android:textSize="12sp" />
             </LinearLayout>
-
-            <com.qimeng.media.ui.widget.BrowseStatsChartView
-                android:id="@+id/topAuthorsChart"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp" />
-        </LinearLayout>
-
-        <!-- 标签统计 Top 5 横向柱条卡片（点击弹出详细排行榜） -->
-        <LinearLayout
-            android:id="@+id/topTagsCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/bg_stat_card"
-            android:clickable="true"
-            android:focusable="true"
-            android:orientation="vertical"
-            android:padding="12dp">
 
             <LinearLayout
+                android:id="@+id/topAuthorsList"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="标签文件数 Top 5"
-                    android:textColor="?attr/qmColorTextPrimary"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="查看全部 ›"
-                    android:textColor="?attr/qmColorPrimary"
-                    android:textSize="12sp" />
-            </LinearLayout>
-
-            <com.qimeng.media.ui.widget.BrowseStatsChartView
-                android:id="@+id/topTagsChart"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp" />
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
         </LinearLayout>
 
     </LinearLayout>

@@ -1,7 +1,6 @@
 package com.qimeng.media.ui.stats
 
 import android.os.Bundle
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,6 +16,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.qimeng.media.MainActivity
 import com.qimeng.media.R
+import com.qimeng.media.data.db.entity.DailyBrowseEntity
+import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.databinding.FragmentStatsDetailBinding
 import com.qimeng.media.resolveThemeColor
@@ -28,19 +29,21 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * 统计详情页（v1.7 新增）。
+ * 统计详情页（v1.7 新增，v1.14 重构）。
  *
  * 点击数据统计页的卡片后进入的全新详情界面，包含：
  * - 顶部返回栏 + 标题
  * - 统计摘要卡片（总和/均值/峰值等，根据模式动态生成）
- * - 辅助图表（趋势折线图或柱状图，根据模式动态生成）
+ * - 辅助图表（趋势折线图，根据模式动态生成）
  * - 完整 Top 20 排行榜列表（可点击跳转文件详情/作者文件页）
  *
  * 支持四种模式：
- * - [MODE_FILES]：热门文件详情（摘要 + 趋势 + Top 20）
- * - [MODE_AUTHORS]：作者详情（摘要 + Top 20）
- * - [MODE_TAGS]：标签详情（摘要 + Top 20）
- * - [MODE_DISTRIBUTION]：分布统计详情（类型/来源汇总 + 文件列表）
+ * - [MODE_TYPE_TREND]：分类型浏览趋势（图片/视频/动图各自趋势 + 本地 vs COS 来源趋势）
+ * - [MODE_FAVORITES]：常看文件详情（热门/沉浸最长/反复回看/新晋热门）
+ * - [MODE_AUTHORS]：常看作者与标签详情（作者/标签浏览排行，标签条目可点击跳文件列表）
+ * - [MODE_DISTRIBUTION]：分布统计详情（类型/来源库存 + 窗口浏览对比）
+ *
+ * 全部模式随时间范围（7天/30天/全部）联动：窗口内统计基于按天浏览聚合。
  */
 class StatsDetailFragment : Fragment() {
     private var _binding: FragmentStatsDetailBinding? = null
@@ -53,16 +56,14 @@ class StatsDetailFragment : Fragment() {
         RankListAdapter { item -> item.id?.let { handleItemClick(it) } }
     }
 
-    private var mode: String = MODE_FILES
+    private var mode: String = MODE_TYPE_TREND
     private var timeRangeName: String = "DAYS_7"
-    /** 文件模式排序维度：true=按热度(viewCount+playCount)，false=按浏览时长 */
-    private var filesSortByHeat = true
-    /** 缓存文件模式最新数据，用于排序切换时重新渲染 */
-    private var cachedFilesStats: List<com.qimeng.media.data.db.entity.ViewStatsEntity> = emptyList()
+    private var cachedDaily: List<DailyBrowseEntity> = emptyList()
+    private var cachedCosKeys: Set<String> = emptySet()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        mode = arguments?.getString(ARG_MODE) ?: MODE_FILES
+        mode = arguments?.getString(ARG_MODE) ?: MODE_TYPE_TREND
         timeRangeName = arguments?.getString(ARG_TIME_RANGE) ?: "DAYS_7"
     }
 
@@ -91,126 +92,236 @@ class StatsDetailFragment : Fragment() {
     private fun observeData() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.dailyBrowse.collect { daily ->
+                        cachedDaily = daily
+                        renderByMode()
+                    }
+                }
+                launch {
+                    viewModel.cosMedia.collect { media ->
+                        cachedCosKeys = media.map { it.recordKey }.toSet()
+                        renderByMode()
+                    }
+                }
                 when (mode) {
-                    MODE_FILES -> observeFilesMode()
-                    MODE_AUTHORS -> observeAuthorsMode()
-                    MODE_TAGS -> observeTagsMode()
+                    MODE_TYPE_TREND -> observeTypeTrendMode()
+                    MODE_FAVORITES -> observeFavoritesMode()
+                    MODE_AUTHORS -> observeAuthorsTagsMode()
                     MODE_DISTRIBUTION -> observeDistributionMode()
                 }
             }
         }
     }
 
-    // ==================== 文件模式 ====================
-
-    private fun CoroutineScope.observeFilesMode() {
-        binding.titleText.text = "文件浏览排行"
-        binding.listTitleText.text = "完整排行榜"
-        // 文件模式：显示排行榜，隐藏分布对比，启用排序切换
-        binding.rankListContainer.visibility = android.view.View.VISIBLE
-        binding.distributionContainer.visibility = android.view.View.GONE
-        binding.sortToggleText.visibility = android.view.View.VISIBLE
-        setupFilesSortToggle()
-
-        launch {
-            viewModel.allStats.collect { stats ->
-                cachedFilesStats = stats
-                renderFilesRanking(stats)
-            }
-        }
-
-        launch {
-            viewModel.history.collect { history ->
-                renderTrendChart(history)
-            }
+    /** 数据流就绪后按当前模式渲染（daily/stats 任一变化即重渲染） */
+    private fun renderByMode() {
+        when (mode) {
+            MODE_TYPE_TREND -> renderTypeTrend()
+            MODE_FAVORITES -> renderFavorites()
+            MODE_AUTHORS -> renderAuthorsTags()
+            MODE_DISTRIBUTION -> renderDistribution()
         }
     }
 
-    /** 设置文件模式排序切换胶囊 */
+    /** 窗口内浏览聚合（按时间范围过滤） */
+    private fun windowDaily(): List<DailyBrowseEntity> {
+        val cutoff = StatsFormatHelper.cutoffForRange(timeRangeName)
+        return if (timeRangeName == "ALL") cachedDaily else cachedDaily.filter { it.dayStartMillis >= cutoff }
+    }
+
+    private val rangeTitleSuffix: String
+        get() = when (timeRangeName) {
+            "DAYS_7" -> " · 近7天"
+            "DAYS_30" -> " · 近30天"
+            else -> " · 全部"
+        }
+
+    // ==================== 分类型浏览趋势模式 ====================
+
+    private fun CoroutineScope.observeTypeTrendMode() {
+        binding.titleText.text = "类型浏览趋势" + rangeTitleSuffix
+        binding.listTitleText.text = "类型趋势"
+        binding.rankListContainer.visibility = View.VISIBLE
+        binding.distributionContainer.visibility = View.GONE
+        binding.sortToggleText.visibility = View.GONE
+        binding.listSubtitleText.text = "图片 / 视频 / 动图各自浏览趋势"
+    }
+
+    /** 渲染分类型趋势：3 张折线图（图片/视频/动图）+ 常规 vs COS 来源趋势 */
+    private fun renderTypeTrend() {
+        val window = windowDaily()
+        binding.chartContainer.removeAllViews()
+        if (window.isEmpty()) return
+
+        // 按类型绘制趋势（基于聚合表，7天/30天按天、全部按周）
+        val typeRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 12f.dp(requireContext()).toInt() }
+        }
+        listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE).forEach { type ->
+            val points = when (timeRangeName) {
+                "DAYS_7" -> StatsFormatHelper.groupDailyByType(window, type, 7)
+                "DAYS_30" -> StatsFormatHelper.groupDailyByType(window, type, 30)
+                else -> StatsFormatHelper.groupDailyByTypeWeek(window, type)
+            }
+            val card = createTrendCard(StatsFormatHelper.typeDisplayName(type), points, 150)
+            typeRow.addView(card, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                weight = 1f
+                if (type == MediaType.IMAGE) marginEnd = 6f.dp(requireContext()).toInt()
+                if (type == MediaType.VIDEO) { marginStart = 3f.dp(requireContext()).toInt(); marginEnd = 3f.dp(requireContext()).toInt() }
+                if (type == MediaType.ANIMATED_IMAGE) marginStart = 6f.dp(requireContext()).toInt()
+            })
+        }
+        binding.chartContainer.addView(typeRow)
+
+        // 来源趋势（常规 vs COS）
+        val normalPoints = when (timeRangeName) {
+            "DAYS_7" -> groupDailyByCos(window, cachedCosKeys, false, 7)
+            "DAYS_30" -> groupDailyByCos(window, cachedCosKeys, false, 30)
+            else -> groupDailyByCosWeek(window, cachedCosKeys, false)
+        }
+        val cosPoints = when (timeRangeName) {
+            "DAYS_7" -> groupDailyByCos(window, cachedCosKeys, true, 7)
+            "DAYS_30" -> groupDailyByCos(window, cachedCosKeys, true, 30)
+            else -> groupDailyByCosWeek(window, cachedCosKeys, true)
+        }
+        val sourceRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 12f.dp(requireContext()).toInt() }
+        }
+        sourceRow.addView(createTrendCard("常规浏览趋势", normalPoints, 140))
+        sourceRow.addView(createTrendCard("COS 浏览趋势", cosPoints, 140))
+        binding.chartContainer.addView(sourceRow)
+    }
+
+    /** 来源（常规/COS）趋势：按天对齐的聚合点 */
+    private fun groupDailyByCos(
+        rows: List<DailyBrowseEntity>,
+        cosKeys: Set<String>,
+        isCos: Boolean,
+        days: Int
+    ): List<LineChartView.Point> {
+        val filtered = rows.filter { (it.recordKey in cosKeys) == isCos }
+        return StatsFormatHelper.groupDailyByDay(filtered, days)
+    }
+
+    private fun groupDailyByCosWeek(
+        rows: List<DailyBrowseEntity>,
+        cosKeys: Set<String>,
+        isCos: Boolean
+    ): List<LineChartView.Point> {
+        val filtered = rows.filter { (it.recordKey in cosKeys) == isCos }
+        return StatsFormatHelper.groupDailyByWeek(filtered)
+    }
+
+    private fun createTrendCard(title: String, points: List<LineChartView.Point>, height: Int): LinearLayout {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
+            setPadding(12f.dp(requireContext()).toInt())
+            val titleView = TextView(requireContext()).apply {
+                text = title
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
+                textSize = 13f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            val chart = LineChartView(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    (height.toFloat()).dp(requireContext()).toInt()
+                ).apply { topMargin = 8f.dp(requireContext()).toInt() }
+            }
+            chart.setData(points)
+            addView(titleView)
+            addView(chart)
+        }
+    }
+
+    // ==================== 常看文件模式 ====================
+
+    private fun CoroutineScope.observeFavoritesMode() {
+        binding.titleText.text = "常看文件" + rangeTitleSuffix
+        binding.listTitleText.text = "常看排行"
+        binding.rankListContainer.visibility = View.VISIBLE
+        binding.distributionContainer.visibility = View.GONE
+        binding.sortToggleText.visibility = View.VISIBLE
+        setupFilesSortToggle()
+    }
+
+    /** 文件排序切换胶囊：按热度(浏览+播放) / 按时长(沉浸) */
+    private var filesSortByHeat = true
     private fun setupFilesSortToggle() {
         binding.sortToggleText.text = if (filesSortByHeat) "按热度" else "按时长"
         binding.sortToggleText.setOnClickListener {
             filesSortByHeat = !filesSortByHeat
             binding.sortToggleText.text = if (filesSortByHeat) "按热度" else "按时长"
-            renderFilesRanking(cachedFilesStats)
+            renderFavorites()
         }
     }
 
-    /** 渲染文件排行榜（根据当前排序维度） */
-    private fun renderFilesRanking(stats: List<com.qimeng.media.data.db.entity.ViewStatsEntity>) {
-        val sorted = if (filesSortByHeat) {
-            stats.filter { it.viewCount + it.playCount > 0 }
-                .sortedByDescending { it.viewCount + it.playCount }
-        } else {
-            stats.filter { it.totalBrowseSeconds > 0 }
-                .sortedByDescending { it.totalBrowseSeconds }
-        }
+    /** 渲染常看文件：摘要 + 洞察 + 排行（按热度/时长） */
+    private fun renderFavorites() {
+        val window = windowDaily()
+        val byKey = window
+            .filter { it.viewCount + it.playCount > 0 || it.totalBrowseSeconds > 0 }
+            .groupBy { it.recordKey }
+        val totalViews = window.sumOf { it.viewCount + it.playCount }
+        val totalSeconds = window.sumOf { it.totalBrowseSeconds }
 
-        // 统计摘要
-        val totalViews = stats.sumOf { it.viewCount }
-        val totalPlays = stats.sumOf { it.playCount }
-        val filesWithViews = stats.count { it.viewCount + it.playCount > 0 }
-        val totalInteractions = totalViews + totalPlays
-        val avgDepth = if (filesWithViews > 0)
-            totalInteractions.toFloat() / filesWithViews else 0f
-        val topFile = sorted.firstOrNull()
+        // 排行数据（key → (文件名, 次数, 时长)）
+        val rankEntries = byKey.map { (key, list) ->
+            Triple(
+                key,
+                list.first().fileName,
+                list.sumOf { it.viewCount + it.playCount } to list.sumOf { it.totalBrowseSeconds }
+            )
+        }
+        val sorted = if (filesSortByHeat) {
+            rankEntries.sortedByDescending { it.third.first }
+        } else {
+            rankEntries.filter { it.third.second > 0 }.sortedByDescending { it.third.second }
+        }
+        val filesWithViews = byKey.size
+        val avgViews = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
+
         renderSummary(
             listOf(
                 SummaryItem("总浏览", StatsFormatHelper.formatNumber(totalViews)),
-                SummaryItem("总播放", StatsFormatHelper.formatNumber(totalPlays)),
-                SummaryItem("有浏览文件", StatsFormatHelper.formatNumber(filesWithViews)),
-                SummaryItem("平均浏览深度", String.format(java.util.Locale.US, "%.1f", avgDepth))
+                SummaryItem("浏览时长", formatDuration(totalSeconds)),
+                SummaryItem("常看文件", StatsFormatHelper.formatNumber(filesWithViews)),
+                SummaryItem("平均浏览次数", String.format(Locale.US, "%.1f", avgViews))
             )
         )
+        renderInsights(
+            listOf("近${rangeLabel()}共浏览 $totalViews 次，停留 ${formatDuration(totalSeconds)}")
+        )
 
-        // 数据洞察
-        val insights = mutableListOf<String>()
-        if (topFile != null) {
-            val topCount = if (filesSortByHeat) topFile.viewCount + topFile.playCount else topFile.totalBrowseSeconds.toInt()
-            val topLabel = if (filesSortByHeat) "总浏览量" else "总浏览时长"
-            val topValue = if (filesSortByHeat) "$topCount 次" else formatDuration(topFile.totalBrowseSeconds)
-            val share = if (totalInteractions > 0 && filesSortByHeat) topCount * 100 / totalInteractions else 0
-            insights.add("最热门文件「${topFile.fileName}」${topLabel} $topValue" + (if (filesSortByHeat && totalInteractions > 0) "，占 $share%" else ""))
-        }
-        if (sorted.size >= 2 && filesSortByHeat) {
-            val top1 = sorted[0].viewCount + sorted[0].playCount
-            val top2 = sorted[1].viewCount + sorted[1].playCount
-            if (top2 > 0) {
-                val ratio = top1.toFloat() / top2
-                insights.add("第一名热度是第二名的 ${String.format(java.util.Locale.US, "%.1f", ratio)} 倍")
-            }
-        }
-        insights.add("共 ${stats.size} 个文件，其中 $filesWithViews 个有浏览记录（占 ${if (stats.isNotEmpty()) filesWithViews * 100 / stats.size else 0}%）")
-        renderInsights(insights)
-
-        // 排行榜
-        binding.listSubtitleText.text = if (filesSortByHeat) {
-            "共 ${sorted.size} 个有浏览记录的文件"
-        } else {
-            "共 ${sorted.size} 个有浏览时长记录的文件"
-        }
-        val maxValue = if (filesSortByHeat) {
-            sorted.firstOrNull()?.let { it.viewCount + it.playCount } ?: 0
-        } else {
-            sorted.firstOrNull()?.totalBrowseSeconds?.toInt() ?: 0
-        }
-        val items = sorted.take(20).map { entity ->
+        val maxValue = sorted.firstOrNull()?.let { if (filesSortByHeat) it.third.first else it.third.second.toInt() } ?: 0
+        binding.listSubtitleText.text = "共 $filesWithViews 个有浏览记录的文件"
+        val items = sorted.take(20).map { (key, name, counts) ->
             if (filesSortByHeat) {
                 RankListAdapter.RankItem(
-                    id = entity.recordKey,
-                    title = entity.fileName,
-                    subtitle = "浏览 ${entity.viewCount} · 播放 ${entity.playCount}",
-                    value = entity.viewCount + entity.playCount,
-                    valueLabel = "${entity.viewCount + entity.playCount} 次",
+                    id = key,
+                    title = name,
+                    subtitle = "浏览 ${counts.first} 次 · 停留 ${formatDuration(counts.second)}",
+                    value = counts.first,
+                    valueLabel = "${counts.first} 次",
                     maxValue = maxValue
                 )
             } else {
                 RankListAdapter.RankItem(
-                    id = entity.recordKey,
-                    title = entity.fileName,
-                    subtitle = "浏览 ${entity.viewCount} · 播放 ${entity.playCount}",
-                    value = entity.totalBrowseSeconds.toInt(),
-                    valueLabel = formatDuration(entity.totalBrowseSeconds),
+                    id = key,
+                    title = name,
+                    subtitle = "浏览 ${counts.first} 次",
+                    value = counts.second.toInt(),
+                    valueLabel = formatDuration(counts.second),
                     maxValue = maxValue
                 )
             }
@@ -218,314 +329,320 @@ class StatsDetailFragment : Fragment() {
         adapter.submitList(items)
     }
 
-    // ==================== 作者模式 ====================
+    private fun rangeLabel(): String = when (timeRangeName) {
+        "DAYS_7" -> "7天"
+        "DAYS_30" -> "30天"
+        else -> "全部时间"
+    }
 
-    private fun CoroutineScope.observeAuthorsMode() {
-        binding.titleText.text = "作者文件数排行"
-        binding.listTitleText.text = "完整排行榜"
-        // 作者模式：显示排行榜，隐藏分布对比和排序切换
-        binding.rankListContainer.visibility = android.view.View.VISIBLE
-        binding.distributionContainer.visibility = android.view.View.GONE
-        binding.sortToggleText.visibility = android.view.View.GONE
+    // ==================== 常看作者与标签模式 ====================
 
+    private fun CoroutineScope.observeAuthorsTagsMode() {
+        binding.titleText.text = "常看作者与标签" + rangeTitleSuffix
+        binding.listTitleText.text = "常看排行"
+        binding.rankListContainer.visibility = View.VISIBLE
+        binding.distributionContainer.visibility = View.GONE
+        binding.sortToggleText.visibility = View.GONE
+        binding.listSubtitleText.text = "按浏览聚合的作者与标签"
         launch {
-            combine(viewModel.authors, viewModel.authorFileCounts) { authors, counts ->
-                val authorMap = authors.associateBy { it.authorId }
-                counts.mapNotNull { afc ->
-                    authorMap[afc.authorId]?.let { author ->
-                        Triple(author.authorId, author.displayName, afc.fileCount)
-                    }
-                }.sortedByDescending { it.third }
-            }.collect { authorData ->
-                // 统计摘要
-                val totalAuthors = authorData.size
-                val totalFiles = authorData.sumOf { it.third }
-                val topAuthor = authorData.maxByOrNull { it.third }
-                val avgFiles = if (totalAuthors > 0) totalFiles.toFloat() / totalAuthors else 0f
-                val maxCount = topAuthor?.third ?: 0
-                renderSummary(
-                    listOf(
-                        SummaryItem("作者总数", StatsFormatHelper.formatNumber(totalAuthors)),
-                        SummaryItem("关联文件总数", StatsFormatHelper.formatNumber(totalFiles)),
-                        SummaryItem("平均每位作者", String.format(java.util.Locale.US, "%.1f 个", avgFiles)),
-                        SummaryItem("文件最多", topAuthor?.second ?: "—")
-                    )
-                )
-
-                // 数据洞察
-                val insights = mutableListOf<String>()
-                if (topAuthor != null && totalAuthors > 0) {
-                    val share = if (totalFiles > 0) maxCount * 100 / totalFiles else 0
-                    insights.add("「${topAuthor.second}」拥有 $maxCount 个文件，占总量的 $share%")
-                }
-                if (authorData.size >= 2) {
-                    val top1Count = authorData[0].third
-                    val top2Count = authorData[1].third
-                    if (top2Count > 0) {
-                        insights.add("第一名文件数是第二名的 ${String.format(java.util.Locale.US, "%.1f", top1Count.toFloat() / top2Count)} 倍")
-                    }
-                }
-                val multiFileAuthors = authorData.count { it.third > 1 }
-                insights.add("有 $multiFileAuthors 位作者拥有多个文件，${totalAuthors - multiFileAuthors} 位仅有单个文件")
-                renderInsights(insights)
-
-                // 排行榜
-                binding.listSubtitleText.text = "共 $totalAuthors 位作者"
-                val items = authorData.take(20).map { (authorId, name, count) ->
-                    RankListAdapter.RankItem(
-                        id = authorId,
-                        title = name,
-                        subtitle = null,
-                        value = count,
-                        valueLabel = "$count 个作品",
-                        maxValue = maxCount
-                    )
-                }
-                adapter.submitList(items)
+            combine(viewModel.authors, viewModel.allAuthorMedia) { authors, refs ->
+                authors to refs
+            }.collect { (authors, refs) ->
+                cachedAuthors = authors
+                cachedAuthorRefs = refs
+                renderAuthorsTags()
+            }
+        }
+        launch {
+            viewModel.allMediaTags.collect { tags ->
+                cachedMediaTags = tags
+                renderAuthorsTags()
             }
         }
     }
 
-    // ==================== 标签模式 ====================
+    private var cachedAuthors: List<com.qimeng.media.data.db.entity.AuthorEntity> = emptyList()
+    private var cachedAuthorRefs: List<com.qimeng.media.data.db.entity.AuthorMediaCrossRef> = emptyList()
+    private var cachedMediaTags: List<com.qimeng.media.data.db.model.MediaTagName> = emptyList()
 
-    private fun CoroutineScope.observeTagsMode() {
-        binding.titleText.text = "标签文件数排行"
-        binding.listTitleText.text = "完整排行榜"
-        // 标签模式：显示排行榜，隐藏分布对比和排序切换
-        binding.rankListContainer.visibility = android.view.View.VISIBLE
-        binding.distributionContainer.visibility = android.view.View.GONE
-        binding.sortToggleText.visibility = android.view.View.GONE
+    /** 渲染作者/标签浏览排行（作者在前，标签在后，标签条目可点击跳文件列表） */
+    private fun renderAuthorsTags() {
+        val window = windowDaily()
+        val viewsByKey = window
+            .filter { it.viewCount + it.playCount > 0 }
+            .associate { it.recordKey to (it.viewCount + it.playCount) }
 
-        launch {
-            viewModel.allMediaTags.collect { mediaTags ->
-                val tagData = mediaTags
-                    .groupBy { it.name }
-                    .map { (name, list) -> name to list.size }
-                    .sortedByDescending { it.second }
+        // 作者浏览聚合
+        val authorRows = cachedAuthors.mapNotNull { author ->
+            val views = cachedAuthorRefs
+                .filter { it.authorId == author.authorId && it.recordKey in viewsByKey }
+                .sumOf { viewsByKey[it.recordKey] ?: 0 }
+            if (views > 0) Triple(author.authorId, author.displayName, views) else null
+        }.sortedByDescending { it.third }
 
-                // 统计摘要
-                val totalTags = tagData.size
-                val totalRelations = tagData.sumOf { it.second }
-                val topTag = tagData.maxByOrNull { it.second }
-                val avgFiles = if (totalTags > 0) totalRelations.toFloat() / totalTags else 0f
-                val maxCount = topTag?.second ?: 0
-                renderSummary(
-                    listOf(
-                        SummaryItem("标签总数", StatsFormatHelper.formatNumber(totalTags)),
-                        SummaryItem("关联总数", StatsFormatHelper.formatNumber(totalRelations)),
-                        SummaryItem("平均每个标签", String.format(java.util.Locale.US, "%.1f 个文件", avgFiles)),
-                        SummaryItem("关联最多", topTag?.first ?: "—")
-                    )
-                )
+        // 标签浏览聚合
+        val tagRows = cachedMediaTags
+            .filter { it.recordKey in viewsByKey }
+            .groupBy { it.name }
+            .map { (name, list) -> Triple(name, name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }) }
+            .sortedByDescending { it.third }
 
-                // 数据洞察
-                val insights = mutableListOf<String>()
-                if (topTag != null && totalTags > 0) {
-                    val share = if (totalRelations > 0) maxCount * 100 / totalRelations else 0
-                    insights.add("标签「${topTag.first}」关联 $maxCount 个文件，占关联总量的 $share%")
-                }
-                val singleFileTags = tagData.count { it.second == 1 }
-                insights.add("$singleFileTags 个标签仅关联 1 个文件，${totalTags - singleFileTags} 个标签关联多个文件")
-                if (totalTags > 0) {
-                    // v1.12 修复：原公式误用标签种类数 totalTags，正确应为「关联总数 / 被标记的去重文件数」
-                    val taggedFileCount = mediaTags.map { it.recordKey }.distinct().size
-                    val avgTagsPerFile = if (taggedFileCount > 0) totalRelations.toFloat() / taggedFileCount else 0f
-                    insights.add("平均每个文件被标记 ${String.format(java.util.Locale.US, "%.1f", avgTagsPerFile)} 个标签")
-                }
-                renderInsights(insights)
-
-                // 排行榜
-                binding.listSubtitleText.text = "共 $totalTags 个标签"
-                val items = tagData.take(20).map { (name, count) ->
-                    RankListAdapter.RankItem(
-                        id = null,
-                        title = name,
-                        subtitle = null,
-                        value = count,
-                        valueLabel = "$count 个文件",
-                        maxValue = maxCount
-                    )
-                }
-                adapter.submitList(items)
-            }
+        val totalViews = window.sumOf { it.viewCount + it.playCount }
+        renderSummary(
+            listOf(
+                SummaryItem("作者", StatsFormatHelper.formatNumber(authorRows.size)),
+                SummaryItem("标签", StatsFormatHelper.formatNumber(tagRows.size)),
+                SummaryItem("浏览总次数", StatsFormatHelper.formatNumber(totalViews)),
+                SummaryItem("Top 作者", authorRows.firstOrNull()?.second ?: "—")
+            )
+        )
+        val insights = mutableListOf<String>()
+        if (authorRows.isNotEmpty()) {
+            insights.add("最常看作者「${authorRows.first().second}」，浏览 ${authorRows.first().third} 次")
         }
+        if (tagRows.isNotEmpty()) {
+            insights.add("最常看标签「${tagRows.first().first}」，浏览 ${tagRows.first().third} 次")
+        }
+        renderInsights(insights)
+
+        val maxAuthor = authorRows.firstOrNull()?.third ?: 0
+        val maxTag = tagRows.firstOrNull()?.third ?: 0
+        val authorItems = authorRows.take(20).map { (id, name, views) ->
+            RankListAdapter.RankItem(
+                id = id,
+                title = name,
+                subtitle = "作者",
+                value = views,
+                valueLabel = "$views 次",
+                maxValue = maxAuthor
+            )
+        }
+        val tagItems = tagRows.take(20).map { (name, _, views) ->
+            RankListAdapter.RankItem(
+                id = "tag:$name",
+                title = name,
+                subtitle = "标签",
+                value = views,
+                valueLabel = "$views 次",
+                maxValue = maxTag
+            )
+        }
+        adapter.submitList(authorItems + tagItems)
     }
 
     // ==================== 分布统计模式 ====================
 
     private fun CoroutineScope.observeDistributionMode() {
         binding.titleText.text = "分布统计详情"
-        // 分布统计模式：隐藏排行榜区域，显示分布对比区域
-        binding.rankListContainer.visibility = android.view.View.GONE
-        binding.distributionContainer.visibility = android.view.View.VISIBLE
-
-        // 同时收集 media 和 stats，结合两者渲染
+        binding.rankListContainer.visibility = View.GONE
+        binding.distributionContainer.visibility = View.VISIBLE
         launch {
             combine(viewModel.allMedia, viewModel.allStats) { media, stats ->
                 Pair(media, stats)
-            }.collect { (media, stats) ->
-                // 类型分布汇总
-                val imageCount = media.count { it.mediaType == MediaType.IMAGE }
-                val videoCount = media.count { it.mediaType == MediaType.VIDEO }
-                val animatedCount = media.count { it.mediaType == MediaType.ANIMATED_IMAGE }
-                val cosCount = media.count { it.isCosFile }
-                val normalCount = media.count { !it.isCosFile }
-                val total = media.size.coerceAtLeast(1)
-
-                val imageBytes = media.filter { it.mediaType == MediaType.IMAGE }.sumOf { it.sizeBytes }
-                val videoBytes = media.filter { it.mediaType == MediaType.VIDEO }.sumOf { it.sizeBytes }
-                val animatedBytes = media.filter { it.mediaType == MediaType.ANIMATED_IMAGE }.sumOf { it.sizeBytes }
-                val totalBytes = imageBytes + videoBytes + animatedBytes
-
-                // 各类型平均大小
-                val avgImageSize = if (imageCount > 0) imageBytes / imageCount else 0L
-                val avgVideoSize = if (videoCount > 0) videoBytes / videoCount else 0L
-
-                // 各类型浏览量（结合 stats）
-                val statsMap = stats.associateBy { it.recordKey }
-                val imageViews = media.filter { it.mediaType == MediaType.IMAGE }
-                    .sumOf { statsMap[it.recordKey]?.viewCount ?: 0 }
-                val videoPlays = media.filter { it.mediaType == MediaType.VIDEO }
-                    .sumOf { statsMap[it.recordKey]?.playCount ?: 0 }
-                val animatedViews = media.filter { it.mediaType == MediaType.ANIMATED_IMAGE }
-                    .sumOf { statsMap[it.recordKey]?.viewCount ?: 0 }
-                val cosViews = media.filter { it.isCosFile }
-                    .sumOf { (statsMap[it.recordKey]?.viewCount ?: 0) + (statsMap[it.recordKey]?.playCount ?: 0) }
-                val normalViews = media.filter { !it.isCosFile }
-                    .sumOf { (statsMap[it.recordKey]?.viewCount ?: 0) + (statsMap[it.recordKey]?.playCount ?: 0) }
-
-                renderSummary(
-                    listOf(
-                        SummaryItem("图片", "${imageCount} (${imageCount * 100 / total}%)"),
-                        SummaryItem("视频", "${videoCount} (${videoCount * 100 / total}%)"),
-                        SummaryItem("动图", "${animatedCount} (${animatedCount * 100 / total}%)"),
-                        SummaryItem("常规 / COS", "${normalCount} / ${cosCount}"),
-                        SummaryItem("图片总大小", StatsFormatHelper.formatSize(imageBytes)),
-                        SummaryItem("视频总大小", StatsFormatHelper.formatSize(videoBytes)),
-                        SummaryItem("总占用", StatsFormatHelper.formatSize(totalBytes)),
-                        SummaryItem("视频平均大小", StatsFormatHelper.formatSize(avgVideoSize))
-                    )
-                )
-
-                // 数据洞察
-                val insights = mutableListOf<String>()
-                insights.add("图片 ${imageCount} 个（${imageCount * 100 / total}%），平均每个 ${StatsFormatHelper.formatSize(avgImageSize)}")
-                insights.add("视频 ${videoCount} 个（${videoCount * 100 / total}%），平均每个 ${StatsFormatHelper.formatSize(avgVideoSize)}")
-                if (animatedCount > 0) {
-                    insights.add("动图 ${animatedCount} 个（${animatedCount * 100 / total}%）")
-                }
-                val cosPercent = if (cosCount > 0) cosCount * 100 / total else 0
-                insights.add("COS 文件 ${cosCount} 个（${cosPercent}%），常规文件 ${normalCount} 个")
-                if (totalBytes > 0) {
-                    val videoSpaceShare = videoBytes * 100 / totalBytes
-                    insights.add("视频占用 ${StatsFormatHelper.formatSize(videoBytes)}，占总空间的 $videoSpaceShare%")
-                }
-                // 浏览量洞察
-                val totalViews = imageViews + videoPlays + animatedViews
-                if (totalViews > 0) {
-                    insights.add("图片被浏览 ${imageViews} 次，视频被播放 ${videoPlays} 次，动图被浏览 ${animatedViews} 次")
-                }
-                renderInsights(insights)
-
-                // 分布对比卡片（替代排行榜）
-                renderDistributionComparison(
-                    media = media,
-                    typeData = listOf(
-                        TypeDistributionData("图片", imageCount, imageBytes, imageViews, MediaType.IMAGE),
-                        TypeDistributionData("视频", videoCount, videoBytes, videoPlays, MediaType.VIDEO),
-                        TypeDistributionData("动图", animatedCount, animatedBytes, animatedViews, MediaType.ANIMATED_IMAGE)
-                    ),
-                    sourceData = SourceDistributionData(
-                        normalCount = normalCount,
-                        cosCount = cosCount,
-                        normalBytes = media.filter { !it.isCosFile }.sumOf { it.sizeBytes },
-                        cosBytes = media.filter { it.isCosFile }.sumOf { it.sizeBytes },
-                        normalViews = normalViews,
-                        cosViews = cosViews
-                    )
-                )
+            }.collect { (media, _) ->
+                cachedMedia = media
+                renderDistribution()
             }
         }
     }
 
-    /** 类型分布数据 */
-    private data class TypeDistributionData(
-        val name: String,
-        val count: Int,
-        val bytes: Long,
-        val views: Int,
-        val mediaType: String
-    )
+    private var cachedMedia: List<MediaFileEntity> = emptyList()
 
-    /** 来源分布数据 */
-    private data class SourceDistributionData(
-        val normalCount: Int,
-        val cosCount: Int,
-        val normalBytes: Long,
-        val cosBytes: Long,
-        val normalViews: Int,
-        val cosViews: Int
-    )
+    /** 渲染分布对比：类型/来源 ×（库存数量/大小 + 窗口浏览） */
+    private fun renderDistribution() {
+        val media = cachedMedia
+        val window = windowDaily()
+        val cosKeys = media.filter { it.isCosFile }.map { it.recordKey }.toSet()
 
-    /**
-     * 渲染分布对比卡片（仅分布统计模式使用，替代排行榜）。
-     * 包含两个卡片：
-     * - 类型分布对比：数量/大小/浏览量三维度横向对比
-     * - 来源分布对比：常规 vs COS 的数量/大小/浏览量对比
-     */
-    private fun renderDistributionComparison(
-        media: List<com.qimeng.media.data.db.entity.MediaFileEntity>,
-        typeData: List<TypeDistributionData>,
-        sourceData: SourceDistributionData
-    ) {
+        val imageCount = media.count { it.mediaType == MediaType.IMAGE }
+        val videoCount = media.count { it.mediaType == MediaType.VIDEO }
+        val animatedCount = media.count { it.mediaType == MediaType.ANIMATED_IMAGE }
+        val cosCount = media.count { it.isCosFile }
+        val normalCount = media.count { !it.isCosFile }
+        val total = media.size.coerceAtLeast(1)
+
+        val imageBytes = media.filter { it.mediaType == MediaType.IMAGE }.sumOf { it.sizeBytes }
+        val videoBytes = media.filter { it.mediaType == MediaType.VIDEO }.sumOf { it.sizeBytes }
+        val animatedBytes = media.filter { it.mediaType == MediaType.ANIMATED_IMAGE }.sumOf { it.sizeBytes }
+
+        // 窗口浏览聚合（按类型/来源）
+        val viewsByType = StatsFormatHelper.aggregateDailyByType(window, timeRangeName)
+        val imageViews = viewsByType[MediaType.IMAGE]?.first ?: 0
+        val videoViews = viewsByType[MediaType.VIDEO]?.first ?: 0
+        val animatedViews = viewsByType[MediaType.ANIMATED_IMAGE]?.first ?: 0
+        val sourceViews = StatsFormatHelper.aggregateDailyBySource(window, cosKeys, timeRangeName)
+        val cosViews = sourceViews[true] ?: 0
+        val normalViews = sourceViews[false] ?: 0
+
+        renderSummary(
+            listOf(
+                SummaryItem("图片", "${imageCount} (${imageCount * 100 / total}%)"),
+                SummaryItem("视频", "${videoCount} (${videoCount * 100 / total}%)"),
+                SummaryItem("动图", "${animatedCount} (${animatedCount * 100 / total}%)"),
+                SummaryItem("常规 / COS", "${normalCount} / ${cosCount}"),
+                SummaryItem("图片总大小", StatsFormatHelper.formatSize(imageBytes)),
+                SummaryItem("视频总大小", StatsFormatHelper.formatSize(videoBytes)),
+                SummaryItem("总占用", StatsFormatHelper.formatSize(imageBytes + videoBytes + animatedBytes)),
+                SummaryItem("窗口浏览", StatsFormatHelper.formatNumber(window.sumOf { it.viewCount + it.playCount }))
+            )
+        )
+
+        val insights = mutableListOf<String>()
+        insights.add("近${rangeLabel()}图片被浏览 $imageViews 次，视频 $videoViews 次，动图 $animatedViews 次")
+        if (cosCount > 0) {
+            insights.add("COS 文件 $cosCount 个（${cosCount * 100 / total}%），窗口浏览 $cosViews 次")
+        }
+        renderInsights(insights)
+
+        // 分布对比卡片（库存数量/大小 + 窗口浏览）
         binding.distributionContainer.removeAllViews()
-
-        // 卡片1：类型分布对比
         val typeCard = createDistributionCard(
             title = "类型分布对比",
-            subtitle = "按数量、占用空间、浏览量三个维度对比各类型"
+            subtitle = "库存数量/大小 vs 窗口浏览"
         )
-        val maxCount = typeData.maxOf { it.count }.coerceAtLeast(1)
-        val maxBytes = typeData.maxOf { it.bytes }.coerceAtLeast(1L)
-        val maxViews = typeData.maxOf { it.views }.coerceAtLeast(1)
-        typeData.forEach { data ->
+        val maxCount = maxOf(imageCount, videoCount, animatedCount).coerceAtLeast(1)
+        val maxBytes = maxOf(imageBytes, videoBytes, animatedBytes).coerceAtLeast(1L)
+        val maxViews = maxOf(imageViews, videoViews, animatedViews).coerceAtLeast(1)
+        listOf(
+            Triple("图片", imageCount, imageBytes to imageViews),
+            Triple("视频", videoCount, videoBytes to videoViews),
+            Triple("动图", animatedCount, animatedBytes to animatedViews)
+        ).forEach { (name, count, bytesAndViews) ->
             typeCard.addView(createDistributionRow(
-                label = data.name,
+                label = name,
                 metrics = listOf(
-                    DistributionMetric("数量", data.count.toString(), data.count, maxCount),
-                    DistributionMetric("大小", StatsFormatHelper.formatSize(data.bytes), (data.bytes * 100 / maxBytes).toInt(), 100),
-                    DistributionMetric("浏览", data.views.toString(), data.views, maxViews)
+                    DistributionMetric("数量", count.toString(), count, maxCount),
+                    DistributionMetric("大小", StatsFormatHelper.formatSize(bytesAndViews.first), (bytesAndViews.first * 100 / maxBytes).toInt(), 100),
+                    DistributionMetric("浏览", bytesAndViews.second.toString(), bytesAndViews.second, maxViews)
                 )
             ))
         }
         binding.distributionContainer.addView(typeCard, distributionCardParams())
 
-        // 卡片2：来源分布对比
         val sourceCard = createDistributionCard(
             title = "来源分布对比",
-            subtitle = "常规文件 vs COS 文件的多维度对比"
+            subtitle = "常规 vs COS"
         )
-        val sourceMaxCount = maxOf(sourceData.normalCount, sourceData.cosCount).coerceAtLeast(1)
-        val sourceMaxBytes = maxOf(sourceData.normalBytes, sourceData.cosBytes).coerceAtLeast(1L)
-        val sourceMaxViews = maxOf(sourceData.normalViews, sourceData.cosViews).coerceAtLeast(1)
+        val sMaxCount = maxOf(normalCount, cosCount).coerceAtLeast(1)
+        val sMaxBytes = media.sumOf { it.sizeBytes }.coerceAtLeast(1L)
+        val sMaxViews = maxOf(normalViews, cosViews).coerceAtLeast(1)
         sourceCard.addView(createDistributionRow(
             label = "常规",
             metrics = listOf(
-                DistributionMetric("数量", sourceData.normalCount.toString(), sourceData.normalCount, sourceMaxCount),
-                DistributionMetric("大小", StatsFormatHelper.formatSize(sourceData.normalBytes), (sourceData.normalBytes * 100 / sourceMaxBytes).toInt(), 100),
-                DistributionMetric("浏览", sourceData.normalViews.toString(), sourceData.normalViews, sourceMaxViews)
+                DistributionMetric("数量", normalCount.toString(), normalCount, sMaxCount),
+                DistributionMetric("大小", StatsFormatHelper.formatSize(media.filter { !it.isCosFile }.sumOf { it.sizeBytes }), (media.filter { !it.isCosFile }.sumOf { it.sizeBytes } * 100 / sMaxBytes).toInt(), 100),
+                DistributionMetric("浏览", normalViews.toString(), normalViews, sMaxViews)
             )
         ))
         sourceCard.addView(createDistributionRow(
             label = "COS",
             metrics = listOf(
-                DistributionMetric("数量", sourceData.cosCount.toString(), sourceData.cosCount, sourceMaxCount),
-                DistributionMetric("大小", StatsFormatHelper.formatSize(sourceData.cosBytes), (sourceData.cosBytes * 100 / sourceMaxBytes).toInt(), 100),
-                DistributionMetric("浏览", sourceData.cosViews.toString(), sourceData.cosViews, sourceMaxViews)
+                DistributionMetric("数量", cosCount.toString(), cosCount, sMaxCount),
+                DistributionMetric("大小", StatsFormatHelper.formatSize(media.filter { it.isCosFile }.sumOf { it.sizeBytes }), (media.filter { it.isCosFile }.sumOf { it.sizeBytes } * 100 / sMaxBytes).toInt(), 100),
+                DistributionMetric("浏览", cosViews.toString(), cosViews, sMaxViews)
             )
         ))
         binding.distributionContainer.addView(sourceCard, distributionCardParams())
     }
+
+    // ==================== 渲染辅助 ====================
+
+    /** 统计摘要数据 */
+    private data class SummaryItem(val label: String, val value: String)
+
+    /** 渲染统计摘要卡片（2列网格，自动换行） */
+    private fun renderSummary(items: List<SummaryItem>) {
+        binding.summaryContainer.removeAllViews()
+        val rows = items.chunked(2)
+        rows.forEach { rowItems ->
+            val row = LinearLayout(requireContext()).apply {
+                layoutTransition = null
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    if (binding.summaryContainer.childCount > 0) {
+                        topMargin = 8f.dp(requireContext()).toInt()
+                    }
+                }
+            }
+            rowItems.forEach { item ->
+                val card = createSummaryCard(item)
+                val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    weight = 1f
+                    if (rowItems.indexOf(item) == 0) {
+                        marginEnd = 4f.dp(requireContext()).toInt()
+                    } else {
+                        marginStart = 4f.dp(requireContext()).toInt()
+                    }
+                }
+                row.addView(card, params)
+            }
+            if (rowItems.size == 1) {
+                val placeholder = View(requireContext())
+                val params = LinearLayout.LayoutParams(0, 1).apply { weight = 1f }
+                row.addView(placeholder, params)
+            }
+            binding.summaryContainer.addView(row)
+        }
+    }
+
+    private fun createSummaryCard(item: SummaryItem): View {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
+            setPadding(12f.dp(requireContext()).toInt())
+            val valueText = TextView(requireContext()).apply {
+                text = item.value
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorPrimary))
+                textSize = 18f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            val labelText = TextView(requireContext()).apply {
+                text = item.label
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
+                textSize = 11f
+            }
+            addView(valueText)
+            addView(labelText)
+        }
+    }
+
+    /** 渲染数据洞察卡片（自动生成的文字摘要列表） */
+    private fun renderInsights(insights: List<String>) {
+        binding.insightContainer.removeAllViews()
+        if (insights.isEmpty()) return
+        val card = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
+            setPadding(12f.dp(requireContext()).toInt())
+        }
+        val title = TextView(requireContext()).apply {
+            text = "数据洞察"
+            setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        card.addView(title)
+        insights.forEach { text ->
+            val item = TextView(requireContext()).apply {
+                this.text = "· $text"
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 6f.dp(requireContext()).toInt()
+                }
+            }
+            card.addView(item)
+        }
+        binding.insightContainer.addView(card)
+    }
+
+    // ==================== 分布对比（保留原实现） ====================
 
     /** 分布卡片间距参数（卡片间留白，避免视觉重叠） */
     private fun distributionCardParams(): LinearLayout.LayoutParams {
@@ -584,7 +701,6 @@ class StatsDetailFragment : Fragment() {
                 topMargin = 12f.dp(requireContext()).toInt()
             }
 
-            // 标签行
             val labelView = TextView(requireContext()).apply {
                 text = label
                 setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
@@ -593,7 +709,6 @@ class StatsDetailFragment : Fragment() {
             }
             addView(labelView)
 
-            // 指标行（横向排列）
             val metricsRow = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(
@@ -665,150 +780,17 @@ class StatsDetailFragment : Fragment() {
         }
     }
 
-    // ==================== 渲染辅助 ====================
+    // ==================== 跳转与工具 ====================
 
-    /** 统计摘要数据 */
-    private data class SummaryItem(val label: String, val value: String)
-
-    /** 渲染统计摘要卡片（2列网格，自动换行） */
-    private fun renderSummary(items: List<SummaryItem>) {
-        binding.summaryContainer.removeAllViews()
-        val rows = items.chunked(2)
-        rows.forEach { rowItems ->
-            val row = LinearLayout(requireContext()).apply {
-                layoutTransition = null
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    if (binding.summaryContainer.childCount > 0) {
-                        topMargin = 8f.dp(requireContext()).toInt()
-                    }
-                }
-            }
-            rowItems.forEach { item ->
-                val card = createSummaryCard(item)
-                val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    weight = 1f
-                    if (rowItems.indexOf(item) == 0) {
-                        marginEnd = 4f.dp(requireContext()).toInt()
-                    } else {
-                        marginStart = 4f.dp(requireContext()).toInt()
-                    }
-                }
-                row.addView(card, params)
-            }
-            // 如果只有一个 item，补一个占位
-            if (rowItems.size == 1) {
-                val placeholder = View(requireContext())
-                val params = LinearLayout.LayoutParams(0, 1).apply { weight = 1f }
-                row.addView(placeholder, params)
-            }
-            binding.summaryContainer.addView(row)
-        }
-    }
-
-    private fun createSummaryCard(item: SummaryItem): View {
-        return LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
-            setPadding(12f.dp(requireContext()).toInt())
-            val valueText = TextView(requireContext()).apply {
-                text = item.value
-                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorPrimary))
-                textSize = 18f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            }
-            val labelText = TextView(requireContext()).apply {
-                text = item.label
-                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
-                textSize = 11f
-            }
-            addView(valueText)
-            addView(labelText)
-        }
-    }
-
-    /** 渲染数据洞察卡片（自动生成的文字摘要列表） */
-    private fun renderInsights(insights: List<String>) {
-        binding.insightContainer.removeAllViews()
-        if (insights.isEmpty()) return
-        val card = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
-            setPadding(12f.dp(requireContext()).toInt())
-        }
-        val title = TextView(requireContext()).apply {
-            text = "数据洞察"
-            setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
-            textSize = 14f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        card.addView(title)
-        insights.forEach { text ->
-            val item = TextView(requireContext()).apply {
-                this.text = "· $text"
-                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
-                textSize = 12f
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 6f.dp(requireContext()).toInt()
-                }
-            }
-            card.addView(item)
-        }
-        binding.insightContainer.addView(card)
-    }
-
-    /** 渲染浏览趋势折线图（仅文件模式使用） */
-    private fun renderTrendChart(history: List<com.qimeng.media.data.db.entity.ViewHistoryEntity>) {
-        if (mode != MODE_FILES) {
-            binding.chartContainer.removeAllViews()
-            return
-        }
-        binding.chartContainer.removeAllViews()
-        val card = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
-            setPadding(12f.dp(requireContext()).toInt())
-        }
-        val title = TextView(requireContext()).apply {
-            text = "浏览趋势"
-            setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
-            textSize = 14f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        val chart = LineChartView(requireContext()).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                180f.dp(requireContext()).toInt()
-            ).apply {
-                topMargin = 8f.dp(requireContext()).toInt()
-            }
-        }
-        val points = when (timeRangeName) {
-            "DAYS_7" -> StatsFormatHelper.groupByDay(history, 7)
-            "DAYS_30" -> StatsFormatHelper.groupByDay(history, 30)
-            else -> StatsFormatHelper.groupByWeek(history)
-        }
-        chart.setData(points)
-        card.addView(title)
-        card.addView(chart)
-        binding.chartContainer.addView(card)
-    }
-
-    /** 点击条目跳转 */
+    /** 点击条目跳转（标签 → 搜索文件列表，作者 → 作者文件页，文件 → 详情页） */
     private fun handleItemClick(id: String) {
-        when (mode) {
-            MODE_AUTHORS -> (requireActivity() as? MainActivity)?.showAuthorFiles(id)
-            else -> (requireActivity() as? MainActivity)?.showDetailFragment(id)
+        val activity = requireActivity() as? MainActivity ?: return
+        when {
+            id.startsWith("tag:") -> activity.showSearchFragment()
+            mode == MODE_AUTHORS -> activity.showAuthorFiles(id)
+            else -> activity.showDetailFragment(id)
         }
     }
-
-    // ==================== 工具方法 ====================
 
     /** 格式化时长（秒 → 可读字符串，如 "1小时23分"） */
     private fun formatDuration(seconds: Long): String {
@@ -832,9 +814,9 @@ class StatsDetailFragment : Fragment() {
     }
 
     companion object {
-        const val MODE_FILES = "files"
+        const val MODE_TYPE_TREND = "type_trend"
+        const val MODE_FAVORITES = "favorites"
         const val MODE_AUTHORS = "authors"
-        const val MODE_TAGS = "tags"
         const val MODE_DISTRIBUTION = "distribution"
 
         private const val ARG_MODE = "mode"
