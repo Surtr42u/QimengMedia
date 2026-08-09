@@ -61,6 +61,9 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | `LargeImage` | 大图解码逐级回退路径（libspng/decodeFileDescriptor/decodeStream 命中或回退 Coil） |
 | `Zoom` | ZoomImageView 反射检测异常（仅非预期异常才记录，正常 NoSuchField 静默） |
 | `SourceMatcher` | 出处/角色匹配未命中采样日志（`charMiss(N): file=...`，每 50 次未命中记 1 条，N 为累计未命中总数） |
+| `AuthorImport` | 作者 TXT 导入/重建/匹配日志（`importFromText`/`rebuild`/`rematch`/`findMatch(累计N)`）。`findMatch` 循环内采样，每 50 次调用记 1 条（含未命中），避免重建时日志刷屏 |
+| `Thumb` | 缩略图/视频帧处理（`ThumbnailCache` 内 `loadFirstFrame: non-black at Xms` 首帧非黑探测；读取失败/内存探测等） |
+| `ThumbCache` | 缩略图预生成进度（`pregenerate: total=N`/`progress N/M`/`done`，以及读写缩略图缓存失败） |
 
 #### 添加日志的原则
 
@@ -69,7 +72,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 3. **分支路径**加日志：MediaStore hit/miss、SAF fallback
 4. **异常捕获**加日志：catch 块中用 `AppLog.e(tag, msg, exception)`
 5. **避免高频日志**：循环内部不加日志，避免 2MB 限制过快触发
-6. **采样日志**：大量数据取前 3 条样本（如 `allSafMedia.take(3).forEach { AppLog.d(...) }`）；高频未命中事件用计数器采样（如 `SourceMatcher.charMiss` 每 50 次记 1 条 `charMiss(N): ...`，N 为累计总数，既防刷屏又保留诊断计数）
+6. **采样日志**：大量数据取前 3 条样本（如 `allSafMedia.take(3).forEach { AppLog.d(...) }`）；高频未命中事件用计数器采样（如 `SourceMatcher.charMiss` 每 50 次记 1 条 `charMiss(N): ...`、`AuthorImport.findMatch(累计N): ...` 每 50 次调用记 1 条，N 为累计总数，既防刷屏又保留诊断计数）
 
 ---
 
@@ -374,4 +377,4 @@ while ($true) {
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-09

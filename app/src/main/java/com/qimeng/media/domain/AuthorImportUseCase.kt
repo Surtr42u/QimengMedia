@@ -6,6 +6,7 @@ import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.SettingEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 作者导入 UseCase：负责从文本导入作者、匹配媒体文件等操作。
@@ -96,17 +97,13 @@ class AuthorImportUseCase(
 
             false
         }
-        // 诊断日志
-        if (result.isNotEmpty()) {
-            AppLog.d("AuthorImport", "findMatch: workName=[$workName] collapsedNoExt=[$collapsedNoExt] collapsedBase=[$collapsedBase] matched=${result.size} files: ${result.take(3).map { it.fileName }}")
+        // 诊断日志：每 [FIND_MATCH_LOG_INTERVAL] 次调用记 1 条（含未命中），
+        // 避免 rebuild 批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
+        val matchCall = findMatchLogCounter.incrementAndGet()
+        if (matchCall % FIND_MATCH_LOG_INTERVAL == 1) {
+            AppLog.d("AuthorImport", "findMatch(累计$matchCall): workName=[$workName] collapsedNoExt=[$collapsedNoExt] collapsedBase=[$collapsedBase] matched=${result.size} files: ${result.take(3).map { it.fileName }}")
         }
         return result
-    }
-
-    private fun looksLikeFileName(text: String): Boolean {
-        val ext = text.substringAfterLast('.', "").lowercase()
-        return ext in setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
-            "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff", "tif", "txt", "doc", "pdf")
     }
 
     private suspend fun cleanupFileNameAuthors() {
@@ -305,57 +302,85 @@ class AuthorImportUseCase(
         repository.deleteSetting(key)
     }
 
-    private data class AuthorBlock(val authorNames: List<String>, val sources: List<String>, val works: List<String>)
+    companion object {
+        internal data class AuthorBlock(val authorNames: List<String>, val sources: List<String>, val works: List<String>)
 
-    private fun parseAuthorBlocks(text: String): List<AuthorBlock> {
-        val blocks = mutableListOf<AuthorBlock>()
-        val lines = text.lines().map { it.trim() }
-        var currentAuthors = listOf<String>()
-        var currentSources = mutableListOf<String>()
-        var currentWorks = mutableListOf<String>()
-        var inSources = false
-        var inWorks = false
+        /** 判断文本是否为文件名（带媒体/文档扩展名），用于排除误判为作者名的文件行 */
+        private fun looksLikeFileName(text: String): Boolean {
+            val ext = text.substringAfterLast('.', "").lowercase()
+            return ext in setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
+                "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff", "tif", "txt", "doc", "pdf")
+        }
 
-        for (line in lines) {
-            if (line.isBlank()) continue
-            val authorLineMatch = Regex("^\\d+\\s+(.+)$").matchEntire(line)
-            if (authorLineMatch != null) {
-                if (currentAuthors.isNotEmpty()) {
-                    blocks.add(AuthorBlock(currentAuthors, currentSources.toList(), currentWorks.toList()))
+        /** findMatch 日志采样间隔：每 50 次调用记 1 条（含未命中），避免 TXT 导入重建时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志） */
+        private const val FIND_MATCH_LOG_INTERVAL = 50
+
+        /** findMatch 日志采样计数器，线程安全 */
+        private val findMatchLogCounter = AtomicInteger(0)
+
+        /** 解析 TXT 文本为作者块列表。纯函数，无类状态依赖，便于单元测试。
+         *
+         *  编号行 = `数字 作者名...`。注意：作品行若以数字开头（如 `2077  帕南.png`）会误命中
+         *  编号行正则 `^\\d+\\s+(.+)$`。此时解析出的"作者名"全部是带扩展名的文件名，
+         *  判定为作品行而非编号行：处于作品区时归入当前块 works，否则忽略。
+         *  （修复：TXT 中 `2077 帕南.png` 等文件名不再被拆成伪作者块，作者关联不再丢失） */
+        internal fun parseAuthorBlocks(text: String): List<AuthorBlock> {
+            val blocks = mutableListOf<AuthorBlock>()
+            val lines = text.lines().map { it.trim() }
+            var currentAuthors = listOf<String>()
+            var currentSources = mutableListOf<String>()
+            var currentWorks = mutableListOf<String>()
+            var inSources = false
+            var inWorks = false
+
+            for (line in lines) {
+                if (line.isBlank()) continue
+                val authorLineMatch = Regex("^\\d+\\s+(.+)$").matchEntire(line)
+                if (authorLineMatch != null) {
+                    val parsedAuthors = authorLineMatch.groupValues[1]
+                        .split(Regex("\\s{2,}")).map { it.trim() }
+                        .map { it.replace(Regex("\\s*[(\\[（【].+$"), "") }
+                        .filter { it.isNotBlank() }
+                    // 数字开头的文件名（如 "2077  帕南.png"）误命中编号行正则 → 按作品行处理
+                    if (parsedAuthors.all { looksLikeFileName(it) }) {
+                        if (inWorks) { currentWorks.add(line); continue }
+                        continue
+                    }
+                    if (currentAuthors.isNotEmpty()) {
+                        blocks.add(AuthorBlock(currentAuthors, currentSources.toList(), currentWorks.toList()))
+                    }
+                    currentAuthors = parsedAuthors
+                    currentSources = mutableListOf()
+                    currentWorks = mutableListOf()
+                    inSources = false
+                    inWorks = false
+                    continue
                 }
-                currentAuthors = authorLineMatch.groupValues[1].split(Regex("\\s{2,}")).map { it.trim() }.map { it.replace(Regex("\\s*[(\\[（【].+$"), "") }.filter { it.isNotBlank() }
-                currentSources = mutableListOf()
-                currentWorks = mutableListOf()
-                inSources = false
-                inWorks = false
-                continue
-            }
             if (line.startsWith("出处") || line.startsWith("来源")) {
                 inSources = true; inWorks = false
                 val rest = line.removePrefix("出处").removePrefix("来源").trim()
                 if (rest.isNotBlank()) currentSources.add(rest)
                 continue
             }
-            if (line == "作品") { inSources = false; inWorks = true; continue }
-            if (inSources) {
-                val urlMatch = Regex("`([^`]+)`").find(line)
-                if (urlMatch != null) currentSources.add(urlMatch.groupValues[1])
-                val platformNames = line.replace(Regex("`[^`]+`"), "").trim()
-                if (platformNames.isNotBlank()) currentSources.add(platformNames)
-                continue
+                if (line == "作品") { inSources = false; inWorks = true; continue }
+                if (inSources) {
+                    val urlMatch = Regex("`([^`]+)`").find(line)
+                    if (urlMatch != null) currentSources.add(urlMatch.groupValues[1])
+                    val platformNames = line.replace(Regex("`[^`]+`"), "").trim()
+                    if (platformNames.isNotBlank()) currentSources.add(platformNames)
+                    continue
+                }
+                if (inWorks) {
+                    currentWorks.add(line)
+                    continue
+                }
             }
-            if (inWorks) {
-                currentWorks.add(line)
-                continue
+            if (currentAuthors.isNotEmpty()) {
+                blocks.add(AuthorBlock(currentAuthors, currentSources.toList(), currentWorks.toList()))
             }
+            return blocks
         }
-        if (currentAuthors.isNotEmpty()) {
-            blocks.add(AuthorBlock(currentAuthors, currentSources.toList(), currentWorks.toList()))
-        }
-        return blocks
-    }
 
-    companion object {
         const val KEY_IMPORTED_TXT_FILES = "imported_txt_files"
         const val KEY_IMPORTED_TXT_BLOCKS_PREFIX = "imported_txt_blocks_"
         const val KEY_IMPORTED_TXT_URI_PREFIX = "imported_txt_uri_"

@@ -2,6 +2,28 @@
 
 本文件归档项目历次代码审查、重构、性能优化的详细记录。当前有效的规则、备案、共享组件表见 `GUIDE_CODE_MAINTENANCE.md`。
 
+## 作者 TXT 数字开头文件名误判编号行修复 + findMatch 日志降频（2026-08-09）
+
+真机全流程监控（浏览/扫描/TXT 导入/详情页/搜索/备份全走一遍）后系统读日志发现两个问题并修复：
+
+| 类别 | 问题 | 修复方式 |
+|---|---|---|
+| 功能错误（TXT 解析） | 作品文件名以数字开头（如 `2077  帕南.png`、`2077  朱迪+帕南.png`、`2077  帕南 2.jpg`）命中编号行正则 `数字 内容`，被拆成伪作者块：作者名解析成 `帕南.png`，该作品从真实作者（Takerskiy/Keu3D/Night Cry）的 works 中丢失，作者关联缺失 | `AuthorImportUseCase.parseAuthorBlocks` 编号行命中后校验：解析出的"作者名"全部带媒体扩展名（`looksLikeFileName`）则按作品行处理（作品区归入当前块 works，块外忽略）；`parseAuthorBlocks` 与 `AuthorBlock` 提升为 companion object 纯函数便于测试 |
+| 日志刷屏 | `findMatchingMediaLight` 循环内逐条打 `findMatch` 日志，一次 TXT 重建刷 1252 条（占全量日志 51%），违反「循环内不加高频日志」原则 | 参照 `SourceMatcher.charMiss` 采样模式，每 50 次调用记 1 条 `findMatch(累计N)`（AtomicInteger 计数器） |
+| 文档缺失 | `Thumb`/`ThumbCache`/`AuthorImport` 标签未收录进 GUIDE_DEBUG 标签约定表 | GUIDE_DEBUG 标签表补 3 行 + 采样日志原则补充 findMatch 采样示例 |
+
+**测试**：新增 `AuthorImportUseCaseTest`（9 个用例，`parseAuthorBlocks` 纯逻辑：编号行/出处/作品区解析、括号别名去除、多别名合并、数字开头文件名误判修复、格式 C 与空文本边界），`:app:testDebugUnitTest` 通过；`assembleDebug` 构建通过。
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/qimeng/media/domain/AuthorImportUseCase.kt` | parseAuthorBlocks 数字开头文件名判定 + 提为 companion 纯函数；findMatch 日志采样 |
+| `app/src/test/java/com/qimeng/media/AuthorImportUseCaseTest.kt` | 新增 9 个单元测试 |
+| `docs/GUIDE_AUTHOR.md` | 格式规范新增「数字开头的作品文件名不误判编号行」条目 |
+| `docs/GUIDE_DEBUG.md` | 标签约定表补 AuthorImport/Thumb/ThumbCache |
+| `docs/GUIDE_CODE_MAINTENANCE.md` | 测试类表补 AuthorImportUseCaseTest，覆盖率为 7 类 140+ 测试 |
+
+> 最后更新：2026-08-09
+
 ## 启动自动刷新补齐 TXT 重匹配与备份同步（2026-08-08）
 
 用户询问"打开 App 是否自带一次同步"，确认缺口后修复：启动自动刷新此前只刷媒体库，不重新关联 TXT 作者、不触发备份写盘。

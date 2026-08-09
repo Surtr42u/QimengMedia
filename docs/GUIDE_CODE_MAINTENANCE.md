@@ -216,7 +216,7 @@
 | 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法约 280 行（`BackupManager.exportPersonalPrefs`，数据汇总合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
-| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 6 个核心测试类（131+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个） | ./gradlew test |
+| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 7 个核心测试类（140+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest 9 个） | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
@@ -261,6 +261,7 @@
 | `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处（23 个测试） |
 | `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
 | `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
+| `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（9 个测试，v1.13 新增） |
 
 ### detekt CI 集成
 
@@ -467,4 +468,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-09
