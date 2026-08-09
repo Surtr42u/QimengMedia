@@ -1,9 +1,14 @@
 package com.qimeng.media.ui.author
 
+import android.content.Context
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
@@ -37,6 +42,7 @@ class AuthorListFragment : Fragment() {
     }
     private var sortMode = SORT_DEFAULT
     private var filterMode = FILTER_ALL
+    private var searchQuery = ""
     private var cachedAuthors = emptyList<AuthorEntity>()
     private var cachedFileCounts = emptyList<AuthorFileCount>()
     private var cachedStats = emptyList<ViewStatsEntity>()
@@ -62,6 +68,29 @@ class AuthorListFragment : Fragment() {
         binding.authorChipCos.setOnClickListener { setFilterMode(FILTER_COS) }
 
         binding.authorSortButton.setOnClickListener { showSortSheet() }
+
+        // 搜索：按作者显示名模糊过滤，输入即刷新，与胶囊筛选/排序叠加生效
+        binding.authorSearchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                searchQuery = s?.toString()?.trim() ?: ""
+                lastRenderHash = ""
+                renderAuthors()
+            }
+        })
+        // 键盘搜索键收起输入法，避免遮挡列表
+        binding.authorSearchInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                val imm = requireContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(binding.authorSearchInput.windowToken, 0)
+                binding.authorSearchInput.clearFocus()
+                true
+            } else {
+                false
+            }
+        }
 
         setFilterMode(FILTER_ALL)
         observeData()
@@ -110,6 +139,7 @@ class AuthorListFragment : Fragment() {
         val hash = buildString {
             append(sorted.joinToString("|") { it.authorId })
             append("|$sortMode|$filterMode")
+            append("|search=$searchQuery")
             append("|counts=")
             fileCountMap.entries.sortedBy { it.key }.forEach { (id, c) -> append("$id:${c.fileCount},") }
             append("|views=")
@@ -120,6 +150,12 @@ class AuthorListFragment : Fragment() {
 
         binding.authorRecycler.visibility = if (sorted.isEmpty()) View.GONE else View.VISIBLE
         binding.authorEmptyText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
+        // 搜索无结果时显示搜索空状态，否则显示默认空状态
+        binding.authorEmptyText.text = if (sorted.isEmpty() && searchQuery.isNotBlank()) {
+            "没有找到匹配「$searchQuery」的作者"
+        } else {
+            "还没有添加作者\n通过数据管理导入 TXT 文件添加"
+        }
 
         if (sorted.isEmpty()) return
 
@@ -174,11 +210,15 @@ class AuthorListFragment : Fragment() {
     }
 
     private fun sortAndFilterAuthors(fileCountMap: Map<String, AuthorFileCount>): List<AuthorEntity> {
-        // 先按分类筛选
-        val filtered = when (filterMode) {
-            FILTER_DEFAULT -> cachedAuthors.filter { !it.authorId.startsWith("cos_") }
-            FILTER_COS -> cachedAuthors.filter { it.authorId.startsWith("cos_") }
-            else -> cachedAuthors
+        // 先按搜索词过滤（显示名模糊匹配，忽略大小写，多别名合并名任一命中即可）
+        var filtered = if (searchQuery.isBlank()) cachedAuthors else cachedAuthors.filter {
+            it.displayName.contains(searchQuery, ignoreCase = true)
+        }
+        // 再按分类筛选
+        filtered = when (filterMode) {
+            FILTER_DEFAULT -> filtered.filter { !it.authorId.startsWith("cos_") }
+            FILTER_COS -> filtered.filter { it.authorId.startsWith("cos_") }
+            else -> filtered
         }
         // 再排序
         return when (sortMode) {

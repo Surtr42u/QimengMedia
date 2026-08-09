@@ -10,6 +10,21 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 作者管理加搜索过滤（2026-08-09）
+
+执行 AI：deepseek-v4-flash
+
+作者管理页新增按作者名搜索：标题栏下方加整行常驻搜索框，输入即过滤作者列表。
+
+| 类别 | 改动 |
+|---|---|
+| 布局 | `fragment_author_list.xml` 标题栏与胶囊行之间加 `authorSearchInput`（`bg_capsule_soft` 胶囊背景，样式对齐搜索页输入框，`?attr/qmColor*` 主题色） |
+| 过滤逻辑 | `AuthorListFragment` 加 `searchQuery` 状态，`sortAndFilterAuthors()` 最前一层按 `displayName.contains(query, ignoreCase = true)` 模糊过滤（忽略大小写，多别名合并显示名任一命中即匹配）；与胶囊筛选（全部/常规/COS）、排序逐层叠加（搜索词 → 分类 → 排序） |
+| 交互 | 输入即刷新（TextWatcher）；键盘搜索键收起输入法并取消焦点；搜索无结果时空状态显示「没有找到匹配「关键词」的作者」，有结果时恢复默认空状态文本 |
+| 实现方式 | 纯内存过滤（作者量级数百，全量 Flow 已在内存），不改 DAO/Repository/ViewModel 链路 |
+
+> 最后更新：2026-08-09
+
 ## 作者 TXT 数字开头文件名误判编号行修复 + findMatch 日志降频（2026-08-09）
 
 执行 AI：deepseek-v4-flash

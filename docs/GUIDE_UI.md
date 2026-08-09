@@ -32,7 +32,7 @@
 | `app/src/main/java/com/qimeng/media/ui/adapter/GroupedMediaAdapter.kt` | 日期分组适配器（复用 MediaThumbnailAdapter.Holder） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组逻辑/`SearchContext`（出处/角色/作者/作品名搜索匹配） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaFilterSheet.kt` | 底部筛选面板（万能筛选，`FilterConfig` 控制可见筛选项） |
-| `app/src/main/java/com/qimeng/media/ui/author/AuthorListFragment.kt` | 作者列表（全部/常规/COS胶囊筛选+排序） |
+| `app/src/main/java/com/qimeng/media/ui/author/AuthorListFragment.kt` | 作者列表（全部/常规/COS胶囊筛选+按名搜索+排序） |
 | `app/src/main/java/com/qimeng/media/ui/author/AuthorFilesFragment.kt` | 作者文件浏览页（作品/角色/类型筛选+药丸+COS支持+日期分组/缩放列数） |
 | `app/src/main/java/com/qimeng/media/ui/history/BrowseHistoryFragment.kt` | 浏览历史（分区/作品/角色/类型筛选+药丸+COS芯片） |
 | `app/src/main/java/com/qimeng/media/ui/library/MediaLibraryViewModel.kt` | 共享 ViewModel |

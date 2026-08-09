@@ -37,6 +37,24 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+    <!-- 作者搜索框：按作者显示名模糊过滤，与胶囊筛选/排序叠加生效 -->
+    <EditText
+        android:id="@+id/authorSearchInput"
+        android:layout_width="match_parent"
+        android:layout_height="34dp"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="20dp"
+        android:background="@drawable/bg_capsule_soft"
+        android:hint="搜索作者名"
+        android:imeOptions="actionSearch"
+        android:inputType="text"
+        android:paddingHorizontal="14dp"
+        android:singleLine="true"
+        android:textColor="?attr/qmColorTextPrimary"
+        android:textColorHint="?attr/qmColorTextSecondary"
+        android:textSize="14sp" />
+
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
