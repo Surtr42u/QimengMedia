@@ -15,7 +15,7 @@
 ## 阶段 2：数据层与备份层
 
 - 目标：Room 实体/DAO/Repository + JSON 导入导出 + 记录键工厂 + 自动同步。
-- 状态：已完成。12 个实体、10 个 DAO、`AppDatabase`、`LocalMediaRepository`/`DefaultLocalMediaRepository`、`RecordKeyFactory`；`BackupManager` 用 `JSONObject` 手工序列化，v2.0 起导出**单文件全量 JSON**（`qimeng_backup.json`，16 个数据段含 media_files 元数据，不再拆 10 分文件/个人偏好导出）；自动同步已实现（`AutoSyncUseCase`，统一写单文件）。
+- 状态：已完成。13 个实体、11 个 DAO、`AppDatabase`、`LocalMediaRepository`/`DefaultLocalMediaRepository`、`RecordKeyFactory`；`BackupManager` 用 `JSONObject` 手工序列化，v2.0 起导出**单文件全量 JSON**（`qimeng_backup.json`，17 个数据段含 media_files 元数据与按天浏览聚合，不再拆 10 分文件/个人偏好导出）；自动同步已实现（`AutoSyncUseCase`，统一写单文件）。
 
 ## 阶段 3：扫描与索引
 

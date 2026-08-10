@@ -32,7 +32,7 @@
 ### 架构与基础设施
 
 - 单 Activity + 多 Fragment + MVVM，ViewModel → Repository → DAO 分层
-- Room + KSP，10 个 DAO、`AppDatabase`、`LocalMediaRepository`
+- Room + KSP，11 个 DAO、`AppDatabase`、`LocalMediaRepository`
 - ViewModel 按职责拆分为 4 个 UseCase（Scan/Thumbnail/AuthorImport/AutoSync）
 - Coil 3.4 图片加载 + Media3 1.8.0 ExoPlayer 视频 + libspng PNG 加速（NDK/CMake）
 - SAF + MediaStore 双引擎扫描，常规扫描 + COS 扫描两套独立体系
