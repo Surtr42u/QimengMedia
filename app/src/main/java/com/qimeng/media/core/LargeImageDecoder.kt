@@ -131,8 +131,14 @@ object LargeImageDecoder {
             largeDecodeSemaphore.release()
         }
     }?.also { bitmap ->
-        // 解码成功，写入 Coil 内存缓存
-        cacheBitmapInCoil(context, recordKey, bitmap)
+        // v1.15 修复：写入 Coil 内存缓存前先复制一份副本。
+        // 原实现把同一 Bitmap 实例同时交给 View 持有并写入 Coil 内存缓存，缓存 LRU
+        // 驱逐时 recycle 该实例，View 绘制已回收 bitmap 崩溃（IllegalArgumentException:
+        // width and height must be > 0）。写副本保证 View 持有的实例与缓存中的实例互不干扰，
+        // 兼顾缓存命中率与 bitmap 生命周期安全。
+        bitmap.copy(Bitmap.Config.ARGB_8888, false)?.let { copy ->
+            cacheBitmapInCoil(context, recordKey, copy)
+        }
     }
 
     /**

@@ -280,8 +280,9 @@ class FavoriteFragment : Fragment() {
             VIEW_MODE_PARTITION -> renderPartitionPills()
             VIEW_MODE_SOURCE -> renderSourcePills(sourceGroups)
             VIEW_MODE_CHARACTER -> {
-                // 注意：COS 分区下 renderCosWorkPills 传 typed（而非 charGroups），这是现有行为
-                if (isCosPartition) renderCosWorkPills(typed) else renderCharPills(charGroups)
+                // v1.15：COS 分区复用 computeFavoriteGroupsAsync 已算好的 charGroups 渲染药丸，
+                // 去掉重复 groupByCosWork（原实现 renderCosWorkPills(typed) 主线程再分组一次）
+                if (isCosPartition) renderCosWorkPills(charGroups) else renderCharPills(charGroups)
                 selectedChars.retainAll(charGroups.keys)
             }
             VIEW_MODE_TYPE -> renderTypePills()
@@ -360,13 +361,12 @@ class FavoriteFragment : Fragment() {
         )
     }
 
-    private fun renderCosWorkPills(media: List<MediaFileEntity>) {
-        val workGroups = MediaGroupHelper.groupByCosWork(media, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+    private fun renderCosWorkPills(charGroups: Map<String, List<MediaFileEntity>>) {
         MediaPillsHelper.renderCosWorkPills(
             requireContext(),
             binding.favoritePillsWrapper,
             binding.favoritePillsScroller,
-            workGroups,
+            charGroups,
             selectedChars,
             charPillsExpanded,
             onPillClick = {

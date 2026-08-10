@@ -95,7 +95,9 @@ object ThumbnailCache {
         // 使用 SHA-256 前16字符，避免 hashCode 碰撞
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(key.toByteArray())
-        return hash.take(8).joinToString("") { "%02x".format(it) }
+        // v1.15：负字节转正再格式化（原 `"%02x".format(Byte)` 对负值输出 16 位十六进制，
+        // 导致缓存文件名长度不一致），与 ScanUtils.shortHash 修复同根因
+        return hash.take(8).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     // ===== 缩略图（列表页用，480x270） =====

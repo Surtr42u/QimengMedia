@@ -10,6 +10,34 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 全项目巡检修复（v1.15，2026-08-10）
+
+执行 AI：deepseek-v4-flash
+
+用户要求"看看项目有 bug 吗，全部修复"。分 6 组（扫描/数据、备份、统计、UI 常规、详情/播放/解码、构建/杂项）并行修复，经 reviewer 审查发现并修复 1 个 P0 回归（DATA LIKE 转义把递归通配符一并转义，自动刷新会清空常规扫描源数据），SQLite 验证后闭环。
+
+| 类别 | 改动 |
+|---|---|
+| 数据丢失高危 | shortHash 负 Byte `%02x` 格式化恒等于 `"ffffffff"` 致 recordKey 主键互相覆盖；COS workName 判定 off-by-one（`> 2` → `>= 2`，结构2 作品被合并为作者名）；删除扫描源 legacy 回退用文件 URI startsWith tree URI 前缀恒不命中致整体误删（改为 null 保守保留，宁残留不可误删）；MediaStoreObserver 空查询跳过残留清理（目录清空后 DB 行残留） |
+| 扫描 | 增量刷新只 upsert 新 key → 同名覆盖/重编码元数据永久陈旧（改"新 key 或元数据有变"）；防抖 cancel 无单飞保护 → `isRefreshing` AtomicBoolean；DATA LIKE 通配符转义（只转义前缀保留 `/%`，P0 修复）；cos_works.fileCount 语义（作者总文件数→作品文件数）；COS 刷新清理已消失/改名作品行（`CosWorkDao.deleteByIds`）；SafMediaScanner 捕获全部异常跳过目录 |
+| 备份 | writeJsonAtomic rename 失败丢唯一备份（旧备份先改 .bak 暂存）；写侧补 64MB 上限与读侧对称；点赞恢复改并集合并（与收藏一致，不再静默删本地独有点赞）；禁用专辑规则进备份；schemaVersion 导入校验；authorId 截断统一（主键无长度约束，去掉 take(64)）；标签重复恢复 count 虚增（按 insert 返回值过滤 IGNORE） |
+| 统计 | 常看作者功能完全失效修复（`cachedAuthorData` 从未赋值，补 viewModel.authors 收集）；标签排行点击跳搜索页携带标签（showSearchFragment 增 initialQuery 参数透传）；来源趋势 COS 判定改 combine 等待两流齐备（消除首帧错画+闪烁）；主线程 O(n²) 聚合移 Dispatchers.Default（renderTrendSeq 序号防护）；卡片/趋势图窗口口径统一（naturalDayCutoff 今天 0 点对齐）；平均浏览分母统一（含 totalBrowseSeconds>0）；进度条 0 值显示 1% 修复；删死代码 cachedTagData |
+| UI 常规 | 作者文件页主线程全量筛选移协程（render 编排 + Default 计算）；作者页下拉刷新收集器累积（observeJob cancel，对齐 AllFilesFragment）；DataBackupFragment rebuildContent 收集器累积（视图字段化 + Job cancel，开关状态闪跳修复）；作者列表主线程重算移协程（消除 sortAndFilter 重复计算）；收藏页 COS 角色药丸重复分组（复用 charGroups）；GroupedMediaAdapter 异步提交；GIF 分支 bind 开头统一 cancel decodeJob；相册详情 preFingerprint 纳入 selectedChars；首页每日去重计数移到 submitList 后（滚动新露出项也计入） |
+| 详情/播放/解码 | LargeImageDecoder bitmap 双引用崩溃（写 Coil 缓存前 copy 副本，根治"width and height must be > 0"）；showInfoSheet 防重弹窗 + viewLifecycleOwner + 先 show 再补解码；播放计数改会话级 `playedRecordKeys` 集合（滑走滑回不重复计）；BiliPlayerView 手势拖进度与轮询竞争（轮询跳过 isGestureDragging）、setPlayer 恢复倍速、attach/detach listener 对称、ENDED 态 startPlayback 先 seekTo(0)、duration<=0 忽略手势 seek；ZoomImageView onPreDraw 监听器累积（单例先 remove 再 add）；ThumbnailLoader lastFrame 泄漏回收；ThumbnailCache hashKey 负字节（同 shortHash 根因）；GpuInfo await 2s 超时兜底；AnrWatchdog tickTimestamp @Volatile；TimelineTagHelper 弹窗打开时暂停播放（标记时间点与实际画面一致） |
+| 构建/杂项 | Release 签名接线（app/keystore.properties 读取，.gitignore 排除密码不入库，缺失产出未签名 APK）；AppPrefsManager 读改写加锁；ThumbnailUseCase isPregenerating @Volatile；MIGRATION_6_7 补 isCosFile 索引（老库升级全表扫修复） |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest` 通过；P0 LIKE 转义修复经 SQLite 实测（目录含 `_` 时只匹配目标目录、不误匹配相邻目录，整体转义复现 0 行）；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `scan/ScanUtils.kt` `scan/MediaStoreScanner.kt` `scan/MediaStoreObserver.kt` `scan/SafMediaScanner.kt` `domain/ScanUseCase.kt` `data/repository/DefaultLocalMediaRepository.kt` `data/repository/LocalMediaRepository.kt` `data/db/dao/CosWorkDao.kt` `core/RecordKeyFactory.kt` | 扫描/数据层修复 |
+| `backup/BackupManager.kt` | 备份修复 |
+| `ui/stats/DataStatsFragment.kt` `ui/stats/StatsDetailFragment.kt` `ui/stats/StatsFormatHelper.kt` `ui/stats/RankListAdapter.kt` `MainActivity.kt` `ui/search/SearchFragment.kt` | 统计修复 |
+| `ui/author/AuthorFilesFragment.kt` `ui/author/AuthorListFragment.kt` `ui/profile/DataBackupFragment.kt` `ui/favorite/FavoriteFragment.kt` `ui/adapter/GroupedMediaAdapter.kt` `ui/adapter/MediaThumbnailAdapter.kt` `ui/album/AlbumDetailFragment.kt` `ui/main/HomeFragment.kt` `ui/browser/MediaFilterSheet.kt` | UI 常规修复 |
+| `ui/detail/MediaDetailFragment.kt` `ui/detail/BiliPlayerView.kt` `ui/detail/ZoomImageView.kt` `ui/detail/TimelineTagHelper.kt` `core/LargeImageDecoder.kt` `core/ThumbnailLoader.kt` `core/ThumbnailCache.kt` `core/GpuInfo.kt` `core/AnrWatchdog.kt` | 详情/播放/解码修复 |
+| `app/build.gradle.kts` `data/prefs/AppPrefsManager.kt` `domain/ThumbnailUseCase.kt` `data/db/AppDatabase.kt` | 构建/杂项修复 |
+| `docs/GUIDE_SCAN.md` `docs/GUIDE_DATA.md` `docs/GUIDE_BACKUP.md` `docs/GUIDE_UI.md` `docs/GUIDE_README.md` `docs/PROJECT_GUIDE.md` `docs/CHANGELOG.md` | 文档同步 |
+
 ## 数据统计页重构 + 播放计数修复 + 按天浏览聚合（v1.14，2026-08-09）
 
 执行 AI：deepseek-v4-flash

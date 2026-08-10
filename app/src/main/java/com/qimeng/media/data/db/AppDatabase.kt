@@ -45,7 +45,7 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
         CosWorkEntity::class,
         DailyBrowseEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -121,13 +121,20 @@ abstract class AppDatabase : RoomDatabase() {
             it.execSQL("CREATE INDEX IF NOT EXISTS index_daily_browse_recordKey ON daily_browse(recordKey)")
         }
 
+        // v1.15：老库升级补 isCosFile 索引。MediaFileEntity 声明了该索引，但 MIGRATION_1_2
+        // 只 ADD COLUMN 未建索引，从 v1 升级的用户对 isCosFile 的查询（observeNonCosMedia/
+        // observeCosMedia/deleteCosMedia/clearNonCosIndex）恒走全表扫。仅建索引，无表结构变化。
+        private val MIGRATION_6_7 = androidx.room.migration.Migration(6, 7) {
+            it.execSQL("CREATE INDEX IF NOT EXISTS index_media_files_isCosFile ON media_files(isCosFile)")
+        }
+
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .build().also { instance = it }
         }
     }

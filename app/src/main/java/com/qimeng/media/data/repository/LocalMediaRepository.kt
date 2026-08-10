@@ -91,6 +91,10 @@ interface LocalMediaRepository {
     fun observeCosScanSources(): Flow<List<ScanSourceEntity>>
     suspend fun getCosScanSources(): List<ScanSourceEntity>
     suspend fun upsertCosWorks(works: List<CosWorkEntity>)
+    /** v1.x：查询某 COS 扫描源归属的全部作品行（供刷新后清理已消失/改名作品）。 */
+    suspend fun getCosWorksBySourceUri(sourceUri: String): List<CosWorkEntity>
+    /** v1.x：按主键删除 cos_works 行（刷新时删除该源已消失的作品，新增方法不改表结构）。 */
+    suspend fun deleteCosWorksByIds(ids: List<Long>)
     suspend fun rebuildCosIndex(mediaFiles: List<MediaFileEntity>, cosWorks: List<CosWorkEntity>)
     suspend fun deleteCosScanSource(uriString: String)
 

@@ -393,6 +393,14 @@ class DefaultLocalMediaRepository(
         database.cosWorkDao().upsertAll(works)
     }
 
+    override suspend fun getCosWorksBySourceUri(sourceUri: String): List<CosWorkEntity> =
+        database.cosWorkDao().getBySourceUri(sourceUri)
+
+    override suspend fun deleteCosWorksByIds(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        ids.chunked(500).forEach { chunk -> database.cosWorkDao().deleteByIds(chunk) }
+    }
+
     override suspend fun rebuildCosIndex(mediaFiles: List<MediaFileEntity>, cosWorks: List<CosWorkEntity>) {
         // 轻量查询：只获取 recordKey，避免加载全量 MediaFileEntity
         val existingCosKeys = mediaFileDao.getAllCosRecordKeys()
@@ -418,7 +426,6 @@ class DefaultLocalMediaRepository(
             // v1.12：按 sourceUri 精确匹配归属作品与文件。
             // 旧版用 folderUri（文件系统路径）与扫描源 content URI 前缀匹配恒失败，
             // 删除任一 COS 源会清空所有源作品；这里只删除该源自己的作品。
-            val sourceWorks = database.cosWorkDao().getBySourceUri(uriString)
             database.cosWorkDao().deleteBySourceUri(uriString)
 
             // 删除该源归属的媒体文件（含级联统计/历史/标签/关联；v1.12 按 500 分块避免
@@ -429,28 +436,12 @@ class DefaultLocalMediaRepository(
                 deleteAllRefsChunked(orphanKeys)
             }
 
-            // 兼容旧版数据（sourceUri 为 null）：按 folderUri 前缀兜底清理
-            val legacyWorks = if (sourceWorks.isEmpty()) {
-                // 旧版未写入 sourceUri 时 getBySourceUri 为空，退回到前缀匹配兜底
-                val activeCosUris = scanSourceDao.getCosSources().map { src ->
-                    if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
-                }
-                database.cosWorkDao().getAll().filter { work ->
-                    activeCosUris.none { prefix -> work.folderUri.startsWith(prefix) }
-                }
-            } else emptyList()
-            for (work in legacyWorks) {
-                val prefix = if (work.folderUri.endsWith("/")) work.folderUri else "${work.folderUri}/"
-                val orphanKeys = mediaFileDao.getCosRecordKeysByUriPrefixLight(prefix)
-                if (orphanKeys.isNotEmpty()) {
-                    allOrphanKeys.addAll(orphanKeys)
-                    deleteAllRefsChunked(orphanKeys)
-                }
-            }
-            if (legacyWorks.isNotEmpty()) {
-                val activeUris = scanSourceDao.getCosSources().map { it.uriString.trimEnd('/') }
-                database.cosWorkDao().deleteByInactiveUris(activeUris)
-            }
+            // v1.x 修复：移除旧版数据（sourceUri 为 null/空）的 folderUri 前缀兜底清理。
+            // 旧实现中 folderUri 是文件系统路径（/storage/emulated/0/...），剩余源的 uriString
+            // 是 tree URI（content://.../tree/...），两者命名空间不同 startsWith 恒不命中，
+            // 导致 activeCosUris.none{...} 恒为 true，取到全部旧版作品行并整体删除
+            // （清空所有源 cos_works）。旧版数据无法可靠反推归属，按「宁可残留不可误删」
+            // 原则保守保留、跳过清理（与 GUIDE_SCAN.md「删除扫描源」第 3 条一致）。
             authorDao.deleteOrphanCosAuthors()
         }
         // 事务外清理 SharedPreferences（点赞、收藏）

@@ -34,73 +34,92 @@ class AppPrefsManager(context: Context) {
     private val appContext = context.applicationContext
     private val prefsFile = File(appContext.filesDir, PREFS_FILE)
 
+    // v1.15：读-改-写与磁盘写共享同一把锁，避免多线程并发 setter 时丢更新/写盘竞争
+    private val lock = Any()
+
     private val _prefs = MutableStateFlow(loadFromDisk())
     val prefs = _prefs.asStateFlow()
 
     val customAlbumSources get() = _prefs.value.customAlbumSources
 
     fun addCustomAlbumSource(name: String) {
-        val current = _prefs.value
-        if (name in current.customAlbumSources) return
-        val updated = current.copy(customAlbumSources = current.customAlbumSources + name)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (name in current.customAlbumSources) return
+            val updated = current.copy(customAlbumSources = current.customAlbumSources + name)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun removeCustomAlbumSource(name: String) {
-        val current = _prefs.value
-        if (name !in current.customAlbumSources) return
-        val updated = current.copy(customAlbumSources = current.customAlbumSources - name)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (name !in current.customAlbumSources) return
+            val updated = current.copy(customAlbumSources = current.customAlbumSources - name)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateThemeMode(mode: String) {
-        val current = _prefs.value
-        if (current.themeMode == mode) return
-        val updated = current.copy(themeMode = mode)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.themeMode == mode) return
+            val updated = current.copy(themeMode = mode)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateGridColumnsHome(columns: Int) {
-        val current = _prefs.value
-        if (current.gridColumnsHome == columns) return
-        val updated = current.copy(gridColumnsHome = columns)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.gridColumnsHome == columns) return
+            val updated = current.copy(gridColumnsHome = columns)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateGridColumnsAll(columns: Int) {
-        val current = _prefs.value
-        if (current.gridColumnsAll == columns) return
-        val updated = current.copy(gridColumnsAll = columns)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.gridColumnsAll == columns) return
+            val updated = current.copy(gridColumnsAll = columns)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateGridColumnsAlbum(columns: Int) {
-        val current = _prefs.value
-        if (current.gridColumnsAlbum == columns) return
-        val updated = current.copy(gridColumnsAlbum = columns)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.gridColumnsAlbum == columns) return
+            val updated = current.copy(gridColumnsAlbum = columns)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateAutoSync(enabled: Boolean) {
-        val current = _prefs.value
-        if (current.autoSync == enabled) return
-        val updated = current.copy(autoSync = enabled)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.autoSync == enabled) return
+            val updated = current.copy(autoSync = enabled)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun updateRecommendationPrefs(prefs: RecommendationPrefs) {
-        val current = _prefs.value
-        if (current.recommendationPrefs == prefs) return
-        val updated = current.copy(recommendationPrefs = prefs)
-        _prefs.value = updated
-        saveToDisk(updated)
+        synchronized(lock) {
+            val current = _prefs.value
+            if (current.recommendationPrefs == prefs) return
+            val updated = current.copy(recommendationPrefs = prefs)
+            _prefs.value = updated
+            saveToDisk(updated)
+        }
     }
 
     fun exportToJson(): String {

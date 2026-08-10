@@ -100,15 +100,15 @@ class StatsDetailFragment : Fragment() {
     private fun observeData() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // v1.14 修复：来源趋势 COS 判定依赖当前库存 cosMedia 的 recordKey 集合（daily_browse
+                // 表无 isCosFile 字段），原两 collector 首帧数据不齐会导致先画错再重画闪烁。
+                // 改为 combine 等待 dailyBrowse 与 cosMedia 数据齐备后再统一渲染。
                 launch {
-                    viewModel.dailyBrowse.collect { daily ->
+                    combine(viewModel.dailyBrowse, viewModel.cosMedia) { daily, cosMedia ->
+                        daily to cosMedia
+                    }.collect { (daily, cosMedia) ->
                         cachedDaily = daily
-                        renderByMode()
-                    }
-                }
-                launch {
-                    viewModel.cosMedia.collect { media ->
-                        cachedCosKeys = media.map { it.recordKey }.toSet()
+                        cachedCosKeys = cosMedia.map { it.recordKey }.toSet()
                         renderByMode()
                     }
                 }
@@ -875,7 +875,11 @@ class StatsDetailFragment : Fragment() {
     private fun handleItemClick(id: String) {
         val activity = requireActivity() as? MainActivity ?: return
         when {
-            id.startsWith("tag:") -> activity.showSearchFragment()
+            id.startsWith("tag:") -> {
+                // v1.14 修复：标签条目点击跳转搜索页时携带标签名作为初始查询词
+                val tagName = id.removePrefix("tag:")
+                activity.showSearchFragment(tagName)
+            }
             mode == MODE_AUTHORS -> activity.showAuthorFiles(id)
             else -> activity.showDetailFragment(id)
         }

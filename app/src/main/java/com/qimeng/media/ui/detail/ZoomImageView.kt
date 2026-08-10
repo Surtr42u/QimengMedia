@@ -169,14 +169,21 @@ class ZoomImageView @JvmOverloads constructor(
             resetZoom()
         } else {
             com.qimeng.media.core.AppLog.d("Detail", "setImageDrawable: view未就绪,注册onPreDraw延迟resetZoom view=${width}x${height}")
-            viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    viewTreeObserver.removeOnPreDrawListener(this)
-                    com.qimeng.media.core.AppLog.d("Detail", "onPreDraw触发: view=${width}x${height} drawable=${lastDrawableWidth}x${lastDrawableHeight}")
-                    if (width > 0 && height > 0) resetZoom()
-                    return true
-                }
-            })
+            // v1.15：注册前先移除已注册的监听器——原实现每次 setImageDrawable 都 new 一个
+            // OnPreDrawListener 且引用不可达，快速连续换图会累积多个监听器（首个 preDraw 全部
+            // 触发、重复 resetZoom），视图 detach 时监听器滞留且 resetZoom 永不执行
+            viewTreeObserver.removeOnPreDrawListener(preDrawResetListener)
+            viewTreeObserver.addOnPreDrawListener(preDrawResetListener)
+        }
+    }
+
+    /** v1.15：view 未就绪时延迟 resetZoom 的监听器（单例，避免累积） */
+    private val preDrawResetListener = object : ViewTreeObserver.OnPreDrawListener {
+        override fun onPreDraw(): Boolean {
+            viewTreeObserver.removeOnPreDrawListener(this)
+            com.qimeng.media.core.AppLog.d("Detail", "onPreDraw触发: view=${width}x${height} drawable=${lastDrawableWidth}x${lastDrawableHeight}")
+            if (width > 0 && height > 0) resetZoom()
+            return true
         }
     }
 

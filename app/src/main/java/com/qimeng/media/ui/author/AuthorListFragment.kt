@@ -31,8 +31,11 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.databinding.FragmentAuthorListBinding
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.widget.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AuthorListFragment : Fragment() {
     private var _binding: FragmentAuthorListBinding? = null
@@ -48,6 +51,8 @@ class AuthorListFragment : Fragment() {
     private var cachedStats = emptyList<ViewStatsEntity>()
     private var cachedAuthorMedia = emptyList<AuthorMediaCrossRef>()
     private var lastRenderHash = ""
+    /** 渲染计算协程任务：先取消旧任务再启动，避免快速输入/数据发射时旧协程晚完成覆盖新结果（v1.15） */
+    private var renderJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -131,50 +136,62 @@ class AuthorListFragment : Fragment() {
     private fun renderAuthors() {
         if (_binding == null) return
 
-        val fileCountMap = cachedFileCounts.associateBy { it.authorId }
-        val viewCounts = computeAuthorViewCounts()
-        val sorted = sortAndFilterAuthors(fileCountMap)
+        // v1.15：统计计算与排序整体移入 Dispatchers.Default（原实现每次输入按键/数据发射
+        // 都在主线程全量重算 viewCounts/recentViewCounts，且 sortAndFilterAuthors 内部又
+        // 重复计算一遍），主线程只做 UI 更新；renderJob 先 cancel 防快速输入时旧结果覆盖新结果
+        renderJob?.cancel()
+        renderJob = viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                val fileCountMap = cachedFileCounts.associateBy { it.authorId }
+                val viewCounts = computeAuthorViewCounts()
+                val recentViewCounts = computeAuthorRecentViewCounts()
+                val sorted = sortAndFilterAuthors(fileCountMap, viewCounts, recentViewCounts)
 
-        // v1.12 修复：hash 追加文件数/浏览数维度，浏览/文件数变化后列表副标题与排序可刷新
-        val hash = buildString {
-            append(sorted.joinToString("|") { it.authorId })
-            append("|$sortMode|$filterMode")
-            append("|search=$searchQuery")
-            append("|counts=")
-            fileCountMap.entries.sortedBy { it.key }.forEach { (id, c) -> append("$id:${c.fileCount},") }
-            append("|views=")
-            viewCounts.entries.sortedBy { it.key }.forEach { (id, v) -> append("$id:$v,") }
-        }
-        if (hash == lastRenderHash) return
-        lastRenderHash = hash
-
-        binding.authorRecycler.visibility = if (sorted.isEmpty()) View.GONE else View.VISIBLE
-        binding.authorEmptyText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
-        // 搜索无结果时显示搜索空状态，否则显示默认空状态
-        binding.authorEmptyText.text = if (sorted.isEmpty() && searchQuery.isNotBlank()) {
-            "没有找到匹配「$searchQuery」的作者"
-        } else {
-            "还没有添加作者\n通过数据管理导入 TXT 文件添加"
-        }
-
-        if (sorted.isEmpty()) return
-
-        val container = binding.authorRecycler
-        if (container.adapter == null || container.layoutManager == null) {
-            container.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
-            container.adapter = AuthorListAdapter { author ->
-                val isCos = author.authorId.startsWith("cos_")
-                (requireActivity() as? MainActivity)?.showAuthorFiles(author.authorId, isCos)
+                // v1.12 修复：hash 追加文件数/浏览数维度，浏览/文件数变化后列表副标题与排序可刷新
+                val hash = buildString {
+                    append(sorted.joinToString("|") { it.authorId })
+                    append("|$sortMode|$filterMode")
+                    append("|search=$searchQuery")
+                    append("|counts=")
+                    fileCountMap.entries.sortedBy { it.key }.forEach { (id, c) -> append("$id:${c.fileCount},") }
+                    append("|views=")
+                    viewCounts.entries.sortedBy { it.key }.forEach { (id, v) -> append("$id:$v,") }
+                }
+                AuthorRenderResult(fileCountMap, viewCounts, recentViewCounts, sorted, hash)
             }
-        }
-        (container.adapter as? AuthorListAdapter)?.let { adapter ->
-            adapter.cachedFileCounts = fileCountMap
-            adapter.cachedAuthorViewCounts = viewCounts
-            adapter.cachedAuthorRecentViewCounts = computeAuthorRecentViewCounts()
-            adapter.sortMode = sortMode
-            adapter.submitList(sorted)
-            // v1.12：列表项内容相等时 AsyncListDiffer 不会 re-bind，手动刷新副标题等渲染数据
-            adapter.refreshBindings()
+            if (_binding == null) return@launch
+            val (fileCountMap, viewCounts, recentViewCounts, sorted, hash) = result
+            if (hash == lastRenderHash) return@launch
+            lastRenderHash = hash
+
+            binding.authorRecycler.visibility = if (sorted.isEmpty()) View.GONE else View.VISIBLE
+            binding.authorEmptyText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
+            // 搜索无结果时显示搜索空状态，否则显示默认空状态
+            binding.authorEmptyText.text = if (sorted.isEmpty() && searchQuery.isNotBlank()) {
+                "没有找到匹配「$searchQuery」的作者"
+            } else {
+                "还没有添加作者\n通过数据管理导入 TXT 文件添加"
+            }
+
+            if (sorted.isEmpty()) return@launch
+
+            val container = binding.authorRecycler
+            if (container.adapter == null || container.layoutManager == null) {
+                container.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
+                container.adapter = AuthorListAdapter { author ->
+                    val isCos = author.authorId.startsWith("cos_")
+                    (requireActivity() as? MainActivity)?.showAuthorFiles(author.authorId, isCos)
+                }
+            }
+            (container.adapter as? AuthorListAdapter)?.let { adapter ->
+                adapter.cachedFileCounts = fileCountMap
+                adapter.cachedAuthorViewCounts = viewCounts
+                adapter.cachedAuthorRecentViewCounts = recentViewCounts
+                adapter.sortMode = sortMode
+                adapter.submitList(sorted)
+                // v1.12：列表项内容相等时 AsyncListDiffer 不会 re-bind，手动刷新副标题等渲染数据
+                adapter.refreshBindings()
+            }
         }
     }
 
@@ -209,7 +226,11 @@ class AuthorListFragment : Fragment() {
         return result
     }
 
-    private fun sortAndFilterAuthors(fileCountMap: Map<String, AuthorFileCount>): List<AuthorEntity> {
+    private fun sortAndFilterAuthors(
+        fileCountMap: Map<String, AuthorFileCount>,
+        viewCounts: Map<String, Int>,
+        recentViewCounts: Map<String, Int>
+    ): List<AuthorEntity> {
         // 先按搜索词过滤（显示名模糊匹配，忽略大小写，多别名合并名任一命中即可）
         var filtered = if (searchQuery.isBlank()) cachedAuthors else cachedAuthors.filter {
             it.displayName.contains(searchQuery, ignoreCase = true)
@@ -220,22 +241,16 @@ class AuthorListFragment : Fragment() {
             FILTER_COS -> filtered.filter { it.authorId.startsWith("cos_") }
             else -> filtered
         }
-        // 再排序
+        // 再排序（viewCounts/recentViewCounts 由调用方一次性算好传入，避免每种排序各重算一遍）
         return when (sortMode) {
             SORT_FILE_COUNT -> filtered.sortedByDescending { author ->
                 fileCountMap[author.authorId]?.fileCount ?: 0
             }
-            SORT_VIEW_COUNT -> {
-                val viewCounts = computeAuthorViewCounts()
-                filtered.sortedByDescending { author ->
-                    viewCounts[author.authorId] ?: 0
-                }
+            SORT_VIEW_COUNT -> filtered.sortedByDescending { author ->
+                viewCounts[author.authorId] ?: 0
             }
-            SORT_FREQUENT -> {
-                val recentCounts = computeAuthorRecentViewCounts()
-                filtered.sortedByDescending { author ->
-                    recentCounts[author.authorId] ?: 0
-                }
+            SORT_FREQUENT -> filtered.sortedByDescending { author ->
+                recentViewCounts[author.authorId] ?: 0
             }
             SORT_FOLLOWED -> {
                 // 特别关注：只显示已关注的作者
@@ -245,6 +260,15 @@ class AuthorListFragment : Fragment() {
             else -> filtered.sortedBy { it.displayName }
         }
     }
+
+    /** renderAuthors 协程内计算结果封装（v1.15） */
+    private data class AuthorRenderResult(
+        val fileCountMap: Map<String, AuthorFileCount>,
+        val viewCounts: Map<String, Int>,
+        val recentViewCounts: Map<String, Int>,
+        val sorted: List<AuthorEntity>,
+        val hash: String
+    )
 
     /** 排序选项 BottomSheet */
     private fun showSortSheet() {

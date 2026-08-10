@@ -94,6 +94,10 @@ class MediaThumbnailAdapter(
          * 3. 解码完成后更新为缓存文件路径（下次滚动回来直接从 Coil 内存缓存读取）
          */
         fun bind(item: MediaFileEntity, tw: Int, th: Int) {
+            // v1.12：统一在 bind 开头取消上一个未完成的解码任务。
+            // 旧实现在 GIF 分支提前 return 之后才 cancel（位于下方 decodeJob?.cancel()），
+            // GIF 项复用时旧视频/图片解码 job 未被取消，继续在后台跑、decodeJob 引用残留。
+            decodeJob?.cancel()
             val isVideo = item.mediaType == MediaType.VIDEO
             val isGif = item.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
 
@@ -158,7 +162,6 @@ class MediaThumbnailAdapter(
             // 限制并发数防止快速滑动时大量解码与预生成争抢 IO/内存导致 OOM 卡死
             if (lifecycleScope != null) {
                 val scope = lifecycleScope
-                decodeJob?.cancel()
                 decodeJob = scope.launch(Dispatchers.IO) {
                     // 预生成可能已在解码此文件，先检查缓存是否已存在
                     val cacheFile = ThumbnailCache.getThumbnailFile(itemView.context, item.recordKey)

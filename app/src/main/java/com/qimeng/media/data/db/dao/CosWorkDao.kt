@@ -27,6 +27,14 @@ interface CosWorkDao {
     @Query("SELECT * FROM cos_works WHERE sourceUri = :sourceUri")
     suspend fun getBySourceUri(sourceUri: String): List<CosWorkEntity>
 
+    /**
+     * v1.x：按 id 删除作品行（COS 刷新时删除该源下已消失/改名的作品）。
+     * workKey 是「作者/作品」拼接串，无法在 SQL 中与 NOT IN 直接匹配，
+     * 故在内存计算待删行后按主键删除（新增方法不改表结构，无需迁移）。
+     */
+    @Query("DELETE FROM cos_works WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     /** v1.12：按扫描源 tree URI 删除归属作品。旧版 deleteByInactiveUris 用 folderUri 与
      * 扫描源 content URI 前缀匹配恒失败，删除任一 COS 源会误删全部源作品。 */
     @Query("DELETE FROM cos_works WHERE sourceUri = :sourceUri")

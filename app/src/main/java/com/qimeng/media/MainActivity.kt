@@ -302,11 +302,16 @@ class MainActivity : AppCompatActivity() {
             .commit()
     }
 
-    fun showSearchFragment() {
+    /**
+     * 打开搜索页。
+     * @param initialQuery 初始查询词（可为 null，有值时 SearchFragment 自动执行该词搜索），
+     * 默认 null 不改变其他调用处（如 HomeFragment）行为。
+     */
+    fun showSearchFragment(initialQuery: String? = null) {
         binding.bottomNavigation.visibility = View.GONE
         supportFragmentManager.beginTransaction()
             .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
-            .add(R.id.fragmentContainer, SearchFragment())
+            .add(R.id.fragmentContainer, SearchFragment.newInstance(initialQuery))
             .addToBackStack(null)
             .commit()
     }

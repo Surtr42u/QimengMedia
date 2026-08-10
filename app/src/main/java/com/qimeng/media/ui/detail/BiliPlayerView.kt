@@ -423,7 +423,10 @@ class BiliPlayerView @JvmOverloads constructor(
     private val updateProgressRunnable = object : Runnable {
         override fun run() {
             val player = playerView.player
-            if (player != null && !isSeekbarDragging) {
+            // v1.15：手势拖拽期间也跳过轮询更新（原只跳过 seekbar 拖动，横滑手势拖进度时
+            // isSeekbarDragging 为 false，200ms 轮询用 player.currentPosition 覆盖手势预览，
+            // 导致进度条抖动、seek 落点被回写）
+            if (player != null && !isSeekbarDragging && !isGestureDragging) {
                 val pos = player.currentPosition
                 val d = duration
                 if (d > 0) {
@@ -440,6 +443,8 @@ class BiliPlayerView @JvmOverloads constructor(
         playerView.player = player
         player.addListener(playerListener)
         player.volume = if (isMuted) 0f else 1f
+        // v1.15：恢复当前倍速——原实现只恢复音量，锁定过 2x 后新播放器实际 1x 但 UI 显示 2x，状态脱节
+        player.setPlaybackSpeed(currentSpeed)
         removeCallbacks(updateProgressRunnable)
         post(updateProgressRunnable)
     }
@@ -452,6 +457,10 @@ class BiliPlayerView @JvmOverloads constructor(
 
     fun startPlayback() {
         val player = playerView.player as? ExoPlayer ?: return
+        // v1.15：播完后再点播放需先 seek 回开头（与 togglePlayPause 行为对齐），否则保持 ENDED 态不播
+        if (player.playbackState == Player.STATE_ENDED) {
+            player.seekTo(0)
+        }
         player.playWhenReady = true
         showController(true)
     }
@@ -624,18 +633,21 @@ class BiliPlayerView @JvmOverloads constructor(
                         when (gestureType) {
                             GESTURE_PROGRESS -> {
                                 val d = duration
-                                val maxSeekMs = if (d in 1..30_000) d else if (d in 30_001..120_000) 60_000L else 120_000L
-                                seekDelta = ((dx / width) * maxSeekMs).toLong()
-                                val newPos = max(0L, min(seekStartPos + seekDelta, d))
-                                val sign = if (seekDelta >= 0) "+" else ""
-                                gestureText.text = "$sign${formatMs(seekDelta)}  ${formatMs(newPos)} / ${formatMs(d)}"
-                                gestureIndicator.isVisible = true
-                                if (d > 0) {
+                                // v1.15：duration 未就绪（流未 READY）时忽略手势 seek，避免 seekTo(0)
+                                if (d <= 0) {
+                                    // 无时长信息，直接结束本次拖拽
+                                } else {
+                                    val maxSeekMs = if (d in 1..30_000) d else if (d in 30_001..120_000) 60_000L else 120_000L
+                                    seekDelta = ((dx / width) * maxSeekMs).toLong()
+                                    val newPos = max(0L, min(seekStartPos + seekDelta, d))
+                                    val sign = if (seekDelta >= 0) "+" else ""
+                                    gestureText.text = "$sign${formatMs(seekDelta)}  ${formatMs(newPos)} / ${formatMs(d)}"
+                                    gestureIndicator.isVisible = true
                                     progressBar.progress = ((newPos * 1000) / d).toInt()
                                     currentTimeText.text = formatMs(newPos)
+                                    bottomBar.isVisible = true
+                                    playerView.player?.seekTo(newPos)
                                 }
-                                bottomBar.isVisible = true
-                                playerView.player?.seekTo(newPos)
                             }
                             GESTURE_NONE -> { isGestureDragging = false }
                         }
@@ -698,6 +710,9 @@ class BiliPlayerView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         if (playerView.player != null) {
+            // v1.15：detach 时移除的 listener 需在重新 attach 后补挂，
+            // 否则视图复用场景播放/暂停图标不再更新、STATE_ENDED 不再弹控制器
+            playerView.player?.addListener(playerListener)
             post(updateProgressRunnable)
         }
     }

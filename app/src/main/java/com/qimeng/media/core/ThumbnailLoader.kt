@@ -154,6 +154,8 @@ object ThumbnailLoader {
                     )
                     if (frame != null && !isBlackFrame(frame)) {
                         AppLog.d("Thumb", "loadFirstFrame: non-black at ${positionMs}ms")
+                        // v1.15：找到非黑帧时先回收暂存的 lastFrame（黑帧），避免泄漏一张 Bitmap
+                        lastFrame?.recycle()
                         return@withContext convertTo565(frame)
                     }
                     if (frame != null && lastFrame == null) {

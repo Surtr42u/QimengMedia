@@ -45,6 +45,18 @@ class DataBackupFragment : Fragment() {
     private lateinit var backupLocationLauncher: ActivityResultLauncher<Uri?>
     private lateinit var importDirectoryLauncher: ActivityResultLauncher<Uri?>
 
+    // v1.15：缓存与同步区块的视图引用与收集器 Job。
+    // buildCacheSyncSection 每次 rebuildContent 都会重建视图，若收集器每次也重新 launch 并持有
+    // 局部视图引用，会在 viewLifecycleOwner.lifecycleScope 上累积永久收集器（旧收集器闭包持有
+    // 已 removeAllViews 的旧视图，switch 状态闪跳）。修复：视图存为字段引用，收集器用 Job 引用
+    // 先 cancel 旧的再启动新的，回调经字段安全访问当前视图。
+    private var cacheStatusText: android.widget.TextView? = null
+    private var cacheProgressBar: android.widget.ProgressBar? = null
+    private var autoSyncSwitch: com.google.android.material.switchmaterial.SwitchMaterial? = null
+    private var autoSyncDesc: android.widget.TextView? = null
+    private var cacheCollectorJob: kotlinx.coroutines.Job? = null
+    private var prefsCollectorJob: kotlinx.coroutines.Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         backupLocationLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -311,6 +323,7 @@ class DataBackupFragment : Fragment() {
             )
         }
         container.addView(cacheStatusText)
+        this.cacheStatusText = cacheStatusText
 
         val progressBar = android.widget.ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -337,24 +350,28 @@ class DataBackupFragment : Fragment() {
             }
         }
         container.addView(progressBar)
+        this.cacheProgressBar = progressBar
 
-        // 实时观察进度（repeatOnLifecycle：离开页面自动停止收集，无需手动 cancel）
-        viewLifecycleOwner.lifecycleScope.launch {
+        // 实时观察进度：收集器只维护一个（先 cancel 旧的再启动），回调经字段引用更新当前视图
+        cacheCollectorJob?.cancel()
+        cacheCollectorJob = viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.thumbnailProgress.collect { progress ->
+                    val statusText = cacheStatusText ?: return@collect
+                    val bar = cacheProgressBar ?: return@collect
                     when (progress) {
                         is ThumbnailProgress.Idle -> {
-                            cacheStatusText.text = "缩略图缓存：空闲"
-                            progressBar.progress = 0
+                            statusText.text = "缩略图缓存：空闲"
+                            bar.progress = 0
                         }
                         is ThumbnailProgress.Running -> {
                             val percent = if (progress.total > 0) progress.done * 100 / progress.total else 0
-                            cacheStatusText.text = "缩略图缓存（${progress.source.label}）：$percent%（${progress.done}/${progress.total}）"
-                            progressBar.progress = percent
+                            statusText.text = "缩略图缓存（${progress.source.label}）：$percent%（${progress.done}/${progress.total}）"
+                            bar.progress = percent
                         }
                         is ThumbnailProgress.Done -> {
-                            cacheStatusText.text = "缩略图缓存（${progress.source.label}）：已完成（${progress.total} 个文件）"
-                            progressBar.progress = 100
+                            statusText.text = "缩略图缓存（${progress.source.label}）：已完成（${progress.total} 个文件）"
+                            bar.progress = 100
                         }
                     }
                 }
@@ -395,6 +412,7 @@ class DataBackupFragment : Fragment() {
         }
         switchRow.addView(switchLabel)
         switchRow.addView(switch)
+        this.autoSyncSwitch = switch
 
         val switchDesc = android.widget.TextView(ctx).apply {
             text = "数据变化时自动写入备份目录"
@@ -404,13 +422,18 @@ class DataBackupFragment : Fragment() {
         }
         switchContainer.addView(switchRow)
         switchContainer.addView(switchDesc)
+        this.autoSyncDesc = switchDesc
         container.addView(switchContainer)
 
-        viewLifecycleOwner.lifecycleScope.launch {
+        // 自动同步开关状态：收集器只维护一个（先 cancel 旧的再启动），回调经字段引用更新当前视图
+        prefsCollectorJob?.cancel()
+        prefsCollectorJob = viewLifecycleOwner.lifecycleScope.launch {
             appPrefsManager.prefs.collect { prefs ->
+                val switch = autoSyncSwitch ?: return@collect
+                val desc = autoSyncDesc ?: return@collect
                 switch.setOnCheckedChangeListener(null)
                 switch.isChecked = prefs.autoSync
-                switchDesc.text = if (prefs.autoSync) "已开启 · 数据变化时自动写入备份目录" else "未开启 · 数据仅保存在本地"
+                desc.text = if (prefs.autoSync) "已开启 · 数据变化时自动写入备份目录" else "未开启 · 数据仅保存在本地"
                 switch.setOnCheckedChangeListener { _, isChecked ->
                     appPrefsManager.updateAutoSync(isChecked)
                 }

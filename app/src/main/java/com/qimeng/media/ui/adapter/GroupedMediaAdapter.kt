@@ -14,6 +14,9 @@ import com.qimeng.media.ui.browser.MediaBrowserLogic
 import com.qimeng.media.ui.browser.MediaDateGroup
 import com.qimeng.media.ui.widget.dp
 import java.util.Calendar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class GroupedMediaAdapter(
     private val onItemClick: (MediaFileEntity, List<MediaFileEntity>) -> Unit,
@@ -36,12 +39,38 @@ class GroupedMediaAdapter(
         lastKeys = fingerprint
         source = items
         val newRows = buildList {
-            groupByDateOrViewedAt(items).forEach { group ->
+            groupByDateOrViewedAt(items, viewedAtMap).forEach { group ->
                 add(Row.Header(group.dateLabel, group.items.size))
                 group.items.forEach { add(Row.Media(it)) }
             }
         }
         differ.submitList(newRows)
+    }
+
+    /**
+     * 异步提交（v1.12）：在 Default 线程计算 items.hashCode() 指纹与日期分组，主线程提交。
+     * 解决 submitMedia() 在调用方主线程执行 O(n) 指纹计算与分组造成的卡顿。
+     * lastKeys 指纹去重语义与同步路径完全一致；viewedAtMap 在主线程快照后再供后台线程只读。
+     */
+    fun submitMediaAsync(items: List<MediaFileEntity>, scope: LifecycleCoroutineScope) {
+        val viewedAtSnapshot = viewedAtMap
+        scope.launch {
+            val (fingerprint, rows) = withContext(Dispatchers.Default) {
+                val fp = items.hashCode().toString() + "_" + items.size
+                val newRows = buildList {
+                    groupByDateOrViewedAt(items, viewedAtSnapshot).forEach { group ->
+                        add(Row.Header(group.dateLabel, group.items.size))
+                        group.items.forEach { add(Row.Media(it)) }
+                    }
+                }
+                fp to newRows
+            }
+            // 回到主线程提交：lastKeys/source 保持主线程单线程读写，与同步路径语义一致
+            if (fingerprint == lastKeys) return@launch
+            lastKeys = fingerprint
+            source = items
+            differ.submitList(rows)
+        }
     }
 
     fun submitMediaWithGroups(items: List<MediaFileEntity>, groups: Map<String, List<MediaFileEntity>>) {
@@ -58,8 +87,38 @@ class GroupedMediaAdapter(
         differ.submitList(newRows)
     }
 
+    /**
+     * 异步提交（v1.12）：在 Default 线程计算 groups.keys.hashCode() 指纹并组装行，主线程提交。
+     * lastKeys 指纹去重语义与同步路径一致。
+     */
+    fun submitMediaWithGroupsAsync(
+        items: List<MediaFileEntity>,
+        groups: Map<String, List<MediaFileEntity>>,
+        scope: LifecycleCoroutineScope
+    ) {
+        scope.launch {
+            val (fingerprint, rows) = withContext(Dispatchers.Default) {
+                val fp = items.hashCode().toString() + "_g_" + groups.keys.hashCode()
+                val newRows = buildList {
+                    groups.forEach { (label, groupItems) ->
+                        add(Row.Header(label, groupItems.size))
+                        groupItems.forEach { add(Row.Media(it)) }
+                    }
+                }
+                fp to newRows
+            }
+            if (fingerprint == lastKeys) return@launch
+            lastKeys = fingerprint
+            source = items
+            differ.submitList(rows)
+        }
+    }
+
     /** 按日期分组：如果有 viewedAtMap 则按浏览时间，否则按文件修改时间 */
-    private fun groupByDateOrViewedAt(items: List<MediaFileEntity>): List<MediaDateGroup> {
+    private fun groupByDateOrViewedAt(
+        items: List<MediaFileEntity>,
+        viewedAt: Map<String, Long>
+    ): List<MediaDateGroup> {
         if (items.isEmpty()) return emptyList()
         val now = Calendar.getInstance()
         val todayStart = Calendar.getInstance().apply {
@@ -69,7 +128,7 @@ class GroupedMediaAdapter(
             set(Calendar.MILLISECOND, 0)
         }
         return items.groupBy { item ->
-            val millis = viewedAtMap[item.recordKey] ?: item.modifiedAtMillis
+            val millis = viewedAt[item.recordKey] ?: item.modifiedAtMillis
             MediaBrowserLogic.dateLabel(millis, now, todayStart)
         }.map { (label, groupItems) -> MediaDateGroup(label, groupItems) }
     }

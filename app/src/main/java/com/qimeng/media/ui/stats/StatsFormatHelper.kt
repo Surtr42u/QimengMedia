@@ -42,10 +42,26 @@ object StatsFormatHelper {
 
     // ===== v1.14：按天浏览聚合计算（daily_browse，无限保留，统计唯一真相来源） =====
 
-    /** 时间范围（7天/30天/全部）的截止时刻。全部 = 0（不过滤）。 */
+    /**
+     * 今天 0 点往前 N 个完整自然日的零点（含今天）。
+     * 与趋势图 groupDailyByDay 的日桶口径一致（首桶 = 今天 0 点 - (days-1) 天），
+     * 保证汇总/排行卡片窗口与趋势图窗口对齐，消除"差出今天已过去半天"的口径错位。
+     */
+    fun naturalDayCutoff(days: Int, now: Long = System.currentTimeMillis()): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = now
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        cal.add(Calendar.DAY_OF_YEAR, -(days - 1))
+        return cal.timeInMillis
+    }
+
+    /** 时间范围（7天/30天/全部）的截止时刻（按完整自然日对齐，全部 = 0 不过滤）。 */
     fun cutoffForRange(rangeName: String, now: Long = System.currentTimeMillis()): Long = when (rangeName) {
-        "DAYS_7" -> now - 7L * 24 * 60 * 60 * 1000
-        "DAYS_30" -> now - 30L * 24 * 60 * 60 * 1000
+        "DAYS_7" -> naturalDayCutoff(7, now)
+        "DAYS_30" -> naturalDayCutoff(30, now)
         else -> 0L
     }
 

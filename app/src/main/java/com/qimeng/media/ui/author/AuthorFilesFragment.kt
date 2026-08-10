@@ -78,6 +78,8 @@ class AuthorFilesFragment : Fragment() {
     private var observeStarted: Boolean = false
     /** 渲染分组计算协程任务，用于去重与取消（v1.12） */
     private var renderJob: Job? = null
+    /** 数据流收集协程任务：下拉刷新先取消旧收集器，避免每次叠加一个永久收集器（v1.15，对齐 AllFilesFragment） */
+    private var observeJob: Job? = null
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
     private var scrollListener: ViewTreeObserver.OnScrollChangedListener? = null
@@ -142,6 +144,8 @@ class AuthorFilesFragment : Fragment() {
 
     private fun setupActions() {
         binding.authorFilesSwipeRefresh.setOnRefreshListener {
+            // v1.15：先取消旧收集器，避免每次下拉叠加一个永久收集器（对齐 AllFilesFragment）
+            observeJob?.cancel()
             lastRenderHash = ""
             mediaFingerprint = ""
             observeStarted = false
@@ -166,7 +170,7 @@ class AuthorFilesFragment : Fragment() {
     }
 
     private fun observeData() {
-        viewLifecycleOwner.lifecycleScope.launch {
+        observeJob = viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 combine(
                     combine(
@@ -242,51 +246,44 @@ class AuthorFilesFragment : Fragment() {
     private fun render() {
         if (_binding == null) return
 
-        // 作者下的文件：常规作者用 cachedAuthorMediaKeys，COS 作者用 cachedCosAuthorMediaKeys
-        val authorMedia = if (isCosAuthor) {
-            cachedCosMedia.filter { it.recordKey in cachedCosAuthorMediaKeys }
-        } else {
-            cachedMedia.filter { it.recordKey in cachedAuthorMediaKeys }
-        }
-
-        // 类型筛选 + 筛选面板过滤
-        val typed = MediaRenderHelper.applyTypeFilter(authorMedia, filterType)
-        val stats = cachedStats.associateBy { it.recordKey }
-        val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
-        val filtered = MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
-
-        // 作品/角色分组（异步计算）
-        // v1.12 修复：改用 viewLifecycleOwner.lifecycleScope（onDestroyView 后自动取消），
-        // 并先取消上一轮未完成的渲染任务，避免视图销毁后协程仍在更新已销毁的 UI
+        // v1.15：作者文件全量筛选（类型筛选/统计标签映射/筛选面板过滤/分组）整体移入
+        // Dispatchers.Default 协程内计算，主线程只做 UI 更新（对齐 AllFilesFragment 异步渲染模式，
+        // 原实现 applyTypeFilter/associateBy/groupBy/applyFilter 全在主线程同步执行，文件多时卡顿）
         renderJob?.cancel()
         renderJob = viewLifecycleOwner.lifecycleScope.launch {
-            val (sourceGroups, charGroups) = computeAuthorGroupsAsync(filtered)
+            val result = withContext(Dispatchers.Default) {
+                // 作者下的文件：常规作者用 cachedAuthorMediaKeys，COS 作者用 cachedCosAuthorMediaKeys
+                val authorMedia = if (isCosAuthor) {
+                    cachedCosMedia.filter { it.recordKey in cachedCosAuthorMediaKeys }
+                } else {
+                    cachedMedia.filter { it.recordKey in cachedAuthorMediaKeys }
+                }
+
+                // 类型筛选 + 筛选面板过滤
+                val typed = MediaRenderHelper.applyTypeFilter(authorMedia, filterType)
+                val stats = cachedStats.associateBy { it.recordKey }
+                val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
+                val filtered = MediaBrowserLogic.applyFilter(typed, query = "", filterState, stats, tagMap, cachedHistory)
+
+                // 作品/角色分组
+                val sourceGroups = if (isCosAuthor) emptyMap() // COS 作者不需要作品分组（出处=作者）
+                else MediaGroupHelper.groupBySource(filtered)
+                val charGroups = if (viewMode == VIEW_MODE_CHARACTER) {
+                    val baseForChars = if (selectedSources.isNotEmpty() && !isCosAuthor) {
+                        val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
+                        filtered.filter { it in sourceMediaSet }
+                    } else filtered
+                    if (isCosAuthor) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
+                    else MediaGroupHelper.groupByCharacter(baseForChars)
+                } else emptyMap()
+                Triple(filtered, sourceGroups, charGroups)
+            }
             if (_binding == null) return@launch
+            val (filtered, sourceGroups, charGroups) = result
             cachedSourceGroups = sourceGroups
             cachedCharGroups = charGroups
             updateAuthorUI(filtered, sourceGroups, charGroups)
         }
-    }
-
-    /** 协程内计算：作品分组 + 角色分组（含 baseForChars 计算） */
-    private suspend fun computeAuthorGroupsAsync(
-        filtered: List<MediaFileEntity>
-    ): Pair<Map<String, List<MediaFileEntity>>, Map<String, List<MediaFileEntity>>> {
-        val sourceGroups = withContext(Dispatchers.Default) {
-            if (isCosAuthor) emptyMap() // COS 作者不需要作品分组（出处=作者）
-            else MediaGroupHelper.groupBySource(filtered)
-        }
-        val charGroups = withContext(Dispatchers.Default) {
-            if (viewMode == VIEW_MODE_CHARACTER) {
-                val baseForChars = if (selectedSources.isNotEmpty() && !isCosAuthor) {
-                    val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                    filtered.filter { it in sourceMediaSet }
-                } else filtered
-                if (isCosAuthor) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
-                else MediaGroupHelper.groupByCharacter(baseForChars)
-            } else emptyMap()
-        }
-        return Pair(sourceGroups, charGroups)
     }
 
     /** 协程外 UI 更新：药丸渲染 + displayed 计算 + fingerprint + adapter 提交 + 空状态 */

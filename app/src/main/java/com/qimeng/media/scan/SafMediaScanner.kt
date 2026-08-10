@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.qimeng.media.core.AppLog
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
 import java.util.Locale
@@ -80,9 +81,14 @@ class SafMediaScanner(private val context: Context) {
     private fun MediaMetadataRetriever.extractLong(keyCode: Int): Long? =
         extractMetadata(keyCode)?.toLongOrNull()?.takeIf { it > 0L }
 
+    /**
+     * 安全列出目录内容：单个子目录访问失败（权限被拒、IO 异常等）时跳过该目录继续扫描，
+     * 不中断整个扫描流程。v1.x：由仅捕获 SecurityException 扩展为捕获 IOException 等所有异常。
+     */
     private fun safeListFiles(directory: DocumentFile): Array<DocumentFile> = try {
         directory.listFiles()
-    } catch (_: SecurityException) {
+    } catch (e: Exception) {
+        AppLog.w("SafScan", "listFiles failed, skip directory: ${directory.uri}", e)
         emptyArray()
     }
 }

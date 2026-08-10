@@ -8,7 +8,7 @@
 
 - `MediaStoreScanner`：基于 MediaStore ContentResolver 查询系统媒体数据库，毫秒级返回结果。常规扫描和 COS 扫描共用。
 - `MediaStoreObserver`：基于 ContentObserver 监听 MediaStore 变化，自动增量更新已注册的常规扫描目录。5 秒防抖合并变更通知。**只监听常规目录，不监听 COS 目录。**
-- `SafMediaScanner`：基于 SAF `DocumentFile` 递归扫描用户授权目录。MediaStore 查不到时的回退方案。
+- `SafMediaScanner`：基于 SAF `DocumentFile` 递归扫描用户授权目录。MediaStore 查不到时的回退方案。单个子目录访问失败（权限被拒/IO 异常）时跳过该目录继续扫描，不中断整个扫描流程（v1.15 由仅捕获 SecurityException 扩展为捕获全部异常并记日志）。
 - `ScanUtils`：扫描器共享工具方法（`mediaTypeForExtension`、`shortHash`、`buildEntities`），MediaStoreScanner 和 SafMediaScanner 共用，消除重复代码。
 - `DataManagementFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；常规目录入口统一放在"数据管理页/常规目录"。
 - `MediaLibraryViewModel`：触发扫描、读取既有 `ScanSourceEntity`，统一调度双引擎。
@@ -61,8 +61,10 @@
 - 收到变化通知后 5 秒防抖（延长以合并更多变更通知，减少频繁拍照场景下的扫描开销）
 - 防抖期间用 AtomicInteger 计数器统计合并的通知次数（仅用于 log 诊断），防抖结束后对所有常规扫描目录全量增量刷新
 - 对每个已注册的常规扫描目录，用 MediaStoreScanner 重新查询
-- 增量 upsert 新文件，删除已移除的文件
+- 增量 upsert 新文件（**同名覆盖/重编码文件元数据有变化时也更新**，v1.15 修复旧版只 upsert 新 key 导致元数据永久陈旧），删除已移除的文件
 - **只监听常规目录**（`isCosDirectory=false`）
+- **空查询也执行残留清理**（v1.15）：目录被清空导致查询为空时，仍按 sourceUri 查出库中存量 key 并全部删除，避免 DB 行残留
+- **单飞保护**（v1.15）：`isRefreshing` AtomicBoolean 保证同一时刻只有一个自动刷新在跑（防抖 `cancel()` 只能取消挂起点，旧 job 已进 DB 事务时新 job 并发执行 upsert/delete 会产生竞态）
 
 ### .nomedia 场景下的刷新依赖
 
@@ -93,6 +95,8 @@
 4. 数据库写入分批（每批 500 条），避免长时间锁表导致 UI 卡顿
 5. `autoRefreshAllSources` 对 COS 目录有 5 分钟防抖间隔，避免频繁扫描；COS 自动刷新现会**全量 upsert 所有扫描到的文件**（不仅是新增），以确保 folderName 等字段变更生效
 6. 公共方法 `scanCosMedia()` 统一 MediaStore/SAF 双路径逻辑，`scanCosDirectory`/`refreshCosSource`/`autoRefreshAllSources` 共用
+7. `CosWorkEntity.fileCount` 为该作品文件数（v1.15 修正：旧实现取该作者全部作品文件数，一作者多作品时每作品都超计；MediaStore/SAF 两路径均在扫描时按"作者/作品"两级映射统计）
+8. `refreshCosSource` 刷新完成后清理该源已消失/改名的作品行（v1.15：按当前扫描到的 workKey 集合删除不在集合内的 `cos_works` 行，新增 `CosWorkDao.deleteByIds`，不改表结构无需迁移）
 
 ### 入口方法
 
@@ -105,9 +109,11 @@
 从 MediaStore 返回的文件路径中解析作者名和作品名：
 1. 去掉根目录前缀，得到相对路径
 2. 按 `/` 分割路径段：`segments[0]` = 作者名
-3. 如果 `segments.size > 2`：`segments[1]` = 作品名（有子目录结构）
-4. 如果 `segments.size <= 2`：作品名 = 作者名（扁平结构，文件直接在作者目录下）
+3. 如果 `segments.size >= 2`：`segments[1]` = 作品名（有作品子目录结构）
+4. 如果 `segments.size < 2`：作品名 = 作者名（扁平结构，文件直接在作者目录下）
 5. 使用 `associateBy` 建立 uriString→candidate 映射，避免 O(n²) 查找
+
+**v1.15 修正**：第 3 条判定由 `> 2` 改为 `>= 2`（off-by-one）。标准结构2（作者/作品/文件）去掉根前缀后 segments.size==2，旧判断 `> 2` 不成立导致 workName 被错误置为作者名、workPath 也相应少一层。
 
 **v1.12 修正**：相对路径取自候选文件的**完整目录路径**（`MediaCandidate.directoryPath`，即文件系统路径去掉文件名）做 `removePrefix` 后再分割。旧实现用 `folderName`（直接父目录 leaf 名，如"作品"/"p1"）做 `removePrefix`，因不含根前缀恒不生效、`split` 恒得单段，COS 结构2/3（作者/作品/文件）下 `segments[0]` 取到的是作品/子目录名而非作者名，导致 MediaStore 主扫描路径 COS 作者/作品分组全部错乱（SAF 回退路径一直用 uriString document 段解析，不受影响）。
 
@@ -194,6 +200,8 @@ COS 目录的三种文件夹结构（作者→文件、作者→作品→文件�
 
 Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统媒体库默认路径下的目录）可能不会被 MediaStore 索引。**目录中存在 `.nomedia` 文件时，MediaStore 会完全忽略该目录及其子目录**，此时 `queryCosFolder()` 和 `queryByFolderPath()` 返回空结果，自动回退到 SAF 扫描。这是系统行为，无法改变。
 
+**DATA LIKE 查询通配符转义（v1.15）**：目录名含 `_` 或 `%` 时会被 SQL LIKE 当通配符误匹配（如目录 `PICS_2024` 的 `PICS_2024/%` 会匹配 `PICS_2024` 及 `PICSX2024` 等），`queryMedia()`/`countMediaInPath()` 对路径参数做 `_`/`%`/`\` 转义并加 `ESCAPE '\'`。**注意只转义前缀，末尾 `/%` 递归通配符必须保留**——若整体转义会把 `%` 也转成字面量，LIKE 恒匹配 0 行，自动刷新会把该源全部文件当孤儿删除（v1.15 修复，SQLite 验证：目录含 `_` 时只匹配目标目录、不误匹配相邻目录）。
+
 ## 职责
 
 管理用户授权目录、媒体文件扫描、元数据读取和索引重建。
@@ -236,7 +244,7 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 - 只读 Uri（MediaStore 使用 content:// Uri，SAF 使用 content://...document Uri）。
 - 分辨率（按需解码）。
 - 视频时长（按需解码）。
-- 路径哈希。
+- 路径哈希（`ScanUtils.shortHash`，SHA-256 前 8 字符；v1.15 修复负 Byte 格式化：`"%02x".format(Byte)` 对负字节会输出 16 位 `ffff...` 导致 take(8) 恒等于 `"ffffffff"` 冲突，已改为 `byte.toInt() and 0xFF` 后格式化。该修复只影响此前错误生成的 hash，正常路径的 hash 结果不变）。
 
 ## 重新扫描
 
@@ -250,7 +258,7 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 
 1. 删除 `scan_sources` 表中对应记录。
 2. **按 `media_files.sourceUri` 精确匹配**（v1.12）删除归属该源的媒体文件及其关联（作者关联、标签关联、统计、历史、时间轴标签）。
-3. 旧版数据（sourceUri 为 null，无法反推归属）回退到 URI 前缀匹配兜底清理；启动清理孤儿文件时对 null 保守保留，避免误删。
+3. 旧版数据（sourceUri 为 null，无法反推归属）**保守保留，不参与删除判定**（v1.15 修正：旧回退用"文件 URI startsWith 剩余源 tree URI 前缀"匹配，因 `content://media`/`document` 文件 URI 与 `tree` 扫描源 URI 命名空间不同恒不命中，会把 sourceUri==null 的旧版数据全部当孤儿误删；同理删除 COS 源的 folderUri 前缀兜底清理也被移除——folderUri 是文件系统路径、剩余源 uriString 是 tree URI，前缀匹配恒失败会取到全部旧版作品行整体误删）。宁可残留不可误删。
 4. 常规扫描源清理孤立作者用 `deleteOrphanAuthors()`，COS 扫描源用 `deleteOrphanCosAuthors()`。
 5. 删除 COS 扫描源时按 `cos_works.sourceUri` 只删除该源的作品与文件，不影响其他 COS 源（v1.12 修复旧版 folderUri 前缀匹配恒失败、删除任一 COS 源清空所有源作品的问题）。
 
@@ -284,4 +292,4 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 - Uri 失效时提示重新授权
 - Android 16+ 仍优先 SAF，不依赖 READ_EXTERNAL_STORAGE 旧逻辑（见 GUIDE_ANDROID_COMPAT.md）
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-10

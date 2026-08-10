@@ -18,7 +18,9 @@ import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.databinding.FragmentDataStatsBinding
 import com.qimeng.media.resolveThemeColor
 import com.qimeng.media.ui.library.MediaLibraryViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -48,7 +50,6 @@ class DataStatsFragment : Fragment() {
     private var cachedMedia: List<MediaFileEntity> = emptyList()
     private var cachedDaily: List<DailyBrowseEntity> = emptyList()
     private var cachedAuthorData: List<Triple<String, String, Int>> = emptyList()
-    private var cachedTagData: List<Pair<String, Int>> = emptyList()
     private var cachedAuthorMedia: List<com.qimeng.media.data.db.entity.AuthorMediaCrossRef> = emptyList()
     private var cachedMediaTags: List<com.qimeng.media.data.db.model.MediaTagName> = emptyList()
 
@@ -150,12 +151,16 @@ class DataStatsFragment : Fragment() {
                     }
                 }
                 launch {
+                    viewModel.authors.collect { authors ->
+                        // v1.14 修复：常看作者数据此前从未被赋值导致功能失效，
+                        // 参照 allMediaTags 的收集模式赋值并触发渲染（authorId, 显示名, 占位值）
+                        cachedAuthorData = authors.map { Triple(it.authorId, it.displayName, 0) }
+                        renderTopAuthors()
+                    }
+                }
+                launch {
                     viewModel.allMediaTags.collect { mediaTags ->
                         cachedMediaTags = mediaTags
-                        cachedTagData = mediaTags
-                            .groupBy { it.name }
-                            .map { (name, list) -> name to list.size }
-                            .sortedByDescending { it.second }
                         renderTopAuthors()
                     }
                 }
@@ -183,27 +188,50 @@ class DataStatsFragment : Fragment() {
         binding.totalBrowseTimeValue.text = formatDuration(totalMinutes)
     }
 
-    /** 渲染总览数字卡片（第二行：文件数/占用空间/平均浏览次数） */
+    /** 渲染总览数字卡片（第二行：文件数/占用空间/平均浏览次数；聚合计算在 Default 线程，避免主线程重复全量聚合卡顿） */
     private fun renderOverviewExtra() {
-        binding.totalFilesValue.text = StatsFormatHelper.formatNumber(cachedMedia.size)
-        val totalBytes = cachedMedia.sumOf { it.sizeBytes }
-        binding.totalSizeValue.text = StatsFormatHelper.formatSize(totalBytes)
-        // 平均浏览次数 = 窗口内总浏览次数 / 窗口内有浏览记录的文件数
+        val media = cachedMedia
         val window = windowDaily()
-        val filesWithViews = window.filter { it.viewCount + it.playCount > 0 }.map { it.recordKey }.distinct().size
-        val totalViews = window.sumOf { it.viewCount + it.playCount }
-        val avgViews = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
-        binding.avgBrowseValue.text = String.format(Locale.US, "%.1f", avgViews)
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                val totalFiles = media.size
+                val totalBytes = media.sumOf { it.sizeBytes }
+                // 平均浏览次数 = 窗口内总浏览次数 / 窗口内有浏览记录的文件数
+                // v1.14 口径统一：分母与详情页一致，含仅停留无点击（totalBrowseSeconds>0）的行
+                val filesWithViews = window
+                    .filter { it.viewCount + it.playCount > 0 || it.totalBrowseSeconds > 0 }
+                    .map { it.recordKey }.distinct().size
+                val totalViews = window.sumOf { it.viewCount + it.playCount }
+                Triple(
+                    totalFiles,
+                    totalBytes,
+                    if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
+                )
+            }
+            binding.totalFilesValue.text = StatsFormatHelper.formatNumber(result.first)
+            binding.totalSizeValue.text = StatsFormatHelper.formatSize(result.second)
+            binding.avgBrowseValue.text = String.format(Locale.US, "%.1f", result.third)
+        }
     }
 
-    /** 渲染浏览趋势折线图（基于浏览历史明细，随时间范围联动） */
+    /** 渲染趋势序号：快速切换时间范围时只采纳最后一次请求的结果，避免旧协程晚完成覆盖新结果 */
+    private var renderTrendSeq = 0
+
+    /** 渲染浏览趋势折线图（基于浏览历史明细，随时间范围联动；聚合计算在 Default 线程） */
     private fun renderTrend() {
-        val points = when (currentRange) {
-            TimeRange.DAYS_7 -> StatsFormatHelper.groupByDay(cachedHistory, 7)
-            TimeRange.DAYS_30 -> StatsFormatHelper.groupByDay(cachedHistory, 30)
-            TimeRange.ALL -> StatsFormatHelper.groupByWeek(cachedHistory)
+        val seq = ++renderTrendSeq
+        val history = cachedHistory
+        val range = currentRange
+        viewLifecycleOwner.lifecycleScope.launch {
+            val points = withContext(Dispatchers.Default) {
+                when (range) {
+                    TimeRange.DAYS_7 -> StatsFormatHelper.groupByDay(history, 7)
+                    TimeRange.DAYS_30 -> StatsFormatHelper.groupByDay(history, 30)
+                    TimeRange.ALL -> StatsFormatHelper.groupByWeek(history)
+                }
+            }
+            if (seq == renderTrendSeq) binding.trendChart.setData(points)
         }
-        binding.trendChart.setData(points)
     }
 
     /** 渲染常看文件列表（窗口内浏览聚合 Top 3，文件名 + 浏览次数） */

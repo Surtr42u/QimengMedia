@@ -87,6 +87,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 | 4 | `media_files.sourceUri` 归属列（扫描源 tree URI，根治 URI 前缀跨命名空间匹配失败的误删问题） |
 | 5 | `cos_works.sourceUri` 归属列；唯一约束从 `(authorName, workName)` 改为 `(sourceUri, authorName, workName)`，支持多 COS 扫描源共存 |
 | 6 | 新增 `daily_browse` 按天浏览聚合表（v1.14） |
+| 7 | 补 `media_files.isCosFile` 索引（v1.15：MIGRATION_1_2 只 ADD COLUMN 未建索引，老库升级用户对 isCosFile 的查询恒走全表扫；仅建索引无表结构变化） |
 
 ## 统计规则
 
@@ -329,7 +330,8 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - COS 目录结构（三种文件夹格式）详见 `GUIDE_AUTHOR.md`
 - 重建 COS 索引（`rebuildCosIndex()`）：清空旧 COS 文件的 `AuthorMediaCrossRef` + 清理孤立作者 + 清空 COS 媒体文件和 cos_works 表，不影响非 COS 数据
 - 重建常规索引（`rebuildMediaIndex()`）：只清空非 COS 媒体文件，不影响 COS 数据
-- 删除 COS 扫描源时（v1.12 起按 `sourceUri` 精确匹配），只级联删除该源的 CosWorkEntity 和 COS 媒体文件，不再误删其他源作品；旧版数据（sourceUri 为 null）回退 folderUri 前缀兜底清理
+- 删除 COS 扫描源时（v1.12 起按 `sourceUri` 精确匹配），只级联删除该源的 CosWorkEntity 和 COS 媒体文件，不再误删其他源作品；旧版数据（sourceUri 为 null）保守保留不做 folderUri 前缀兜底清理（v1.15 修正：folderUri 是文件系统路径、剩余源 uriString 是 tree URI，前缀匹配恒失败会整体误删，宁残留不可误删）
+- COS 刷新时清理已消失/改名作品：`CosWorkDao.deleteByIds(ids)`（v1.15 新增，按主键删除该源扫描不到的 cos_works 行，不改表结构无需迁移；配套 Repository 方法 `getCosWorksBySourceUri`/`deleteCosWorksByIds`）
 - 跨源同名文件 recordKey 冲突（v1.12）：扫描写入前 `resolveRecordKeyConflicts` 会把与其他源已占用 key 冲突的文件追加 pathHash 区分（`xxx.jpg @ abc12345`），避免 `@Upsert` 主键相互覆盖导致文件消失
 - COS 作者与常规作者隔离：COS 作者 authorId 以 `cos_` 前缀标识（如 `cos_rioko凉凉子`），与常规作者完全隔离，同名不会混淆
 - authorId 生成规则：保留中文/日文等 Unicode 字符，只去除特殊符号，空格转下划线；示例：`rioko凉凉子` → `rioko凉凉子`，`水淼Aqua` → `水淼aqua`；COS 作者加 `cos_` 前缀；清洗后为空时用哈希值兜底：`author_abc12345`
@@ -342,4 +344,4 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - Repository 负责历史上限、统计规则、作者关联规则
 - 媒体列表查询避免一次加载无关大字段
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-10

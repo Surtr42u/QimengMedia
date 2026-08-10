@@ -229,6 +229,10 @@ class AlbumDetailFragment : Fragment() {
             append(filterState.tagMode)
             append("|")
             append(viewMode)
+            append("|")
+            // v1.12：角色选中集合纳入前置指纹——否则仅切换角色药丸时媒体身份未变、
+            // 指纹不变直接 return，浏览统计变化触发的刷新被吞掉
+            append(selectedChars.sorted().joinToString(","))
         }
         if (preFingerprint == lastRenderedFingerprint) return
         lastRenderedFingerprint = preFingerprint
@@ -289,10 +293,11 @@ class AlbumDetailFragment : Fragment() {
 
         // v1.12：原 renderHash 去重已由 render() 前置的轻量指纹判定取代（同指纹直接不启动协程），
         // 此处每次 render 必提交——数据身份已变，DiffUtil 内部负责增量更新
+        // 提交改用异步路径：指纹计算与日期分组在 Default 线程执行，避免大列表在主线程卡顿
         if (viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty()) {
-            adapter.submitMediaWithGroups(filtered, charGroups)
+            adapter.submitMediaWithGroupsAsync(filtered, charGroups, viewLifecycleOwner.lifecycleScope)
         } else {
-            adapter.submitMedia(displayed)
+            adapter.submitMediaAsync(displayed, viewLifecycleOwner.lifecycleScope)
         }
         binding.albumDetailEmptyText.visibility = if (displayed.isEmpty()) View.VISIBLE else View.GONE
         binding.albumDetailRecycler.visibility = if (displayed.isEmpty()) View.GONE else View.VISIBLE

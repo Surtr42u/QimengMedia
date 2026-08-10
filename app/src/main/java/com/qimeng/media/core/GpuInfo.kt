@@ -39,7 +39,9 @@ object GpuInfo {
      */
     fun maxTextureSize(): Int {
         ensureProbeStarted()
-        probeLatch.await()
+        // v1.15：await 加超时兜底——探测线程若异常死亡（极低概率）countDown 不执行，
+        // 原实现主线程永久阻塞
+        probeLatch.await(2, java.util.concurrent.TimeUnit.SECONDS)
         return cachedMaxTextureSize
     }
 

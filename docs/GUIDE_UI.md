@@ -158,6 +158,8 @@
 - 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**智能分层渲染**（2026-06-20 优化，2026-06-21 修复超大图渲染阈值，2026-06-23 去重）：`ZoomImageView.setImageDrawable` 调用 `applyOptimalLayerType()` 按图尺寸智能选层（`setImageBitmap` 不再单独调用，由 `super.setImageBitmap` 链式触发的 `setImageDrawable` 统一负责，消除同图二次判断冗余）——GIF（`AnimatedImageDrawable`）→ `LAYER_TYPE_HARDWARE`（动画依赖硬件刷新帧）；普通图长边 ≤ **硬件渲染安全阈值 4096**（`HARDWARE_RENDER_SAFE_SIZE`）→ `LAYER_TYPE_HARDWARE`（GPU 直渲，4096 图绘制从 ~50ms 降到 ~5ms，消除来回切大图卡顿）；普通图长边 > 4096 → `LAYER_TYPE_SOFTWARE`（CPU 软件渲染，正确应用 MATRIX 缩放）。**⚠️ 阈值选择根因**（2026-06-21 修复）：原方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，旗舰机实测可达 16384）作阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap（如 8000x8000=256MB）无法正确应用 MATRIX 缩放——超大图走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。4096 是业界公认稳定值（Glide/Fresco 默认上限，Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 `GpuInfo` 探测失败回退值 `DEFAULT_MAX_TEXTURE_SIZE=4096` 一致。手势期间（双指缩放/拖拽）同样用 `shouldUseHardwareForCurrent()` **同 4096 阈值**判断，超大图手势时保持 SOFTWARE。不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**两个独立阈值需区分**：①渲染安全阈值 4096（`HARDWARE_RENDER_SAFE_SIZE`，HARDWARE/SOFTWARE 分层判断，保渲染正确性）②Coil maxBitmapSize = `gpuMax`（`GpuInfo.maxTextureSize()`，解码降采样上限，放开让 8192 解原图）。两者独立，改其一不影响另一个；**Coil maxBitmapSize 放开**（2026-06-20）：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样（8192→4096），偏离"始终原图"决策。`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 放开到 GPU 上限，让 8192/7680 等超大图显示原图。代价是内存上升（超大图原图 ARGB_8888 ~150MB/张，浏览多张超大图 Native Heap 峰值可达 ~900MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制；**超大图 SOFTWARE 渲染 trade-off**（2026-06-21）：超大图（>4096）走 SOFTWARE 比 HARDWARE 慢（CPU 逐像素处理，8000x8000 量级可能 100ms+），但保证 matrix 缩放正确、显示位置正常。保正确性优先于渲染速度，这是已知 trade-off；**缩放范围**：0.5x~5x，双击放大1.8x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
 - 视频（仅 `MediaType.VIDEO`）：未播放时用 `ZoomImageView` 显示视频帧预览（透明背景，透出主题色，与图片分支一致；优先使用 `MediaMetadataRetriever` 提取首帧，失败时回退到 Coil VideoFrameDecoder），中央显示 ▶ 播放按钮；单击预览区直接启动播放（进入 BiliPlayerView），横滑浏览其他文件。播放时 BiliPlayerView 接管触摸
 - 按返回键：播放中先退到 chrome 浏览模式（暂停+chrome显示），再按退回首页
+- 按需解码媒体元数据（`showInfoSheet`）：**v1.15 防重复弹窗 + 先 show 再补解码**——`infoSheetShowing` 标志防解码期间重复点击堆叠多个对话框；解码协程改 `viewLifecycleOwner.lifecycleScope`（Fragment 退栈后自动取消，不再操作已销毁视图）；先展示已有行与"解码中…"占位，解码完成追加补齐。
+- 时间轴标签弹窗（v1.15）：打开添加标记弹窗前暂停播放，dismiss 后恢复（`wasPlaying` 快照）——标记时间点与实际画面一致，不再因播放中弹窗而偏移。
 - 顶部操作层：返回（胶囊图标） / 当前序号 / 信息（胶囊图标），背景使用 `bg_detail_top_gradient` 渐变遮罩（从 `qmColorBg` 90% 不透明度渐变到透明），与背景层一体无分割感，点击信息图标弹出 BottomSheet 显示文件名/出处/尺寸/时长等详细信息（区分图片和视频）；尺寸/时长等元数据在扫描时未解码（`scanTreeFast` 跳过），打开信息面板时按需解码并缓存到数据库
 - 底部操作层：点赞（胶囊图标）/ 收藏（胶囊图标）/ 标签（胶囊图标）/ 快速转跳（胶囊图标），四个图标均匀分布居中，背景使用 `bg_detail_bottom_gradient` 渐变遮罩（从透明渐变到 `qmColorBg` 90% 不透明度），过长图片时 tab 用渐变背景遮挡图片内容而非透明覆盖；收藏图标区分空心/实心状态；标签点击弹出 BottomSheet 标签管理，当前文件标签以水平滚动标签列表显示在上方（权重最高），其他可用标签以水平滚动列表显示在下方，点击关闭图标仅移除文件与标签关联不删除标签选项，输入框可添加新标签；快速转跳点击弹出 BottomSheet 显示当前文件关联的作者列表，点击作者名跳转到作者文件浏览页
 - **按钮按下反馈动画**：详情页 6 个按钮（返回/info/点赞/收藏/标签/快速转跳）通过 `View.addPressAnimation()` 扩展函数添加按下缩放反馈（ACTION_DOWN 缩放 0.92，ACTION_UP 回弹 1.0，100ms `AccelerateDecelerateInterpolator`），增强触控感知
@@ -202,7 +204,7 @@
 - 浏览趋势折线图卡片（`LineChartView`，基于浏览历史明细，按天/周聚合浏览量，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**；**点击卡片进入分类型趋势详情**，右上角"分类型趋势 ›"）
 - 分布统计小入口卡片（纯文字「类型与来源的库存构成 / 查看详情 ›」，**点击进入原分布详情页**；v1.14 移除库存环形图，简化外形）
 - 常看文件卡片（文件名 + 浏览次数紧凑文本列表 Top 3，**点击进入常看详情**）
-- 常看作者与标签卡片（作者/标签按窗口浏览聚合混合 Top 3，**点击进入常看详情**）
+- 常看作者与标签卡片（作者/标签按窗口浏览聚合混合 Top 3，**点击进入常看详情**；v1.15 修复"常看作者"完全失效——`cachedAuthorData` 从未被赋值，已补 `viewModel.authors` 收集）
 
 **交互设计**：
 - 点击趋势/常看文件/常看作者与标签/分布统计卡片 → 进入 `StatsDetailFragment` 全新详情界面（`MainActivity.showStatsDetail`），携带当前时间范围
@@ -217,9 +219,9 @@
 - 数据洞察卡片（自动生成的文字摘要）
 - 完整 Top 20 排行榜列表（`RankListAdapter`，`nestedScrollingEnabled=false` 随 ScrollView 滚动，每行带相对第一名的进度条）
 - 四种模式：
-  - `MODE_TYPE_TREND`：类型浏览趋势——**两张独立对比卡**：「类型浏览趋势」卡（图片/视频/动图胶囊可多选，不同颜色折线叠加）+「来源浏览趋势」卡（常规/COS 胶囊可多选叠加），各卡一张 240dp 折线图（`LineChartView.setMultiSeries`，顶部图例 + 点击气泡含系列名）；基于按天浏览聚合
+  - `MODE_TYPE_TREND`：类型浏览趋势——**两张独立对比卡**：「类型浏览趋势」卡（图片/视频/动图胶囊可多选，不同颜色折线叠加）+「来源浏览趋势」卡（常规/COS 胶囊可多选叠加），各卡一张 240dp 折线图（`LineChartView.setMultiSeries`，顶部图例 + 点击气泡含系列名）；基于按天浏览聚合。**v1.15：来源趋势 COS 判定改 combine 等待 dailyBrowse+cosMedia 两流齐备再渲染**（消除首帧 cachedCosKeys 为空先画错再重画的闪烁；数据固有限制：daily_browse 无 COS 标记字段，COS 文件删除后其历史浏览仍归为常规）
   - `MODE_FAVORITES`：常看文件——窗口内浏览聚合排行，支持「按热度/按时长」排序切换（副标题含停留时长）
-  - `MODE_AUTHORS`：常看作者与标签——按窗口浏览聚合的作者排行（Top 20）+ 标签排行（Top 20），标签条目可点击跳搜索页
+  - `MODE_AUTHORS`：常看作者与标签——按窗口浏览聚合的作者排行（Top 20）+ 标签排行（Top 20），标签条目可点击跳搜索页（**v1.15：`showSearchFragment(initialQuery)` 携带标签名跳转，修复打开空白搜索页**）
   - `MODE_DISTRIBUTION`：分布统计详情——类型/来源 ×（库存数量/大小 + 窗口浏览）对比卡片
 
 **数据源**（v1.14 起）：
@@ -450,11 +452,11 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 禁止只做"白底列表 + 默认按钮"的普通工具 UI
 - 禁止为了美观牺牲文件名、作者、统计等核心信息可读性
 - 视频详情页使用 Media3 ExoPlayer + 自定义 BiliPlayerView（B站风格控制器），控制层按 B 站式需求定制
-- 视频点击播放按钮即计一次播放，同一次详情打开只计一次（v1.14 起真实写入 playCount：`startVideoPlayback` 时经 `ViewModel.recordPlay` 上报，预览→播放→退预览→再播放不重复计数）
+- 视频点击播放按钮即计一次播放，同一次详情打开只计一次（v1.14 起真实写入 playCount：`startVideoPlayback` 时经 `ViewModel.recordPlay` 上报，预览→播放→退预览→再播放不重复计数；**v1.15 改为会话级 `playedRecordKeys` 集合**：播放 A → 横滑 B → 滑回 A → 再播放 A 也不重复计数，退出详情时清空）
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-10
 
 ## 应用图标
 

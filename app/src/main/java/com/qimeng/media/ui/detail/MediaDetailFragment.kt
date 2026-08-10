@@ -95,7 +95,13 @@ class MediaDetailFragment : Fragment() {
     private var currentRecordKey: String? = null
     private var enterTimeMillis = 0L
     /** v1.14：同一次详情打开视频是否已记过播放（预览→播放→退预览→再播放不重复计数） */
-    private var playRecordedForCurrentMedia = false
+    // v1.15：同一次详情打开的"已计播放"视频集合（会话级）。
+    // 原 playRecordedForCurrentMedia 在 showMediaAt 时重置，播放 A → 横滑 B → 滑回 A → 再播放
+    // 会重复计播放；改为集合后同一会话内每个视频只计一次，退出详情时清空。
+    private val playedRecordKeys = mutableSetOf<String>()
+
+    /** v1.15：详细信息弹窗是否已展示（防重复弹窗，dismiss 时复位） */
+    private var infoSheetShowing = false
     private var chromeVisible = true
     // v1.12 删除：tagJob 仅服务于 observeTags 空 collect（collect{} 丢弃全部值），随死代码一并移除
     private var timelineTagJob: Job? = null
@@ -169,14 +175,22 @@ class MediaDetailFragment : Fragment() {
             val player = binding.detailVideoPlayer
             val pos = player.currentPositionMs
             val formatted = player.currentPositionFormatted
+            // v1.15：打开标记弹窗前暂停播放——原实现在播放中打开弹窗，展示期间视频继续播放，
+            // 标记时间点（打开时快照）与实际画面时间偏差。dismiss 后恢复播放。
+            val wasPlaying = exoPlayer?.isPlaying == true
+            exoPlayer?.pause()
             TimelineTagHelper.showAddTimelineTagDialog(
                 requireContext(),
                 pos,
-                formatted
-            ) { timeMs, name ->
-                val media = currentMedia ?: return@showAddTimelineTagDialog
-                viewModel.addTimelineTag(media.recordKey, media.fileName, timeMs, name)
-            }
+                formatted,
+                onAdd = { timeMs, name ->
+                    val media = currentMedia ?: return@showAddTimelineTagDialog
+                    viewModel.addTimelineTag(media.recordKey, media.fileName, timeMs, name)
+                },
+                onDismiss = {
+                    if (wasPlaying) exoPlayer?.play()
+                }
+            )
         }
         binding.detailVideoPlayer.onJump = { showJumpSheet() }
         binding.detailVideoPlayer.onTagLongPress = { tag ->
@@ -367,8 +381,7 @@ class MediaDetailFragment : Fragment() {
         currentMedia = media
         currentRecordKey = media.recordKey
         enterTimeMillis = System.currentTimeMillis()
-        // v1.14：同一次详情打开视频只计一次播放（预览→播放→退预览→再播放不重复计数）
-        playRecordedForCurrentMedia = false
+        // v1.15：播放计数按会话级集合去重（见 playedRecordKeys 声明），切媒体不再重置
 
         // 分页加载：接近边界时增量加载新数据
         loadMoreIfNeeded()
@@ -579,9 +592,8 @@ class MediaDetailFragment : Fragment() {
         player.setVideoUri(media.uriString)
         player.startPlayback()
         // v1.14：视频真正开始播放时记一次播放（修复 playCount 从无写入点，恒为 0 的问题）
-        // 同一次详情打开只计一次：退到预览再播放不重复计数
-        if (!playRecordedForCurrentMedia) {
-            playRecordedForCurrentMedia = true
+        // v1.15：同一次详情打开每视频只计一次（会话级集合，滑走滑回不重复计数）
+        if (playedRecordKeys.add(media.recordKey)) {
             viewModel.recordPlay(media.recordKey, media.fileName)
         }
     }
@@ -1054,8 +1066,13 @@ class MediaDetailFragment : Fragment() {
     }
 
     private fun showInfoSheet(media: MediaFileEntity) {
+        // v1.15：防重复弹窗——解码期间用户可重复点击详情按钮，避免堆叠多个对话框
+        if (infoSheetShowing) return
+        infoSheetShowing = true
         val ctx = requireContext()
-        val dialog = BottomSheetDialog(ctx)
+        val dialog = BottomSheetDialog(ctx).apply {
+            setOnDismissListener { infoSheetShowing = false }
+        }
         val container = sheetContainer(ctx)
         container.addView(sheetTitle(ctx, "详细信息"))
         addInfoRow(container, "文件名", media.fileName)
@@ -1065,15 +1082,20 @@ class MediaDetailFragment : Fragment() {
 
         // 如果 width/height/durationMillis 为 null，按需解码
         if (needsMetadataDecode(media)) {
-            lifecycleScope.launch {
+            // v1.15：先 show 对话框并展示可用的行，解码完成后追加补齐。
+            // 原实现解码完成才 show，解码期间无反馈且持 Fragment 级 lifecycleScope
+            // 协程引用 dialog，Fragment 退栈后仍操作已销毁视图。
+            addInfoRow(container, "尺寸", "解码中…")
+            container.addView(sheetDone(ctx, dialog))
+            dialog.setContentView(container)
+            dialog.show()
+            viewLifecycleOwner.lifecycleScope.launch {
                 val updated = decodeMediaMetadata(media)
                 addInfoRow(container, "尺寸", formatDimensions(updated))
                 updated.durationMillis?.let { addInfoRow(container, "时长", formatDuration(it)) }
                 addInfoRow(container, "目录", updated.folderName)
                 addInfoRow(container, "路径", updated.uriString)
-                container.addView(sheetDone(ctx, dialog))
                 dialog.setContentView(container)
-                dialog.show()
             }
         } else {
             addInfoRow(container, "尺寸", formatDimensions(media))
@@ -1158,6 +1180,7 @@ class MediaDetailFragment : Fragment() {
             return
         }
         updateCurrentDuration()
+        playedRecordKeys.clear()
         restorePortraitOrientation()
         restoreMainWindow()
         syncSystemBars(true)

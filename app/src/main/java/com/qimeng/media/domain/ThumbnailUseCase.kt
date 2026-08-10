@@ -21,6 +21,9 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ThumbnailUseCase(
     private val application: Application
 ) {
+    // v1.15：@Volatile 保证 Main 线程读 / IO 线程 finally 写 false 的跨线程可见性，
+    // 避免扫描完成回调与手动预生成并发时读到旧值同时启动两个预生成任务
+    @Volatile
     private var isPregenerating = false
 
     private val _progress = MutableStateFlow<ThumbnailProgress>(ThumbnailProgress.Idle)

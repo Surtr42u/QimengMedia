@@ -13,6 +13,7 @@ import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
 import com.qimeng.media.scan.MediaStoreScanner
 import com.qimeng.media.scan.SafMediaScanner
+import com.qimeng.media.scan.ScanUtils
 import kotlinx.coroutines.flow.firstOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -100,7 +101,17 @@ class ScanUseCase(
 
             val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
 
-            val newOrUpdated = mediaFiles.filter { it.recordKey !in existingKeys }
+            // v1.x：不仅 upsert 新 key，同名覆盖/重编码文件元数据有变化时也更新，
+            // 避免 sizeBytes/duration/width/height/modifiedAtMillis 永久陈旧
+            val existingByKey = mediaFiles
+                .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
+                .distinct()
+                .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
+                .toMap()
+            val newOrUpdated = mediaFiles.filter { file ->
+                file.recordKey !in existingKeys ||
+                    existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+            }
             if (newOrUpdated.isNotEmpty()) {
                 newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
             }
@@ -214,6 +225,17 @@ class ScanUseCase(
 
             repository.upsertCosWorks(newCosWorks)
 
+            // v1.x：刷新后清理该源已消失/改名的作品行（按当前扫描到的 workKey 集合判断，
+            // 磁盘上已删除/改名的作品不再保留，避免 cos_works 行残留）
+            val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
+            val disappearedWorkIds = repository.getCosWorksBySourceUri(uriString)
+                .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
+                .map { it.id }
+            if (disappearedWorkIds.isNotEmpty()) {
+                repository.deleteCosWorksByIds(disappearedWorkIds)
+                AppLog.d("CosScan", "refreshCosSource: cleaned ${disappearedWorkIds.size} disappeared works")
+            }
+
             val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
             val staleKeys = existingCosKeys.filter { it !in scannedKeys }
             if (staleKeys.isNotEmpty()) {
@@ -296,7 +318,16 @@ class ScanUseCase(
                     )
                     autoRefreshMedia.addAll(mediaFiles)
                     val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
-                    val newFiles = mediaFiles.filter { it.recordKey !in existingKeys }
+                    // v1.x：同名覆盖/重编码文件元数据有变化时也更新（与 refreshScanSource 一致）
+                    val existingByKey = mediaFiles
+                        .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
+                        .distinct()
+                        .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
+                        .toMap()
+                    val newFiles = mediaFiles.filter { file ->
+                        file.recordKey !in existingKeys ||
+                            existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+                    }
                     if (newFiles.isNotEmpty()) {
                         newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
                     }
@@ -318,6 +349,15 @@ class ScanUseCase(
                     // 全量 upsert 所有扫描到的媒体（不只是新增），以同步 folderName 变化（结构3修复等）
                     newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
                     repository.upsertCosWorks(newCosWorks)
+                    // v1.x：清理该源已消失/改名的作品行（与 refreshCosSource 一致，避免 cos_works 行残留）
+                    val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
+                    val disappearedWorkIds = repository.getCosWorksBySourceUri(source.uriString)
+                        .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
+                        .map { it.id }
+                    if (disappearedWorkIds.isNotEmpty()) {
+                        repository.deleteCosWorksByIds(disappearedWorkIds)
+                        com.qimeng.media.core.AppLog.d("CosScan", "autoRefresh: cleaned ${disappearedWorkIds.size} disappeared works")
+                    }
                     val authorNames = newCosWorks.map { it.authorName }.distinct()
                     val authorEntities = authorNames.map { authorName ->
                         AuthorEntity(authorId = "cos_" + generateAuthorId(authorName), displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
@@ -372,24 +412,11 @@ class ScanUseCase(
             return
         }
 
-        // 回退：sourceUri 为 null 的旧版数据，用 URI 前缀匹配（仅对 SAF document 文件可命中）
-        val remainingSources = repository.getScanSources().filter { !it.isBackupDirectory }
-        val activePrefixes = remainingSources.map { src ->
-            if (src.uriString.endsWith("/")) src.uriString else "${src.uriString}/"
-        }
-        val allKeysAndUris = repository.getNonCosKeysAndUris()
-        val orphanKeys = if (activePrefixes.isEmpty()) {
-            allKeysAndUris.map { it.recordKey }
-        } else {
-            allKeysAndUris.filter { (_, uri, sourceUri) ->
-                sourceUri == null && activePrefixes.none { prefix -> uri.startsWith(prefix) }
-            }.map { it.recordKey }
-        }
-        com.qimeng.media.core.AppLog.d("ScanUseCase", "deleteScanSource: uri=$uriString, remaining=${activePrefixes.size}, allNonCos=${allKeysAndUris.size}, orphans=${orphanKeys.size}")
-        if (orphanKeys.isNotEmpty()) {
-            repository.deleteMediaAndRefs(orphanKeys)
-            repository.deleteOrphanAuthors()
-        }
+        // v1.x 修复：旧回退用「文件 URI startsWith 剩余源 tree URI 前缀」判断归属，
+        // 但 content://media / document 文件 URI 与 tree URI 命名空间不同恒不命中，
+        // sourceUri==null 的旧版数据全部被当孤儿删除（误删其他源旧数据文件）。
+        // 旧版数据无法可靠反推归属，按「宁可残留不可误删」原则保守保留，不做回退删除
+        // （与 cleanupOrphanFiles 对 sourceUri==null 保守保留、GUIDE_SCAN.md「删除扫描源」第 3 条一致）。
     }
 
     /** 删除 COS 扫描源（v1.12：按 sourceUri 精确删除，避免误删其他源作品） */
@@ -550,7 +577,8 @@ class ScanUseCase(
                     authorName = work.authorName,
                     workName = work.workName,
                     folderUri = work.folderPath,
-                    fileCount = cosResult.authorFileMap[work.authorName]?.size ?: 0,
+                    // v1.x 修复：fileCount 取该作品文件数，而非该作者全部作品文件数（一作者多作品会超计）
+                    fileCount = cosResult.workFileCounts["${work.authorName}/${work.workName}"] ?: 0,
                     sourceUri = uriString,
                     indexedAtMillis = indexedAtMillis
                 )
@@ -571,6 +599,8 @@ class ScanUseCase(
         val safAuthorMap = mutableMapOf<String, MutableList<MediaFileEntity>>()
         val safWorks = mutableListOf<CosWorkEntity>()
         val seenWorks = mutableSetOf<String>()
+        // v1.x：workKey("作者/作品") → 该作品文件数，用于 fileCount 精确统计（对齐 MediaStore 分支）
+        val safWorkFileCounts = mutableMapOf<String, Int>()
         // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
         val safWorkNameByUri = mutableMapOf<String, String>()
 
@@ -607,6 +637,8 @@ class ScanUseCase(
             val workName = if (segments.size > 1) segments[1].trim() else authorName
             safWorkNameByUri[fileUri] = workName
             val workKey = "$authorName/$workName"
+            // v1.x：按作品统计文件数（fix #9：fileCount 应为该作品文件数，而非作者全部作品文件数）
+            safWorkFileCounts[workKey] = (safWorkFileCounts[workKey] ?: 0) + 1
             if (seenWorks.add(workKey)) {
                 val workPath = if (segments.size > 1) {
                     "$rootRelPath/$authorName/$workName"
@@ -628,7 +660,8 @@ class ScanUseCase(
             if (wm != null) file.copy(folderName = wm) else file
         }
         val updatedWorks = safWorks.map { work ->
-            work.copy(fileCount = safAuthorMap[work.authorName]?.size ?: 0)
+            // v1.x 修复：fileCount 取该作品文件数（原先取作者全部作品文件数，一作者多作品会超计）
+            work.copy(fileCount = safWorkFileCounts["${work.authorName}/${work.workName}"] ?: 0)
         }
         // 跨源 recordKey 冲突重映射（与常规源共享 media_files 主键表）
         val resolvedMedia = resolveRecordKeyConflicts(updatedAllSafMedia, uriString)

@@ -94,6 +94,9 @@ class SearchFragment : Fragment() {
     private var nameIndexJob: Job? = null
     private var searchJob: Job? = null
 
+    // v1.14：外部传入的初始查询词（如统计页标签点击跳转），数据流就绪后自动执行一次搜索
+    private var pendingInitialQuery: String? = null
+
     // 搜索历史
     private val historyPrefs by lazy { requireContext().getSharedPreferences("search_history", Context.MODE_PRIVATE) }
 
@@ -116,6 +119,12 @@ class SearchFragment : Fragment() {
         setupAdapters()
         setupBackNavigation()
         showState(STATE_EMPTY)
+        // v1.14：注入初始查询词（标签点击等场景传入），文本回填后等待数据流就绪再自动搜索
+        arguments?.getString(ARG_INITIAL_QUERY)?.trim()?.takeIf { it.isNotEmpty() }?.let { query ->
+            pendingInitialQuery = query
+            searchInput?.setText(query)
+            searchInput?.setSelection(query.length)
+        }
         // 搜索历史来自SharedPreferences，立即显示，不等待数据流
         loadHistoryImmediately()
         // 优先用缓存索引立即填充推荐搜索（消除首次视觉延迟）
@@ -292,6 +301,12 @@ class SearchFragment : Fragment() {
 
                 // 异步重建名字索引，避免卡顿
                 rebuildNameIndexAsync()
+
+                // v1.14：首次数据齐备后自动执行初始查询词搜索（仅执行一次）
+                if (pendingInitialQuery != null) {
+                    pendingInitialQuery = null
+                    doSearch()
+                }
             }
         }
     }
@@ -559,6 +574,21 @@ class SearchFragment : Fragment() {
 
         /** 搜索历史上限（v1.12：原硬编码 20 提为常量） */
         const val MAX_HISTORY_COUNT = 20
+
+        /** v1.14：初始查询词参数名（统计页标签点击跳转等场景） */
+        private const val ARG_INITIAL_QUERY = "initial_query"
+
+        /**
+         * 创建搜索页实例。
+         * @param initialQuery 初始查询词（可为 null，有值时进入页面后自动执行该词搜索）
+         */
+        fun newInstance(initialQuery: String? = null): SearchFragment {
+            return SearchFragment().apply {
+                if (!initialQuery.isNullOrBlank()) {
+                    arguments = Bundle().apply { putString(ARG_INITIAL_QUERY, initialQuery) }
+                }
+            }
+        }
 
         // ===== nameIndex 缓存（跨实例复用，避免每次从零重建） =====
         /** 缓存的推荐搜索索引 */

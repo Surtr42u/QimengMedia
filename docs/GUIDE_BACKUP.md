@@ -43,12 +43,14 @@
 - 写入备份目录前确认用户授权（SAF）。
 - 自动同步使用防抖（数据变化 30 秒 / 后台兜底 60 秒），避免每次小改动都写盘。
 - 写入时使用临时文件再替换（tmp → round-trip 校验 → 删旧 → rename），避免半写入损坏；**校验提前到 rename 之前**（校验 `.tmp` 内容可解析且一致），校验通过才删旧文件、再 rename；校验失败只删 `.tmp`、保留旧备份。
+- **v1.15 原子写加固**：rename 前旧备份先 `renameTo(.bak)` 暂存，新文件 rename 成功后删 `.bak`；任一步失败均保留至少一份有效备份（.bak 还原或退化先删旧再 rename），根治"删旧→rename 失败"导致唯一备份整体消失的问题。SAF provider 不支持 rename 旧文件时退化处理。
+- **v1.15 写侧大小上限**：`buildBackupJson` 完成后检查 `bytes.size > MAX_BACKUP_BYTES`（64MB，与读侧共用常量），超限拒绝写入并记 `AppLog.w`，不删旧备份——避免大库导出超限照写成功但永远读不回。
 - 导出失败提示用户，不影响数据库主数据。
 - **空库覆盖防护**：自动同步（`triggerAutoSyncIfNeeded`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
 
 ## 导入原则
 
-- 先解析 `schemaVersion`。
+- 先解析 `schemaVersion`（**v1.15：导入时校验，备份 schemaVersion > 当前支持版本（1）则拒绝导入并记日志，防未来版本文件被静默错解析**）。
 - 对缺失字段使用默认值。
 - 对未知字段忽略但保留兼容空间。
 - 找不到媒体文件时跳过未匹配记录（跨引用安全：authorMediaRefs/mediaTagRefs/mediaStats/history/timelineTags 仅当 recordKey 存在于 media_files 时才建立关联）。
@@ -72,8 +74,10 @@
 - 作者、标签、相册规则按名称合并。
 - 重复作者 ID 时合并关联文件。
 - 统计数据按 recordKey 合并，数值钳制非负。
-- **标签合并**：导入忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联，避免 autoGenerate id 撞号导致标签及关联静默丢失。
+- **标签合并**：导入忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联，避免 autoGenerate id 撞号导致标签及关联静默丢失（v1.15：恢复计数按 insert 返回值过滤 IGNORE 冲突，重复恢复不再虚增 count）。
 - **收藏合并**：收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏；同时清理备份中已不存在的陈旧点赞键（`like_count_*`/`like_date_*`）。
+- **点赞合并（v1.15）**：点赞恢复改「本地 ∪ 备份」并集合并（与收藏语义一致）——只导入备份中存在的新键，本地独有但备份中没有的点赞保留，不再静默删除（旧实现凡不在备份中的本地点赞键一律 remove）。
+- **专辑规则（v1.15）**：导出改为全部规则（含 `enabled=0` 禁用规则），恢复按备份 enabled 值还原——旧实现只导出启用规则，禁用规则恢复后永久丢失。
 - **时间轴标签去重**：导入前按 `(recordKey, timeMillis, name)` 查重（`TimelineTagDao.findExisting`），已存在则跳过——主键 autoGenerate 使 `@Upsert` 无法去重。
 - **settings 导入**：纳入导入流程（恢复用户设置），但跳过设备本地键 `backup_directory_uri`/`backup_directory_name`（重装后备份目录 URI 无意义）。
 - **导入事务性**：`importFromDirectory` 先解析全部数据段，再在**单一数据库事务**内导入数据库相关段落，避免中途异常留下"先序已入库、后序未导入"的半恢复状态；likes/favorites/followedAuthorIds/appPrefs 为 SharedPreferences 写入，事务外执行。
@@ -131,4 +135,4 @@
 - 数据迁移到新手机时，只需复制 `绮梦影库/` 目录（含 `qimeng_backup.json`）并在新手机上导入。
 - 格式规范变更需同步 `docs/DATA_MIGRATION_SPEC.md`。
 
-> 最后更新：2026-08-09（v2.0 单文件全量重构）
+> 最后更新：2026-08-10（v1.15 备份加固）

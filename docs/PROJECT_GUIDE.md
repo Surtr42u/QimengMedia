@@ -6,7 +6,7 @@
 
 ## 当前基准
 
-- 版本：v1.12（`versionName=1.12` / `versionCode=10`，2026-08-08 已与功能版本同步）
+- 版本：v1.15（`versionName=1.15` / `versionCode=11`，2026-08-10 全项目巡检修复后同步）
 - App 名称：绮梦影库
 - Package：`com.qimeng.media`
 - Minimum SDK：Android 12 / API 31
@@ -20,7 +20,7 @@
 - Repository 负责协调 DAO、扫描结果和备份同步
 - Repository 方法命名表达业务动作
 - 列表、加载、空状态、错误状态统一建模，不用多个零散 Boolean
-- 数据库目标：Room 2.8.4
+- 数据库目标：Room 2.8.4（数据库版本 7，v1.15 补 isCosFile 索引）
 - 图片加载目标：Coil 3.4.0
 - 视频播放目标：Media3 1.8.0 / ExoPlayer
 - 文件访问目标：SAF 文件夹授权
@@ -58,6 +58,7 @@
 - Detekt + Android Lint + ktlint 静态分析，GitHub Actions CI
 - 5 个核心测试类覆盖纯逻辑（RecordKeyFactory/MediaBrowserLogic/SourceMatcher/MediaGroupHelper/MediaRenderHelper）
 - 当前已备案黄色/红色区项详见 `GUIDE_CODE_MAINTENANCE.md`「当前已备案的黄色区项」
+- v1.15 全项目巡检：修复 8 个高危（数据丢失/崩溃级）与 40+ 中低危问题，reviewer 审查闭环（详见 CHANGELOG）
 
 ## 核心原则
 
@@ -248,4 +249,4 @@ QimengMedia/
 
 换 AI、换开发工具或交接项目时，必须传完整源码目录，不只传 APK。
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-10

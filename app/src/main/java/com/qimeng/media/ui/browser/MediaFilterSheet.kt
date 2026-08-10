@@ -40,7 +40,8 @@ data class FilterConfig(
 
 object MediaFilterSheet {
     private val CURRENT_YEAR = Calendar.getInstance().get(Calendar.YEAR)
-    private const val YEAR_MIN = 2010
+    // v1.12：年份下界从 2010 放宽到 1990——原写死 2010 导致更早的媒体永远无法按年份筛选
+    private const val YEAR_MIN = 1990
 
     /** 筛选状态持有者，解决子方法间传递 var state 的闭包问题 */
     private class FilterStateHolder(var value: MediaFilterState)

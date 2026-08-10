@@ -80,6 +80,8 @@ class MediaStoreScanner(private val context: Context) {
         val rootPrefix = "$normalizedPath/"
         val authorFileMap = mutableMapOf<String, MutableList<MediaFileEntity>>()
         val works = mutableListOf<CosWorkInfo>()
+        // v1.x：workKey("作者/作品") → 该作品文件数，供 fileCount 精确统计
+        val workFileCounts = mutableMapOf<String, Int>()
         // 去重 set：对齐 SAF 分支写法，避免 O(文件数×作品数) 线性扫描
         val seenWorks = mutableSetOf<String>()
         // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
@@ -101,19 +103,25 @@ class MediaStoreScanner(private val context: Context) {
             val relativePath = candidate.directoryPath.removePrefix(rootPrefix)
             val segments = relativePath.split("/")
 
-            // segments[0] = 作者名, segments[1] = 作品名或文件名, segments[2+] = 子目录或文件名
+            // segments[0] = 作者名, segments[1] = 作品名, segments[2+] = 子目录或文件名
             val authorName = segments.getOrNull(0)?.trim().orEmpty()
             if (authorName.isBlank()) continue
 
             authorFileMap.getOrPut(authorName) { mutableListOf() }.add(entity)
 
-            // 判断作品名：如果 segments[1] 是目录（有 segments[2]），则作品名=segments[1]；否则作品名=作者名
-            val workName = if (segments.size > 2) segments[1].trim() else authorName
+            // 判断作品名：segments.size >= 2 说明存在"作者/作品"二级目录，segments[1] 即作品名；
+            // 仅一段（文件直接在作者目录下）时作品名 = 作者名。
+            // v1.x 修复：旧判断 `> 2` 对标准结构2（作者/作品/文件，segments.size==2）不成立，
+            // 导致 workName 被错误置为作者名（off-by-one）。
+            val workName = if (segments.size >= 2) segments[1].trim() else authorName
             workNameByUri[candidate.uriString] = workName
-            val workPath = if (segments.size > 2) "$rootPrefix$authorName/$workName" else "$rootPrefix$authorName"
+            val workPath = if (segments.size >= 2) "$rootPrefix$authorName/$workName" else "$rootPrefix$authorName"
+            val workKey = "$authorName/$workName"
+            // 按作品统计文件数（fix #9：fileCount 应为该作品文件数，而非作者全部作品文件数）
+            workFileCounts[workKey] = (workFileCounts[workKey] ?: 0) + 1
 
             // 去重添加作品（set 去重对齐 SAF 分支，替代 O(N×M) none{} 线性扫描）
-            if (seenWorks.add("$authorName/$workName")) {
+            if (seenWorks.add(workKey)) {
                 works.add(CosWorkInfo(authorName = authorName, workName = workName, folderPath = workPath, sourceUri = sourceUri))
             }
         }
@@ -127,7 +135,8 @@ class MediaStoreScanner(private val context: Context) {
         return CosScanResult(
             mediaFiles = updatedEntities,
             authorFileMap = authorFileMap,
-            works = works
+            works = works,
+            workFileCounts = workFileCounts
         )
     }
 
@@ -137,7 +146,9 @@ class MediaStoreScanner(private val context: Context) {
     data class CosScanResult(
         val mediaFiles: List<MediaFileEntity>,
         val authorFileMap: Map<String, List<MediaFileEntity>>,
-        val works: List<CosWorkInfo>
+        val works: List<CosWorkInfo>,
+        /** v1.x：workKey("作者/作品") → 该作品文件数，用于 CosWorkEntity.fileCount 精确统计 */
+        val workFileCounts: Map<String, Int>
     )
 
     /**
@@ -205,10 +216,13 @@ class MediaStoreScanner(private val context: Context) {
         output: MutableList<MediaCandidate>
     ) {
         val selection = if (pathPrefix != null) {
-            "${MediaStore.MediaColumns.DATA} LIKE ?"
+            // v1.x：目录名含 _ 或 % 时会被 SQL LIKE 当通配符误匹配，转义后配合 ESCAPE '\' 精确匹配
+            "${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\'"
         } else null
         val selectionArgs = if (pathPrefix != null) {
-            arrayOf("$pathPrefix/%")
+            // v1.15：只转义前缀中的通配符，末尾 "/%" 是递归通配符必须保留——
+            // 整体转义会把 % 也转成字面量，LIKE 恒匹配 0 行，自动刷新把该源全部文件当孤儿删除
+            arrayOf(escapeLikePattern(pathPrefix) + "/%")
         } else null
 
         resolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
@@ -266,13 +280,21 @@ class MediaStoreScanner(private val context: Context) {
      * 统计指定路径下的媒体文件数量（诊断用）
      */
     private fun countMediaInPath(pathPrefix: String): Int {
-        val selection = "${MediaStore.MediaColumns.DATA} LIKE ?"
-        val args = arrayOf("$pathPrefix/%")
+        val selection = "${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\'"
+        // v1.15：只转义前缀通配符，保留末尾 "/%" 递归通配符（与 queryMedia 一致）
+        val args = arrayOf(escapeLikePattern(pathPrefix) + "/%")
         var count = 0
         resolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.MediaColumns._ID), selection, args, null)?.use { count += it.count }
         resolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.MediaColumns._ID), selection, args, null)?.use { count += it.count }
         return count
     }
+
+    /**
+     * 转义 LIKE 通配符：目录名含 _ 或 % 时避免被当作 SQL 通配符误匹配。
+     * 先转义反斜杠再转义通配符，保证 ESCAPE '\' 语义正确（Android 路径不含反斜杠，为安全起见仍处理）。
+     */
+    private fun escapeLikePattern(value: String): String =
+        value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     /**
      * 从 SAF URI 中提取文件系统路径。

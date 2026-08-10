@@ -56,7 +56,8 @@ data class BackupSummary(
  * - **导入合并策略**：本地 media_files 为空（全新重装未扫描）→ 导入备份 media_files 全量；
  *   本地非空（已扫描）→ 跳过 media_files（保留新扫描的有效 URI），引用数据按稳定 key 合并。
  * - 字段名自解释（fileName/viewCount/openedAtMillis），AI 可直接读取 JSON 生成报告，无需 App 内置报告器。
- * - 原子写入（tmp → round-trip 校验 → 删旧 → rename）与 64MB 单文件读取上限沿用旧版安全设计。
+ * - 原子写入（tmp → round-trip 校验 → 旧备份改名 .bak 暂存 → rename → 删 .bak）与 64MB 单文件读写上限沿用旧版安全设计，
+ *   任一失败路径下至少保留一份有效备份。
  */
 class BackupManager(private val context: Context) {
 
@@ -76,6 +77,12 @@ class BackupManager(private val context: Context) {
     suspend fun importFromDirectory(dirUri: Uri, database: AppDatabase, appPrefsManager: AppPrefsManager): Int = withContext(Dispatchers.IO) {
         val dir = DocumentFile.fromTreeUri(context, dirUri) ?: return@withContext 0
         val json = readJson(dir) ?: return@withContext 0
+        // schemaVersion 兼容性校验：高于当前支持版本时拒绝导入，避免按旧结构解析新格式数据
+        val schemaVersion = json.optInt("schemaVersion", 1)
+        if (schemaVersion > CURRENT_BACKUP_SCHEMA_VERSION) {
+            AppLog.w("Backup", "importFromDirectory 拒绝导入：备份 schemaVersion=$schemaVersion 高于当前支持版本 $CURRENT_BACKUP_SCHEMA_VERSION")
+            return@withContext 0
+        }
         val data = json.optJSONObject("data") ?: return@withContext 0
         val hadLocalMedia = database.mediaFileDao().hasAny()
         var count = 0
@@ -99,10 +106,11 @@ class BackupManager(private val context: Context) {
             val tagNames = mutableListOf<String>()
             importArray(data.optJSONArray("tags")) { it.toTagEntity() }.forEach { tag ->
                 if (tag.name.isBlank()) return@forEach
-                database.tagDao().insert(
+                // insert 返回 -1 表示 IGNORE 冲突（重复标签），仅实际插入才计入，避免恢复计数虚增
+                val rowId = database.tagDao().insert(
                     TagEntity(tagId = 0, name = tag.name, createdAtMillis = tag.createdAtMillis)
                 )
-                tagNames.add(tag.name)
+                if (rowId != -1L) tagNames.add(tag.name)
             }
             if (tagNames.isNotEmpty()) count++
 
@@ -240,7 +248,7 @@ class BackupManager(private val context: Context) {
 
         return JSONObject().apply {
             put("format", "qimeng_backup")
-            put("schemaVersion", 1)
+            put("schemaVersion", CURRENT_BACKUP_SCHEMA_VERSION)
             put("appIdentifier", "com.qimeng.media")
             put("exportedAtMillis", now)
             put("data", JSONObject().apply {
@@ -257,7 +265,8 @@ class BackupManager(private val context: Context) {
                         put("tagName", tagIdToName[xref.tagId]?.name ?: "")
                     }
                 })
-                put("albumRules", exportArray(db.albumRuleDao().getEnabledRulesByPriority()) { it.toBackupJson() })
+                // albumRules 导出全部规则（含禁用）：禁用规则需随备份迁移，恢复后按 enabled 字段还原
+                put("albumRules", exportArray(db.albumRuleDao().observeAllRules().firstOrNull().orEmpty()) { it.toBackupJson() })
                 put("mediaStats", exportArray(db.viewStatsDao().getAllByFileName()) { it.toBackupJson() })
                 put("dailyBrowse", exportArray(db.dailyBrowseDao().getAll()) { it.toBackupJson() })
                 put("history", exportArray(db.viewHistoryDao().getLatest(HISTORY_EXPORT_LIMIT)) { it.toBackupJson() })
@@ -393,7 +402,8 @@ class BackupManager(private val context: Context) {
     )
 
     private fun JSONObject.toAuthorEntity() = AuthorEntity(
-        authorId = optString("authorId", "").take(64),
+        // authorId 列为 TEXT 主键无长度约束，与 toAuthorMediaCrossRef 保持一致不截断，避免超长 authorId 截断后 FK 匹配不上
+        authorId = optString("authorId", ""),
         displayName = optString("displayName", ""),
         createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis()),
         updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
@@ -479,13 +489,12 @@ class BackupManager(private val context: Context) {
 
     // ===== SharedPreferences 导入 =====
 
-    /** 导入 likes 数组并清理陈旧点赞键、合并收藏。返回是否有数据被写入。 */
+    /** 导入 likes 数组并合并收藏（本地 ∪ 备份）。返回是否有数据被写入。 */
     private fun importLikes(data: JSONObject): Boolean {
         val prefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         val likes = data.optJSONArray("likes")
         var importedAny = false
-        val backupLikeKeys = mutableSetOf<String>()
         val likeCountPrefix = "like_count_"
         val likeDatePrefix = "like_date_"
 
@@ -502,7 +511,6 @@ class BackupManager(private val context: Context) {
                 val likeCount = obj.optInt("likeCount", 0).coerceAtLeast(0)
                 val lastLikeDate = if (obj.has("lastLikeDate") && !obj.isNull("lastLikeDate")) obj.optString("lastLikeDate", "") else null
                 editor.putInt("$likeCountPrefix$recordKey", likeCount)
-                backupLikeKeys.add(recordKey)
                 if (lastLikeDate != null) {
                     editor.putString("$likeDatePrefix$recordKey", lastLikeDate)
                 } else {
@@ -512,19 +520,8 @@ class BackupManager(private val context: Context) {
             }
             importedAny = imported > 0
         }
-
-        // 清理本地残留的点赞键（源端已取消点赞的陈旧 like_count_*/like_date_*）
-        for (entry in prefs.all.entries) {
-            val key = entry.key as String
-            val recordKey = when {
-                key.startsWith(likeCountPrefix) -> key.removePrefix(likeCountPrefix)
-                key.startsWith(likeDatePrefix) -> key.removePrefix(likeDatePrefix)
-                else -> continue
-            }
-            if (recordKey !in backupLikeKeys) {
-                editor.remove(likeCountPrefix + recordKey).remove(likeDatePrefix + recordKey)
-            }
-        }
+        // 点赞并集合并（本地 ∪ 备份）：本地已有的 like_count_*/like_date_* 若不在备份中则保留，
+        // 只导入备份中存在的新键，与下方收藏合并语义一致，避免异机/空备份恢复静默删除本地独有点赞。
 
         // 收藏合并（本地 ∪ 备份），避免空 favorites 备份清空本地已有收藏
         val favs = data.optJSONArray("favorites")
@@ -555,16 +552,23 @@ class BackupManager(private val context: Context) {
     // ===== 文件读写（原子写 + 64MB 上限） =====
 
     /**
-     * 原子写入 JSON 到备份目录：tmp 写入 → round-trip 校验 .tmp → 删旧 → rename。
-     * 校验失败只删 .tmp，旧备份保留，避免唯一备份被损坏的写入覆盖。
+     * 原子写入 JSON 到备份目录：tmp 写入 → round-trip 校验 .tmp → 旧备份改名 .bak 暂存 → rename .tmp 为正式名 → 删 .bak。
+     * 校验失败只删 .tmp、旧备份保留；rename 失败时旧备份以 .bak 形式留存，任何失败路径下至少存在一份有效备份。
+     * 写入前检查大小上限，超限直接拒绝（不触碰旧备份），防大库导出超限后永远读不回。
      */
     private fun writeJsonAtomic(dir: DocumentFile, json: JSONObject): Boolean {
         val name = BackupFileNames.QIMENG_BACKUP
         return try {
             val tempName = "${name}.tmp"
+            val bakName = "${name}.bak"
             dir.findFile(tempName)?.takeIf { it.isFile }?.delete()
-            val tempFile = dir.createFile("application/json", tempName) ?: return false
             val bytes = json.toString(2).toByteArray(Charsets.UTF_8)
+            // 写侧上限校验：与读侧 64MB 上限对齐，超限备份即使写入也永远读不回，直接拒绝并保留旧备份
+            if (bytes.size > MAX_BACKUP_BYTES) {
+                AppLog.w("BackupManager", "writeJsonAtomic 跳过 $name：写入 ${bytes.size / 1024}KB 超过上限 ${MAX_BACKUP_BYTES / 1024}KB")
+                return false
+            }
+            val tempFile = dir.createFile("application/json", tempName) ?: return false
             context.contentResolver.openOutputStream(tempFile.uri)?.use { out ->
                 out.write(bytes)
                 out.flush()
@@ -581,10 +585,28 @@ class BackupManager(private val context: Context) {
                 return false
             }
 
-            dir.findFile(name)?.takeIf { it.isFile }?.delete()
+            // 旧备份先改名 .bak 暂存，rename 失败时旧备份仍在；rename 成功后再删 .bak
+            val oldFile = dir.findFile(name)?.takeIf { it.isFile }
+            var oldMovedToBak = false
+            if (oldFile != null) {
+                oldMovedToBak = oldFile.renameTo(bakName)
+                if (!oldMovedToBak) {
+                    // 部分 SAF provider 不支持重命名已存在文件：退化路径——.tmp 已校验通过，
+                    // 先删旧再 rename 新文件，保证删旧前新文件已就绪
+                    AppLog.w("BackupManager", "writeJsonAtomic 旧备份改名 .bak 失败，退化为校验后先删旧")
+                    oldFile.delete()
+                }
+            }
             if (!tempFile.renameTo(name)) {
                 AppLog.e("BackupManager", "writeJsonAtomic rename failed for $name")
+                // 保留现场：尽力把 .bak 还原为正式名，避免备份主文件缺失；还原失败时 .bak 仍持有旧备份
+                if (oldMovedToBak) {
+                    dir.findFile(bakName)?.renameTo(name)
+                }
                 return false
+            }
+            if (oldMovedToBak) {
+                dir.findFile(bakName)?.takeIf { it.isFile }?.delete()
             }
             true
         } catch (e: Exception) {
@@ -594,20 +616,21 @@ class BackupManager(private val context: Context) {
         }
     }
 
-    /** 读取备份主文件，带 64MB 上限校验（防恶意/损坏 JSON 导致 OOM），异常或超限返回 null。 */
+    /** 读取备份主文件，带 64MB 上限校验（length() 预检在 readBytes 之前 + 读取后二次校验，防恶意/损坏 JSON 导致 OOM），异常或超限返回 null。 */
     private fun readJson(dir: DocumentFile): JSONObject? {
         val name = BackupFileNames.QIMENG_BACKUP
         val file = dir.findFile(name)?.takeIf { it.isFile } ?: return null
-        val maxBytes = 64L * 1024 * 1024
+        // 预检：先按文件声明长度判上限，避免超大文件先整块读入内存
         val declaredLen = file.length()
-        if (declaredLen in 1..Long.MAX_VALUE && declaredLen > maxBytes) {
-            AppLog.w("Backup", "readJson 跳过 $name：文件 ${declaredLen / 1024}KB 超过上限 ${maxBytes / 1024}KB")
+        if (declaredLen in 1..Long.MAX_VALUE && declaredLen > MAX_BACKUP_BYTES) {
+            AppLog.w("Backup", "readJson 跳过 $name：文件 ${declaredLen / 1024}KB 超过上限 ${MAX_BACKUP_BYTES / 1024}KB")
             return null
         }
         return try {
             context.contentResolver.openInputStream(file.uri)?.use { stream ->
                 val bytes = stream.readBytes()
-                if (bytes.size > maxBytes) {
+                // 二次校验：length() 不准确或流实际更长时兜底
+                if (bytes.size > MAX_BACKUP_BYTES) {
                     AppLog.w("Backup", "readJson 跳过 $name：实际读取 ${bytes.size / 1024}KB 超过上限")
                     return@use null
                 }
@@ -646,6 +669,10 @@ class BackupManager(private val context: Context) {
         private const val PREFS_MEDIA_DETAIL = "media_detail_prefs"
         private const val KEY_FAVORITES = "favorite_record_keys"
         private const val PREFS_AUTHOR_FOLLOW = "author_follow_prefs"
+        /** 备份单文件 JSON 大小上限：读取预检 + 读取后二次校验 + 写入侧防超限，防 OOM（正常备份仅几 MB） */
+        private const val MAX_BACKUP_BYTES = 64L * 1024 * 1024
+        /** 当前备份 schema 版本，导入时校验：高于此版本拒绝导入 */
+        private const val CURRENT_BACKUP_SCHEMA_VERSION = 1
         /** 导入 likes 条目数上限，防 SharedPreferences 键膨胀 */
         private const val MAX_LIKE_ENTRIES = 5000
         /** 导出 history 条目数上限（本地表 pruneToLimit 为 500，导出放宽到 1000 保留更多上下文） */

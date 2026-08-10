@@ -23,10 +23,13 @@ internal object TimelineTagHelper {
         context: Context,
         currentPositionMs: Long,
         formattedTime: String,
-        onAdd: (timeMs: Long, name: String) -> Unit
+        onAdd: (timeMs: Long, name: String) -> Unit,
+        onDismiss: () -> Unit = {}
     ) {
         val ctx = context
-        val dialog = BottomSheetDialog(ctx)
+        val dialog = BottomSheetDialog(ctx).apply {
+            setOnDismissListener { onDismiss() }
+        }
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24.dp(ctx), 20.dp(ctx), 24.dp(ctx), 24.dp(ctx))

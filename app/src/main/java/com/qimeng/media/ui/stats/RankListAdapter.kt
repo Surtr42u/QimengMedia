@@ -56,7 +56,8 @@ class RankListAdapter(
             }
 
             // 进度条：相对第一名的百分比
-            val percent = if (item.maxValue > 0) {
+            // v1.14 修复：value<=0 或 max<=0 时显示 0，避免 0 值被 coerceIn 强制成 1% 且防止除零
+            val percent = if (item.maxValue > 0 && item.value > 0) {
                 (item.value.toFloat() / item.maxValue * 100).toInt().coerceIn(1, 100)
             } else {
                 0

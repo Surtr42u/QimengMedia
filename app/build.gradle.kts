@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.ksp)
@@ -36,6 +38,31 @@ android {
         }
     }
 
+    // v1.15：Release 签名接线。从 app/keystore.properties 读取（该文件已被 .gitignore 排除，
+    // 密码不入库）；文件缺失/keystore 不存在时不配置签名（release 产出未签名 APK，不阻断 debug 构建）。
+    signingConfigs {
+        val propsFile = file("keystore.properties")
+        if (propsFile.exists()) {
+            val props = Properties()
+            propsFile.inputStream().use { props.load(it) }
+            val storeFile = props.getProperty("storeFile")?.let { sf -> file(sf) }
+            val storePassword = props.getProperty("storePassword")
+            val keyAlias = props.getProperty("keyAlias")
+            if (storeFile != null && storeFile.exists() && storePassword != null && keyAlias != null) {
+                create("release") {
+                    this.storeFile = storeFile
+                    this.storePassword = storePassword
+                    this.keyAlias = keyAlias
+                    this.keyPassword = props.getProperty("keyPassword") ?: storePassword
+                }
+            } else {
+                println("keystore.properties 字段不全或 keystore 文件不存在，Release 将产出未签名 APK")
+            }
+        } else {
+            println("keystore.properties 不存在，Release 将产出未签名 APK")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -45,6 +72,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 若上方签名配置成功创建则绑定，否则为 null（回退 debug 签名）
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     testOptions {

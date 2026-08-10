@@ -375,12 +375,8 @@ class HomeFragment : Fragment() {
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
         val likeCounts = readLikeCounts()
 
-        // 每日重置去重记录
-        val today = dailyDateFormat.format(java.util.Date())
-        if (dailyShownDate != today) {
-            dailyShownDate = today
-            dailyShownCountMap.clear()
-        }
+        // 每日重置去重记录（须在推荐计算之前执行，保证跨天首次 render 不带昨日计数）
+        alignDailyShownDate()
 
         val workingMedia = if (query.isNotBlank()) {
             // 搜索时合并常规+COS文件
@@ -420,11 +416,6 @@ class HomeFragment : Fragment() {
                 displayCount = sorted.size
                 tabDisplayCounts[currentTab] = displayCount
             }
-            // 记录本次展示的文件到每日去重列表（已展示的文件下次推荐会被 -0.8 惩罚）
-            sorted.take(displayCount).forEach { item ->
-                val count = dailyShownCountMap[item.recordKey] ?: 0
-                dailyShownCountMap[item.recordKey] = count + 1
-            }
             com.qimeng.media.core.AppLog.d("Home", "render: tab=$currentTab, seed=$refreshSeed, items=${sorted.size}, dailyShown=${dailyShownCountMap.size}, top3=${sorted.take(3).joinToString { it.fileName }}")
         }
 
@@ -434,6 +425,34 @@ class HomeFragment : Fragment() {
         if (keys != lastRenderedKeys) {
             lastRenderedKeys = keys
             adapter.submitList(items)
+            // v1.12：展示计数移到指纹判断之外——每次真正提交列表后按实际展示列表更新，
+            // 滚动到底新露出项也必须计入当日去重（原实现在 if(newFp != oldFp) 块内，
+            // 滚动只改 displayCount 不触发 render，新露出项被漏记）
+            recordShownItems()
+        }
+    }
+
+    /**
+     * 每日去重日期对齐：跨天清空 dailyShownCountMap。
+     * 必须在推荐计算之前（render 开头）以及每次记录展示前调用。
+     */
+    private fun alignDailyShownDate() {
+        val today = dailyDateFormat.format(java.util.Date())
+        if (dailyShownDate != today) {
+            dailyShownDate = today
+            dailyShownCountMap.clear()
+        }
+    }
+
+    /**
+     * 按当前实际展示列表更新每日去重计数（已展示的文件下次推荐会被 -0.8 惩罚）。
+     * 每次 submitList 后调用，包括滚动到底触发 onScrolled 的直接提交。
+     */
+    private fun recordShownItems() {
+        alignDailyShownDate()
+        tabSortedItems[currentTab].orEmpty().take(displayCount).forEach { item ->
+            val count = dailyShownCountMap[item.recordKey] ?: 0
+            dailyShownCountMap[item.recordKey] = count + 1
         }
     }
 

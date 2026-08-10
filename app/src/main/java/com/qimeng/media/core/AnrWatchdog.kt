@@ -37,7 +37,9 @@ class AnrWatchdog(
     private val checkIntervalMs: Long = CHECK_INTERVAL_MS,
     private val anrThresholdMs: Long = ANR_THRESHOLD_MS
 ) {
-    private var tickTimestamp: Long = 0L
+    // v1.15：@Volatile——主线程（tickRunnable）写、看门狗线程读的共享 Long，
+    // 加 volatile 防 32 位设备 Long 撕裂读与可见性延迟导致误报/漏报
+    @Volatile private var tickTimestamp: Long = 0L
     private var lastAnrTimestamp: Long = 0L
     /** 上一次判定阻塞时主线程栈顶，用于跨周期比较判断是否卡同一处 */
     private var lastBlockStackTop: String? = null
