@@ -60,12 +60,14 @@ class StatsDetailFragment : Fragment() {
     private var timeRangeName: String = "DAYS_7"
     private var cachedDaily: List<DailyBrowseEntity> = emptyList()
     private var cachedCosKeys: Set<String> = emptySet()
-    /** 类型/来源趋势筛选：选中的维度 key（图片/视频/动图/常规/COS），默认全选 */
-    private val typeTrendSelections = mutableSetOf(
-        MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE, KEY_NORMAL, KEY_COS
-    )
-    private val typeTrendCapsules = linkedMapOf<String, TextView>()
-    private var typeTrendChart: LineChartView? = null
+    /** 类型趋势选择（图片/视频/动图），默认全选 */
+    private val typeSelections = mutableSetOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE)
+    /** 来源趋势选择（常规/COS），默认全选 */
+    private val sourceSelections = mutableSetOf(KEY_NORMAL, KEY_COS)
+    private val typeCapsules = linkedMapOf<String, TextView>()
+    private val sourceCapsules = linkedMapOf<String, TextView>()
+    private var typeChart: LineChartView? = null
+    private var sourceChart: LineChartView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -154,36 +156,72 @@ class StatsDetailFragment : Fragment() {
         binding.listSubtitleText.text = "选择类型/来源，叠加对比各趋势"
     }
 
-    /** 渲染分类型趋势：单图多选对比（一张大图叠加显示选中的类型/来源趋势线） */
+    /** 渲染分类型趋势：两张独立卡（类型一张 + 来源一张），各自可多选叠加 */
     private fun renderTypeTrend() {
         val container = binding.chartContainer
         if (container.childCount == 0) {
-            container.addView(buildTypeTrendFilter())
-            container.addView(buildTypeTrendChartCard())
+            container.addView(buildTrendCard("类型浏览趋势", listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE), typeSelections, typeCapsules) { typeChart = it })
+            container.addView(buildTrendCard("来源浏览趋势", listOf(KEY_NORMAL, KEY_COS), sourceSelections, sourceCapsules) { sourceChart = it })
         }
-        updateTypeTrendCapsules()
-        typeTrendChart?.setMultiSeries(buildTypeTrendSeries(windowDaily()))
+        updateTrendCapsules(typeSelections, typeCapsules)
+        updateTrendCapsules(sourceSelections, sourceCapsules)
+        typeChart?.setMultiSeries(buildTypeSeries(windowDaily()))
+        sourceChart?.setMultiSeries(buildSourceSeries(windowDaily()))
     }
 
-    /** 构建筛选胶囊区：类型一行 + 来源一行，可多选，选中项叠加显示在大图上 */
-    private fun buildTypeTrendFilter(): LinearLayout {
+    /** 构建一张趋势卡：标题 + 可多选胶囊行 + 折线对比图 */
+    private fun buildTrendCard(
+        title: String,
+        keys: List<String>,
+        selections: MutableSet<String>,
+        capsules: LinkedHashMap<String, TextView>,
+        onChart: (LineChartView) -> Unit
+    ): LinearLayout {
         return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
-            addView(buildTypeTrendCapsuleRow(listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE)))
-            addView(buildTypeTrendCapsuleRow(listOf(KEY_NORMAL, KEY_COS)))
+            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
+            setPadding(12f.dp(requireContext()).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 12f.dp(requireContext()).toInt() }
+
+            val titleView = TextView(requireContext()).apply {
+                text = title
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            addView(titleView)
+
+            addView(buildTrendCapsuleRow(keys, selections, capsules))
+
+            val chart = LineChartView(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    240f.dp(requireContext()).toInt()
+                ).apply { topMargin = 8f.dp(requireContext()).toInt() }
+            }
+            onChart(chart)
+            addView(chart)
         }
     }
 
-    private fun buildTypeTrendCapsuleRow(keys: List<String>): LinearLayout {
+    /** 构建单行可多选胶囊（选中填充主题色+反色文字，未选中透明+次级色） */
+    private fun buildTrendCapsuleRow(
+        keys: List<String>,
+        selections: MutableSet<String>,
+        capsules: LinkedHashMap<String, TextView>
+    ): LinearLayout {
         return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 4f.dp(requireContext()).toInt() }
+            ).apply { topMargin = 8f.dp(requireContext()).toInt() }
             keys.forEach { key ->
                 val capsule = TextView(requireContext()).apply {
-                    text = typeTrendLabel(key)
+                    text = trendLabel(key)
                     textSize = 12f
                     gravity = android.view.Gravity.CENTER
                     layoutParams = LinearLayout.LayoutParams(
@@ -193,26 +231,28 @@ class StatsDetailFragment : Fragment() {
                         weight = 1f
                         if (key != keys.first()) marginStart = 6f.dp(requireContext()).toInt()
                     }
-                    setOnClickListener { toggleTypeTrend(key) }
+                    setOnClickListener { toggleTrend(key, selections, capsules) }
                 }
-                typeTrendCapsules[key] = capsule
+                capsules[key] = capsule
                 addView(capsule)
             }
         }
     }
 
-    /** 切换选中态（至少保留一个维度，避免空图） */
-    private fun toggleTypeTrend(key: String) {
-        if (typeTrendSelections.size == 1 && key in typeTrendSelections) return
-        if (!typeTrendSelections.add(key)) typeTrendSelections.remove(key)
-        updateTypeTrendCapsules()
-        typeTrendChart?.setMultiSeries(buildTypeTrendSeries(windowDaily()))
+    /** 切换选中态（该卡至少保留一个维度，避免空图） */
+    private fun toggleTrend(key: String, selections: MutableSet<String>, capsules: LinkedHashMap<String, TextView>) {
+        if (selections.size == 1 && key in selections) return
+        if (!selections.add(key)) selections.remove(key)
+        updateTrendCapsules(selections, capsules)
+        val window = windowDaily()
+        typeChart?.setMultiSeries(buildTypeSeries(window))
+        sourceChart?.setMultiSeries(buildSourceSeries(window))
     }
 
-    /** 刷新胶囊选中样式：选中填充主题色+反色文字，未选中透明+次级色 */
-    private fun updateTypeTrendCapsules() {
-        typeTrendCapsules.forEach { (key, tv) ->
-            if (key in typeTrendSelections) {
+    /** 刷新胶囊选中样式 */
+    private fun updateTrendCapsules(selections: MutableSet<String>, capsules: LinkedHashMap<String, TextView>) {
+        capsules.forEach { (key, tv) ->
+            if (key in selections) {
                 tv.setBackgroundResource(R.drawable.bg_capsule_primary)
                 tv.setTextColor(requireContext().resolveThemeColor(R.attr.qmColorBg))
             } else {
@@ -222,52 +262,27 @@ class StatsDetailFragment : Fragment() {
         }
     }
 
-    /** 构建大图卡（一张 300dp 折线对比图） */
-    private fun buildTypeTrendChartCard(): LinearLayout {
-        return LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
-            setPadding(12f.dp(requireContext()).toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 12f.dp(requireContext()).toInt() }
-            val titleView = TextView(requireContext()).apply {
-                text = "趋势对比"
-                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
-                textSize = 14f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
+    /** 构建类型趋势系列（选中的类型各一条线，7天/30天按天、全部按周） */
+    private fun buildTypeSeries(window: List<DailyBrowseEntity>): List<LineChartView.Series> {
+        return listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE).mapNotNull { type ->
+            if (type !in typeSelections) return@mapNotNull null
+            val points = when (timeRangeName) {
+                "DAYS_7" -> StatsFormatHelper.groupDailyByType(window, type, 7)
+                "DAYS_30" -> StatsFormatHelper.groupDailyByType(window, type, 30)
+                else -> StatsFormatHelper.groupDailyByTypeWeek(window, type)
             }
-            addView(titleView)
-            val chart = LineChartView(requireContext()).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    300f.dp(requireContext()).toInt()
-                ).apply { topMargin = 8f.dp(requireContext()).toInt() }
-            }
-            typeTrendChart = chart
-            addView(chart)
+            LineChartView.Series(trendLabel(type), trendColor(type), points)
         }
     }
 
-    /** 构建选中的趋势系列（每维度一条线，X 轴对齐：7天/30天按天、全部按周） */
-    private fun buildTypeTrendSeries(window: List<DailyBrowseEntity>): List<LineChartView.Series> {
+    /** 构建来源趋势系列（选中的来源各一条线） */
+    private fun buildSourceSeries(window: List<DailyBrowseEntity>): List<LineChartView.Series> {
         val series = mutableListOf<LineChartView.Series>()
-        listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE).forEach { type ->
-            if (type in typeTrendSelections) {
-                val points = when (timeRangeName) {
-                    "DAYS_7" -> StatsFormatHelper.groupDailyByType(window, type, 7)
-                    "DAYS_30" -> StatsFormatHelper.groupDailyByType(window, type, 30)
-                    else -> StatsFormatHelper.groupDailyByTypeWeek(window, type)
-                }
-                series.add(LineChartView.Series(typeTrendLabel(type), typeTrendColor(type), points))
-            }
+        if (KEY_NORMAL in sourceSelections) {
+            series.add(LineChartView.Series("常规", trendColor(KEY_NORMAL), sourceTrendPoints(window, false)))
         }
-        if (KEY_NORMAL in typeTrendSelections) {
-            series.add(LineChartView.Series("常规", typeTrendColor(KEY_NORMAL), sourceTrendPoints(window, false)))
-        }
-        if (KEY_COS in typeTrendSelections) {
-            series.add(LineChartView.Series("COS", typeTrendColor(KEY_COS), sourceTrendPoints(window, true)))
+        if (KEY_COS in sourceSelections) {
+            series.add(LineChartView.Series("COS", trendColor(KEY_COS), sourceTrendPoints(window, true)))
         }
         return series
     }
@@ -281,7 +296,7 @@ class StatsDetailFragment : Fragment() {
         }
 
     /** 趋势维度显示名 */
-    private fun typeTrendLabel(key: String): String = when (key) {
+    private fun trendLabel(key: String): String = when (key) {
         MediaType.IMAGE -> "图片"
         MediaType.VIDEO -> "视频"
         MediaType.ANIMATED_IMAGE -> "动图"
@@ -290,7 +305,7 @@ class StatsDetailFragment : Fragment() {
     }
 
     /** 趋势维度固定颜色（Material 300-400 级，明暗主题下均清晰可辨） */
-    private fun typeTrendColor(key: String): Int = when (key) {
+    private fun trendColor(key: String): Int = when (key) {
         MediaType.IMAGE -> 0xFF4FC3F7.toInt()
         MediaType.VIDEO -> 0xFFFF8A65.toInt()
         MediaType.ANIMATED_IMAGE -> 0xFFAED581.toInt()
