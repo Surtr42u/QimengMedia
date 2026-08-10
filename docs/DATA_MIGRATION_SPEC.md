@@ -415,6 +415,6 @@
 1. **读取侧**：照本规范的字段定义读取 JSON，recordKey 是关联键
 2. **写入侧（恢复到绮梦影库）**：复用上述导入语义——按 recordKey/authorId/name 合并，不删除现有数据
 3. **空库防护**：若新 App 也有"自动同步写入备份"功能，建议在本地数据库为空时暂停写入，避免空数据覆盖旧备份
-4. **schemaVersion 兼容**：导入时按 schemaVersion 分支处理，缺失字段用默认值，未知字段忽略
+4. **schemaVersion 兼容**：导入时按 schemaVersion 分支处理，缺失字段用默认值，未知字段忽略；**v1.15 起备份的 schemaVersion 大于当前支持版本（1）时拒绝导入并记日志**（防未来版本文件被静默错解析），等于或小于则正常导入
 
-最后更新时间：2026-08-09（v2.0 单文件全量重构：media_files 进备份，合并旧 10 分文件 + personal_prefs + 报告 txt 为单一 qimeng_backup.json）
+最后更新时间：2026-08-10（v1.15：schemaVersion 导入校验说明；v2.0 单文件全量重构：media_files 进备份，合并旧 10 分文件 + personal_prefs + 报告 txt 为单一 qimeng_backup.json）

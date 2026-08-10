@@ -347,6 +347,8 @@ while ($true) {
 
 **注意**：仅记录日志，不弹窗、不杀进程。ANR 发生时 App 仍可能响应（取决于阻塞是否解除）。
 
+**v1.15 加固**：`tickTimestamp` 加 `@Volatile`（主线程写、看门狗线程读的共享 Long，防 32 位设备 Long 撕裂读与可见性延迟导致误报/漏报）；`GpuInfo.maxTextureSize()` 的 `await` 加 2 秒超时兜底（探测线程若异常死亡不再主线程永久阻塞）。
+
 ### StrictMode（仅 Debug 构建）
 
 `QimengApplication.enableStrictMode()` 在 Debug 构建中开启，Release 不受影响。
@@ -377,4 +379,4 @@ while ($true) {
 - `docs/GUIDE_SCAN.md`（如修改扫描日志标签）
 - `docs/GUIDE_UI.md`（如修改缩略图/缓存策略）
 
-> 最后更新：2026-08-09
+> 最后更新：2026-08-10
