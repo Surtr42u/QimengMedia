@@ -60,6 +60,12 @@ class StatsDetailFragment : Fragment() {
     private var timeRangeName: String = "DAYS_7"
     private var cachedDaily: List<DailyBrowseEntity> = emptyList()
     private var cachedCosKeys: Set<String> = emptySet()
+    /** 类型/来源趋势筛选：选中的维度 key（图片/视频/动图/常规/COS），默认全选 */
+    private val typeTrendSelections = mutableSetOf(
+        MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE, KEY_NORMAL, KEY_COS
+    )
+    private val typeTrendCapsules = linkedMapOf<String, TextView>()
+    private var typeTrendChart: LineChartView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -145,60 +151,151 @@ class StatsDetailFragment : Fragment() {
         binding.rankListContainer.visibility = View.VISIBLE
         binding.distributionContainer.visibility = View.GONE
         binding.sortToggleText.visibility = View.GONE
-        binding.listSubtitleText.text = "图片 / 视频 / 动图各自浏览趋势"
+        binding.listSubtitleText.text = "选择类型/来源，叠加对比各趋势"
     }
 
-    /** 渲染分类型趋势：3 张折线图（图片/视频/动图）+ 常规 vs COS 来源趋势 */
+    /** 渲染分类型趋势：单图多选对比（一张大图叠加显示选中的类型/来源趋势线） */
     private fun renderTypeTrend() {
-        val window = windowDaily()
-        binding.chartContainer.removeAllViews()
-        if (window.isEmpty()) return
+        val container = binding.chartContainer
+        if (container.childCount == 0) {
+            container.addView(buildTypeTrendFilter())
+            container.addView(buildTypeTrendChartCard())
+        }
+        updateTypeTrendCapsules()
+        typeTrendChart?.setMultiSeries(buildTypeTrendSeries(windowDaily()))
+    }
 
-        // 按类型绘制趋势（基于聚合表，7天/30天按天、全部按周）
-        val typeRow = LinearLayout(requireContext()).apply {
+    /** 构建筛选胶囊区：类型一行 + 来源一行，可多选，选中项叠加显示在大图上 */
+    private fun buildTypeTrendFilter(): LinearLayout {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(buildTypeTrendCapsuleRow(listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE)))
+            addView(buildTypeTrendCapsuleRow(listOf(KEY_NORMAL, KEY_COS)))
+        }
+    }
+
+    private fun buildTypeTrendCapsuleRow(keys: List<String>): LinearLayout {
+        return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 12f.dp(requireContext()).toInt() }
-        }
-        listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE).forEach { type ->
-            val points = when (timeRangeName) {
-                "DAYS_7" -> StatsFormatHelper.groupDailyByType(window, type, 7)
-                "DAYS_30" -> StatsFormatHelper.groupDailyByType(window, type, 30)
-                else -> StatsFormatHelper.groupDailyByTypeWeek(window, type)
+            ).apply { topMargin = 4f.dp(requireContext()).toInt() }
+            keys.forEach { key ->
+                val capsule = TextView(requireContext()).apply {
+                    text = typeTrendLabel(key)
+                    textSize = 12f
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        0,
+                        34f.dp(requireContext()).toInt()
+                    ).apply {
+                        weight = 1f
+                        if (key != keys.first()) marginStart = 6f.dp(requireContext()).toInt()
+                    }
+                    setOnClickListener { toggleTypeTrend(key) }
+                }
+                typeTrendCapsules[key] = capsule
+                addView(capsule)
             }
-            val card = createTrendCard(StatsFormatHelper.typeDisplayName(type), points, 150)
-            typeRow.addView(card, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                weight = 1f
-                if (type == MediaType.IMAGE) marginEnd = 6f.dp(requireContext()).toInt()
-                if (type == MediaType.VIDEO) { marginStart = 3f.dp(requireContext()).toInt(); marginEnd = 3f.dp(requireContext()).toInt() }
-                if (type == MediaType.ANIMATED_IMAGE) marginStart = 6f.dp(requireContext()).toInt()
-            })
         }
-        binding.chartContainer.addView(typeRow)
+    }
 
-        // 来源趋势（常规 vs COS）
-        val normalPoints = when (timeRangeName) {
-            "DAYS_7" -> groupDailyByCos(window, cachedCosKeys, false, 7)
-            "DAYS_30" -> groupDailyByCos(window, cachedCosKeys, false, 30)
-            else -> groupDailyByCosWeek(window, cachedCosKeys, false)
+    /** 切换选中态（至少保留一个维度，避免空图） */
+    private fun toggleTypeTrend(key: String) {
+        if (typeTrendSelections.size == 1 && key in typeTrendSelections) return
+        if (!typeTrendSelections.add(key)) typeTrendSelections.remove(key)
+        updateTypeTrendCapsules()
+        typeTrendChart?.setMultiSeries(buildTypeTrendSeries(windowDaily()))
+    }
+
+    /** 刷新胶囊选中样式：选中填充主题色+反色文字，未选中透明+次级色 */
+    private fun updateTypeTrendCapsules() {
+        typeTrendCapsules.forEach { (key, tv) ->
+            if (key in typeTrendSelections) {
+                tv.setBackgroundResource(R.drawable.bg_capsule_primary)
+                tv.setTextColor(requireContext().resolveThemeColor(R.attr.qmColorBg))
+            } else {
+                tv.background = null
+                tv.setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextSecondary))
+            }
         }
-        val cosPoints = when (timeRangeName) {
-            "DAYS_7" -> groupDailyByCos(window, cachedCosKeys, true, 7)
-            "DAYS_30" -> groupDailyByCos(window, cachedCosKeys, true, 30)
-            else -> groupDailyByCosWeek(window, cachedCosKeys, true)
-        }
-        val sourceRow = LinearLayout(requireContext()).apply {
+    }
+
+    /** 构建大图卡（一张 300dp 折线对比图） */
+    private fun buildTypeTrendChartCard(): LinearLayout {
+        return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
+            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
+            setPadding(12f.dp(requireContext()).toInt())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = 12f.dp(requireContext()).toInt() }
+            val titleView = TextView(requireContext()).apply {
+                text = "趋势对比"
+                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            addView(titleView)
+            val chart = LineChartView(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    300f.dp(requireContext()).toInt()
+                ).apply { topMargin = 8f.dp(requireContext()).toInt() }
+            }
+            typeTrendChart = chart
+            addView(chart)
         }
-        sourceRow.addView(createTrendCard("常规浏览趋势", normalPoints, 140))
-        sourceRow.addView(createTrendCard("COS 浏览趋势", cosPoints, 140))
-        binding.chartContainer.addView(sourceRow)
+    }
+
+    /** 构建选中的趋势系列（每维度一条线，X 轴对齐：7天/30天按天、全部按周） */
+    private fun buildTypeTrendSeries(window: List<DailyBrowseEntity>): List<LineChartView.Series> {
+        val series = mutableListOf<LineChartView.Series>()
+        listOf(MediaType.IMAGE, MediaType.VIDEO, MediaType.ANIMATED_IMAGE).forEach { type ->
+            if (type in typeTrendSelections) {
+                val points = when (timeRangeName) {
+                    "DAYS_7" -> StatsFormatHelper.groupDailyByType(window, type, 7)
+                    "DAYS_30" -> StatsFormatHelper.groupDailyByType(window, type, 30)
+                    else -> StatsFormatHelper.groupDailyByTypeWeek(window, type)
+                }
+                series.add(LineChartView.Series(typeTrendLabel(type), typeTrendColor(type), points))
+            }
+        }
+        if (KEY_NORMAL in typeTrendSelections) {
+            series.add(LineChartView.Series("常规", typeTrendColor(KEY_NORMAL), sourceTrendPoints(window, false)))
+        }
+        if (KEY_COS in typeTrendSelections) {
+            series.add(LineChartView.Series("COS", typeTrendColor(KEY_COS), sourceTrendPoints(window, true)))
+        }
+        return series
+    }
+
+    /** 来源（常规/COS）趋势点：按天对齐的聚合点 */
+    private fun sourceTrendPoints(window: List<DailyBrowseEntity>, isCos: Boolean): List<LineChartView.Point> =
+        when (timeRangeName) {
+            "DAYS_7" -> groupDailyByCos(window, cachedCosKeys, isCos, 7)
+            "DAYS_30" -> groupDailyByCos(window, cachedCosKeys, isCos, 30)
+            else -> groupDailyByCosWeek(window, cachedCosKeys, isCos)
+        }
+
+    /** 趋势维度显示名 */
+    private fun typeTrendLabel(key: String): String = when (key) {
+        MediaType.IMAGE -> "图片"
+        MediaType.VIDEO -> "视频"
+        MediaType.ANIMATED_IMAGE -> "动图"
+        KEY_NORMAL -> "常规"
+        else -> "COS"
+    }
+
+    /** 趋势维度固定颜色（Material 300-400 级，明暗主题下均清晰可辨） */
+    private fun typeTrendColor(key: String): Int = when (key) {
+        MediaType.IMAGE -> 0xFF4FC3F7.toInt()
+        MediaType.VIDEO -> 0xFFFF8A65.toInt()
+        MediaType.ANIMATED_IMAGE -> 0xFFAED581.toInt()
+        KEY_NORMAL -> 0xFF7986CB.toInt()
+        else -> 0xFFF06292.toInt()
     }
 
     /** 来源（常规/COS）趋势：按天对齐的聚合点 */
@@ -219,29 +316,6 @@ class StatsDetailFragment : Fragment() {
     ): List<LineChartView.Point> {
         val filtered = rows.filter { (it.recordKey in cosKeys) == isCos }
         return StatsFormatHelper.groupDailyByWeek(filtered)
-    }
-
-    private fun createTrendCard(title: String, points: List<LineChartView.Point>, height: Int): LinearLayout {
-        return LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            background = AppCompatResources.getDrawable(requireContext(), R.drawable.bg_stat_card)
-            setPadding(12f.dp(requireContext()).toInt())
-            val titleView = TextView(requireContext()).apply {
-                text = title
-                setTextColor(requireContext().resolveThemeColor(R.attr.qmColorTextPrimary))
-                textSize = 13f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            }
-            val chart = LineChartView(requireContext()).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    (height.toFloat()).dp(requireContext()).toInt()
-                ).apply { topMargin = 8f.dp(requireContext()).toInt() }
-            }
-            chart.setData(points)
-            addView(titleView)
-            addView(chart)
-        }
     }
 
     // ==================== 常看文件模式 ====================
@@ -818,6 +892,10 @@ class StatsDetailFragment : Fragment() {
         const val MODE_FAVORITES = "favorites"
         const val MODE_AUTHORS = "authors"
         const val MODE_DISTRIBUTION = "distribution"
+
+        /** 来源趋势维度 key（区别于 MediaType 常量） */
+        private const val KEY_NORMAL = "source_normal"
+        private const val KEY_COS = "source_cos"
 
         private const val ARG_MODE = "mode"
         private const val ARG_TIME_RANGE = "time_range"

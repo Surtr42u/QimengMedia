@@ -125,14 +125,6 @@ object StatsFormatHelper {
         }
     }
 
-    /** 类型显示名（与 MediaType 常量对应） */
-    fun typeDisplayName(mediaType: String): String = when (mediaType) {
-        MediaType.IMAGE -> "图片"
-        MediaType.VIDEO -> "视频"
-        MediaType.ANIMATED_IMAGE -> "动图"
-        else -> mediaType
-    }
-
     /**
      * 按天分组聚合浏览量，生成折线图数据点。
      * @param history 浏览历史列表

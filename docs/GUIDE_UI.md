@@ -217,7 +217,7 @@
 - 数据洞察卡片（自动生成的文字摘要）
 - 完整 Top 20 排行榜列表（`RankListAdapter`，`nestedScrollingEnabled=false` 随 ScrollView 滚动，每行带相对第一名的进度条）
 - 四种模式：
-  - `MODE_TYPE_TREND`：类型浏览趋势——图片/视频/动图三张折线图横向排列（7天/30天按天、全部按周），下方常规 vs COS 来源趋势两张折线图；基于按天浏览聚合
+  - `MODE_TYPE_TREND`：类型浏览趋势——**单张 300dp 对比大图**，上方两组可多选胶囊（图片/视频/动图 + 常规/COS），选中维度以不同颜色折线叠加显示在同一时间轴（`LineChartView.setMultiSeries`，顶部图例 + 点击气泡含系列名）；基于按天浏览聚合
   - `MODE_FAVORITES`：常看文件——窗口内浏览聚合排行，支持「按热度/按时长」排序切换（副标题含停留时长）
   - `MODE_AUTHORS`：常看作者与标签——按窗口浏览聚合的作者排行（Top 20）+ 标签排行（Top 20），标签条目可点击跳搜索页
   - `MODE_DISTRIBUTION`：分布统计详情——类型/来源 ×（库存数量/大小 + 窗口浏览）对比卡片
@@ -230,7 +230,7 @@
 - 标签浏览聚合：`viewModel.allMediaTags`（MediaTagName，关联 recordKey 匹配窗口浏览）
 
 **自绘图表组件**（`ui/widget/`）：
-- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签（v1.14 起为统计页唯一图表组件；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除）
+- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除
 
 **排行榜组件**（`ui/stats/`）：
 - `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
