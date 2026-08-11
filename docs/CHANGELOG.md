@@ -10,6 +10,25 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 详细信息弹窗移除"完成"按钮（v1.15，2026-08-12）
+
+执行 AI：deepseek-v4-flash
+
+用户询问"为什么一定要显示这个完成"，确认冗余后移除。
+
+| 类别 | 改动 |
+|---|---|
+| 背景 | "完成"按钮是 v1.0 初始提交（e5ee7d1）就有的手动关闭按钮，位于所有 BottomSheet 弹窗底部 |
+| 决策 | BottomSheet 已有两套标准关闭方式（下滑手势 / 点外部空白），"详细信息"弹窗的显式"完成"按钮冗余，移除 |
+| 改动 | `showInfoSheet` 两条分支（解码/不解码）均不再添加 `sheetDone`；`sheetDone` 方法**保留**——标签管理弹窗、快速转跳弹窗仍在使用（经 grep 确认，删定义会破坏这两个弹窗），方法注释标注适用范围 |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest` 通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `ui/detail/MediaDetailFragment.kt` | showInfoSheet 移除完成按钮 |
+| `docs/GUIDE_UI.md` / `docs/CHANGELOG.md` | 文档同步 |
+
 ## 详情页信息弹窗"完成"按钮位置修复（v1.15，2026-08-12）
 
 执行 AI：deepseek-v4-flash

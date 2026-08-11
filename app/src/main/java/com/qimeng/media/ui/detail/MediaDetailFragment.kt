@@ -1086,9 +1086,9 @@ class MediaDetailFragment : Fragment() {
             // 原实现解码完成才 show，解码期间无反馈且持 Fragment 级 lifecycleScope
             // 协程引用 dialog，Fragment 退栈后仍操作已销毁视图。
             val sizeRowValue = addInfoRow(container, "尺寸", "解码中…")
-            // v1.15 补修：初始不添加"完成"按钮——先加会排在占位行之后，
-            // 解码后追加的时长/目录/路径被挤到按钮下方（表现为"完成在尺寸和目录之间"）。
-            // 解码完成补齐全部信息行后再在末尾添加"完成"，与正常分支顺序一致。
+            // v1.15 补修：无"完成"按钮——BottomSheet 靠下滑手势 / 点外部空白关闭，
+            // 显式关闭按钮冗余（v1.0 历史遗留，已删除）。解码完成原地更新占位行 +
+            // 追加 时长/目录/路径 即可。
             dialog.setContentView(container)
             dialog.show()
             viewLifecycleOwner.lifecycleScope.launch {
@@ -1100,7 +1100,6 @@ class MediaDetailFragment : Fragment() {
                 updated.durationMillis?.let { addInfoRow(container, "时长", formatDuration(it)) }
                 addInfoRow(container, "目录", updated.folderName)
                 addInfoRow(container, "路径", updated.uriString)
-                container.addView(sheetDone(ctx, dialog))
                 dialog.setContentView(container)
             }
         } else {
@@ -1108,7 +1107,6 @@ class MediaDetailFragment : Fragment() {
             media.durationMillis?.let { addInfoRow(container, "时长", formatDuration(it)) }
             addInfoRow(container, "目录", media.folderName)
             addInfoRow(container, "路径", media.uriString)
-            container.addView(sheetDone(ctx, dialog))
             dialog.setContentView(container)
             dialog.show()
         }
@@ -1314,6 +1312,7 @@ class MediaDetailFragment : Fragment() {
         setPadding(0, 6.dp(requireContext()), 0, 6.dp(requireContext()))
     }
 
+    /** 弹窗底部"完成"关闭按钮（标签管理/快速转跳弹窗使用；详细信息弹窗 v1.15 起不再使用） */
     private fun sheetDone(ctx: Context, dialog: BottomSheetDialog): TextView = TextView(ctx).apply {
         text = "完成"
         gravity = Gravity.CENTER
