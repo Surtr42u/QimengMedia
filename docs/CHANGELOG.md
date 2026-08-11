@@ -10,6 +10,26 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 浏览趋势主页面数据源修复（v1.15，2026-08-11）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈"浏览趋势内部正确外部不正确、数值对不上"，真机（adb + 导出数据库分析）定位根因并修复。
+
+| 类别 | 改动 |
+|---|---|
+| 根因 | 主页面浏览趋势卡（外部）用 `viewModel.history`（浏览历史明细）分桶，history 同文件只保留最新一条且上限 500 → 多次浏览只算 1 次，数值必然偏小；详情页分类型趋势与数字卡均用 `daily_browse` 按天聚合（无限保留、每文件每天一行）→ 内外口径不一致。真机实测：08-11 聚合 view=11 而 history 仅 3 条 |
+| 修复 | `DataStatsFragment.renderTrend()` 改用 `StatsFormatHelper.groupDailyByDay/groupDailyByWeek`（daily_browse 聚合，与详情页同源同口径）；删除 history collect 分支与 `cachedHistory` 死代码（`viewModel.history` 流仍被 5 个列表页筛选使用，保留） |
+| 附带 | 布局 `fragment_data_stats.xml` 第二行指标文案"平均浏览深度"→"平均浏览次数"（v1.14 改名遗漏，代码早已用新名） |
+
+**验证**：真机安装后截图视觉确认——数字卡 浏览22/播放6/时长5分 与 daily_browse 近 7 天实测（22/6/338s）完全一致；趋势图 08/10 峰值、08/11 回落形态与数据吻合；`assembleDebug` 通过。
+
+| 文件 | 改动 |
+|---|---|
+| `ui/stats/DataStatsFragment.kt` | renderTrend 换 daily_browse 聚合 + 删 history 死代码 |
+| `res/layout/fragment_data_stats.xml` | 平均浏览次数文案修正 |
+| `docs/GUIDE_UI.md` | 数据源描述同步 |
+
 ## 全项目巡检修复（v1.15，2026-08-10）
 
 执行 AI：deepseek-v4-flash

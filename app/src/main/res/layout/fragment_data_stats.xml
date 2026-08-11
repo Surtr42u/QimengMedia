@@ -232,7 +232,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="平均浏览深度"
+                    android:text="平均浏览次数"
                     android:textColor="?attr/qmColorTextSecondary"
                     android:textSize="11sp" />
             </LinearLayout>

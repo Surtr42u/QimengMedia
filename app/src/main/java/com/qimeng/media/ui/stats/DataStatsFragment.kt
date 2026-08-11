@@ -46,7 +46,6 @@ class DataStatsFragment : Fragment() {
     }
 
     private var currentRange: TimeRange = TimeRange.DAYS_7
-    private var cachedHistory: List<com.qimeng.media.data.db.entity.ViewHistoryEntity> = emptyList()
     private var cachedMedia: List<MediaFileEntity> = emptyList()
     private var cachedDaily: List<DailyBrowseEntity> = emptyList()
     private var cachedAuthorData: List<Triple<String, String, Int>> = emptyList()
@@ -123,12 +122,6 @@ class DataStatsFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.history.collect { history ->
-                        cachedHistory = history
-                        renderTrend()
-                    }
-                }
-                launch {
                     viewModel.allMedia.collect { media ->
                         cachedMedia = media
                         renderOverviewExtra()
@@ -146,6 +139,7 @@ class DataStatsFragment : Fragment() {
                     viewModel.dailyBrowse.collect { daily ->
                         cachedDaily = daily
                         renderOverview()
+                        renderTrend()
                         renderTopFiles()
                         renderTopAuthors()
                     }
@@ -217,17 +211,19 @@ class DataStatsFragment : Fragment() {
     /** 渲染趋势序号：快速切换时间范围时只采纳最后一次请求的结果，避免旧协程晚完成覆盖新结果 */
     private var renderTrendSeq = 0
 
-    /** 渲染浏览趋势折线图（基于浏览历史明细，随时间范围联动；聚合计算在 Default 线程） */
+    /** 渲染浏览趋势折线图（基于按天浏览聚合 daily_browse，随时间范围联动；聚合计算在 Default 线程）
+     * v1.15：由浏览历史明细（history）改为 daily_browse 聚合——history 同文件只保留最新一条且上限 500，
+     * 多次浏览只算 1 次导致趋势图数值偏小，与详情页/数字卡（daily_browse）对不上；改后内外口径统一 */
     private fun renderTrend() {
         val seq = ++renderTrendSeq
-        val history = cachedHistory
+        val daily = cachedDaily
         val range = currentRange
         viewLifecycleOwner.lifecycleScope.launch {
             val points = withContext(Dispatchers.Default) {
                 when (range) {
-                    TimeRange.DAYS_7 -> StatsFormatHelper.groupByDay(history, 7)
-                    TimeRange.DAYS_30 -> StatsFormatHelper.groupByDay(history, 30)
-                    TimeRange.ALL -> StatsFormatHelper.groupByWeek(history)
+                    TimeRange.DAYS_7 -> StatsFormatHelper.groupDailyByDay(daily, 7)
+                    TimeRange.DAYS_30 -> StatsFormatHelper.groupDailyByDay(daily, 30)
+                    TimeRange.ALL -> StatsFormatHelper.groupDailyByWeek(daily)
                 }
             }
             if (seq == renderTrendSeq) binding.trendChart.setData(points)
