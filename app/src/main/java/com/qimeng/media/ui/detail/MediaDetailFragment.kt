@@ -1086,7 +1086,9 @@ class MediaDetailFragment : Fragment() {
             // 原实现解码完成才 show，解码期间无反馈且持 Fragment 级 lifecycleScope
             // 协程引用 dialog，Fragment 退栈后仍操作已销毁视图。
             val sizeRowValue = addInfoRow(container, "尺寸", "解码中…")
-            container.addView(sheetDone(ctx, dialog))
+            // v1.15 补修：初始不添加"完成"按钮——先加会排在占位行之后，
+            // 解码后追加的时长/目录/路径被挤到按钮下方（表现为"完成在尺寸和目录之间"）。
+            // 解码完成补齐全部信息行后再在末尾添加"完成"，与正常分支顺序一致。
             dialog.setContentView(container)
             dialog.show()
             viewLifecycleOwner.lifecycleScope.launch {
@@ -1098,6 +1100,7 @@ class MediaDetailFragment : Fragment() {
                 updated.durationMillis?.let { addInfoRow(container, "时长", formatDuration(it)) }
                 addInfoRow(container, "目录", updated.folderName)
                 addInfoRow(container, "路径", updated.uriString)
+                container.addView(sheetDone(ctx, dialog))
                 dialog.setContentView(container)
             }
         } else {
