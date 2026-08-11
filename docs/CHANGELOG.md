@@ -10,6 +10,24 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 详情页信息弹窗"解码中/解码完"双行修复（v1.15，2026-08-11）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈详情页信息弹窗同时显示"解码中…"与"解码完成"两行"尺寸"。
+
+| 类别 | 改动 |
+|---|---|
+| 根因 | v1.15"先 show 再补解码"实现为解码完成后**追加**一行"尺寸"，占位的"解码中…"行未被替换 → 弹窗出现两行"尺寸"（一行"解码中…"一行实际值），流程显示异常 |
+| 修复 | `addInfoRow` 改为返回 value TextView 引用；解码分支占位行持有该引用，解码完成后**原地更新文本**（`sizeRowValue.text = formatDimensions(updated)`），不再追加重复行；`dialog.setContentView(container)` 重设视图刷新显示 |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest` 通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `ui/detail/MediaDetailFragment.kt` | addInfoRow 返回 value 引用 + 占位行原地更新 |
+| `docs/GUIDE_UI.md` / `docs/CHANGELOG.md` | 文档同步 |
+
 ## 首页滑动卡顿修复（v1.15，2026-08-11）
 
 执行 AI：deepseek-v4-flash

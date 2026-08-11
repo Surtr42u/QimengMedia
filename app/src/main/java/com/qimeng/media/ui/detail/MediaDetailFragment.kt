@@ -1082,16 +1082,19 @@ class MediaDetailFragment : Fragment() {
 
         // 如果 width/height/durationMillis 为 null，按需解码
         if (needsMetadataDecode(media)) {
-            // v1.15：先 show 对话框并展示可用的行，解码完成后追加补齐。
+            // v1.15：先 show 对话框并展示可用的行，解码完成后补齐。
             // 原实现解码完成才 show，解码期间无反馈且持 Fragment 级 lifecycleScope
             // 协程引用 dialog，Fragment 退栈后仍操作已销毁视图。
-            addInfoRow(container, "尺寸", "解码中…")
+            val sizeRowValue = addInfoRow(container, "尺寸", "解码中…")
             container.addView(sheetDone(ctx, dialog))
             dialog.setContentView(container)
             dialog.show()
             viewLifecycleOwner.lifecycleScope.launch {
                 val updated = decodeMediaMetadata(media)
-                addInfoRow(container, "尺寸", formatDimensions(updated))
+                // v1.15 补修：原地更新"解码中…"占位行的文本，而非追加新行。
+                // 原实现解码完成后再 addInfoRow("尺寸") 追加，弹窗同时出现两行
+                // "尺寸"（一行"解码中…"一行实际值），流程显示异常。
+                sizeRowValue.text = formatDimensions(updated)
                 updated.durationMillis?.let { addInfoRow(container, "时长", formatDuration(it)) }
                 addInfoRow(container, "目录", updated.folderName)
                 addInfoRow(container, "路径", updated.uriString)
@@ -1318,8 +1321,18 @@ class MediaDetailFragment : Fragment() {
         setOnClickListener { dialog.dismiss() }
     }
 
-    private fun addInfoRow(container: LinearLayout, key: String, value: String) {
+    /**
+     * 添加一行"键: 值"信息行。
+     * @return value TextView 引用，供调用方按需原地更新文本（如"解码中…"占位替换）
+     */
+    private fun addInfoRow(container: LinearLayout, key: String, value: String): TextView {
         val ctx = container.context
+        val valueView = TextView(ctx).apply {
+            text = value
+            setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextPrimary))
+            textSize = 13f
+            setTextIsSelectable(true)
+        }
         container.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 10.dp(requireContext()), 0, 10.dp(requireContext()))
@@ -1328,13 +1341,9 @@ class MediaDetailFragment : Fragment() {
                 setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextSecondary))
                 textSize = 13f
             }, LinearLayout.LayoutParams(72.dp(requireContext()), LinearLayout.LayoutParams.WRAP_CONTENT))
-            addView(TextView(ctx).apply {
-                text = value
-                setTextColor(ctx.resolveThemeColor(R.attr.qmColorTextPrimary))
-                textSize = 13f
-                setTextIsSelectable(true)
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(valueView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         })
+        return valueView
     }
 
     private fun formatDate(millis: Long): String = MediaBrowserLogic.formatDate(millis)
