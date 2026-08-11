@@ -133,7 +133,7 @@ class MediaThumbnailAdapter(
                 return
             }
 
-            // 2. 没有缓存，先用 Coil 加载原始 URI（图片直接加载，视频截帧）
+            // 2. 没有缓存：先用 Coil 加载原始 URI（图片直接加载，视频截帧）
             val uri = item.uriString.toUri()
             if (isVideo) {
                 image.load(uri) {
@@ -147,18 +147,23 @@ class MediaThumbnailAdapter(
                     videoFrameMillis(0)
                     memoryCacheKey(item.recordKey)
                 }
-            } else {
-                image.load(uri) {
-                    crossfade(false)
-                    placeholder(R.color.qm_placeholder)
-                    error(R.color.qm_placeholder)
-                    size(tw, th)
-                    allowHardware(true)
-                    memoryCacheKey(item.recordKey)
-                }
+                // v1.15 防卡顿：视频不再双解——同一首帧若再起 decodeJob（MediaMetadataRetriever
+                // 扫多帧）会解两遍，且 getFrameAtTime 阻塞期间协作式取消停不住，快速滑动时
+                // 磁盘持续高负载加剧掉帧。视频本地文件缓存交给启动预生成（ThumbnailCache
+                // 预生成会生成 .webp，下次 bind 走缓存文件分支），滚动期间 Coil 首帧解码
+                // 走 memoryCacheKey 内存缓存，足够平滑。
+                return
+            }
+            image.load(uri) {
+                crossfade(false)
+                placeholder(R.color.qm_placeholder)
+                error(R.color.qm_placeholder)
+                size(tw, th)
+                allowHardware(true)
+                memoryCacheKey(item.recordKey)
             }
 
-            // 3. 后台解码并缓存到本地文件（下次加载直接从缓存文件读取）
+            // 3. 图片：后台解码并缓存到本地文件（下次加载直接从缓存文件读取）
             // 限制并发数防止快速滑动时大量解码与预生成争抢 IO/内存导致 OOM 卡死
             if (lifecycleScope != null) {
                 val scope = lifecycleScope
@@ -170,11 +175,7 @@ class MediaThumbnailAdapter(
                     try {
                         // 再次检查，等待信号量期间预生成可能已创建缓存
                         if (ThumbnailCache.getThumbnailFile(itemView.context, item.recordKey).exists()) return@launch
-                        val bitmap = if (isVideo) {
-                            ThumbnailLoader.loadVideoThumbnail(itemView.context, item.uriString)
-                        } else {
-                            ThumbnailLoader.loadImageThumbnail(itemView.context, item.uriString)
-                        }
+                        val bitmap = ThumbnailLoader.loadImageThumbnail(itemView.context, item.uriString)
                         if (bitmap != null) {
                             ThumbnailCache.writeThumbnail(itemView.context, item.recordKey, bitmap)
                         }

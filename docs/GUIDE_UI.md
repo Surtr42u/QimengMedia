@@ -99,7 +99,7 @@
 - 排行榜 chip：日榜 / 周榜 / 月榜 / 年榜
 - COS chip：切换到 COS 推荐模式，只显示 `isCosFile=true` 的媒体
 - 双列 RecyclerView（`MediaThumbnailAdapter`，Coil 加载，`itemViewCacheSize=40`）
-- 滚动到底增量加载，不重排
+- **距底部 ≤6 项提前增量加载下一页，不重排**（v1.15：原"滚动到底增量加载"在触底最后一帧同步 +20 条并立即批量 bind，新条目视频双重解码 + 预生成抢 IO 集中在那帧 → 明显"卡一下"；改提前加载让解码发生在滑动中途被动画掩盖）
 - 左右横滑切换推荐/COS/排行榜：使用 `GestureDetector.onFling` 检测快速水平滑动，阈值 50dp + 速度 300
 - 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式，传当前页面已分页加载显示的文件列表（`adapter.currentList`，非完整排序列表 `tabSortedItems[currentTab]`），详情页仅可左右滑动浏览当前推荐页已可见的文件，数目与推荐页显示一致
 - 搜索框不可聚焦，点击跳转独立搜索界面（`SearchFragment`，通过 `MainActivity.showSearchFragment()` add 模式）
@@ -274,6 +274,7 @@
 - 缩略图解码三级策略和预生成机制详见 `GUIDE_ALGORITHM.md`
 - **动态分辨率**：`MediaThumbnailAdapter` 和 `GroupedMediaAdapter` 支持 `thumbnailWidth`/`thumbnailHeight` 属性，首页1列时使用 960x540，2列时使用 480x270，其他页面默认 480x270
 - 详情页视频预览：先查 Coil 内存缓存（预加载） → `ThumbnailCache.readFrame()` → Coil `VideoFrameDecoder` → `MediaMetadataRetriever` 回退
+- **列表页视频不双解（v1.15）**：列表（首页/全部/收藏/历史/搜索等，`MediaThumbnailAdapter.Holder` 共享）视频无本地缓存时只用 Coil `VideoFrameDecoder` 解一次首帧（`videoFrameMillis(0)` + `memoryCacheKey` 走内存缓存），不再额外起 `MediaMetadataRetriever` decodeJob——同一首帧双解且 `getFrameAtTime` 阻塞式取消不掉会加剧滑动掉帧；视频本地 WebP 由启动预生成填充，下次 bind 走缓存文件分支
 - 详情页预加载：`preloadAround()` 双向预加载（1前2后，内存充裕时2前3后），每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过）；使用 `LargeImageDecoder.buildPreloadRequest()` 构建请求
 - 占位色用 `R.color.qm_placeholder`（亮色 `#E0E0E0`，暗色 `#2A2A2A`），避免深色模式下占位与背景同色
 - 视频缩略图右下角显示纯文字时长，格式为 `m:ss` 或 `h:mm:ss`，不使用胶囊底
@@ -363,7 +364,8 @@
 ### 缩略图加载策略
 
 - **分辨率**：默认 480×270，首页1列时 960×540
-- **滑动暂停**：未实现（v1.12 无 `paused` 标志 / `SCROLL_STATE` 监听，滑动期间缩略图照常加载；仅在 `onViewRecycled` 时取消已完成回收项的未完成任务）
+- **滚动暂停预生成（v1.15）**：`ThumbnailCache.setScrollPaused()`——列表滚动期间（非 `SCROLL_STATE_IDLE`）预生成 `processBatch` 解码前循环等待让出 IO，避免与滚动触发的按需解码争抢磁盘导致掉帧，停止滚动自动恢复；已接线：首页 `HomeFragment` OnScrollListener
+- **滑动任务取消**：`onViewRecycled` 时取消已完成回收项的未完成任务（图片 decodeJob）
 - **覆盖页面**：HomeFragment、AllFilesFragment、AlbumDetailFragment、AuthorFilesFragment、FavoriteFragment
 
 ## 浏览历史
@@ -456,7 +458,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-11
 
 ## 应用图标
 

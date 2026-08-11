@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -34,6 +35,21 @@ object ThumbnailCache {
      * 4K 源 12 并发可达约 800MB 原生堆；固定低并发控制峰值内存。
      */
     private const val VIDEO_CONCURRENCY = 2
+
+    // ===== 滚动暂停（列表滑动期间让出 IO） =====
+
+    /**
+     * 滚动暂停标志：列表滚动期间置 true，预生成在 processBatch 解码前循环等待，
+     * 把磁盘 IO 让给滚动中的按需解码；停止滚动（IDLE）后恢复。
+     * 由列表页 OnScrollListener 调用 [setScrollPaused] 维护。
+     */
+    @Volatile
+    private var scrollPaused = false
+
+    /** 滚动期间暂停/恢复缩略图预生成（列表页 OnScrollListener 调用） */
+    fun setScrollPaused(paused: Boolean) {
+        scrollPaused = paused
+    }
 
     /**
      * 根据设备性能动态计算并发数
@@ -220,6 +236,9 @@ object ThumbnailCache {
 
         suspend fun processBatch(media: MediaFileEntity) {
             try {
+                // 滚动暂停：用户滑动列表时预生成循环等待让出 IO（delay 挂起协程不占线程），
+                // 避免与滚动触发的按需解码争抢磁盘导致掉帧；停止滚动后自动恢复
+                while (scrollPaused) delay(100)
                 // 二次检查：预过滤与实际解码间可能被其他线程预生成
                 if (isThumbnailCached(context, media.recordKey)) {
                     skipped.incrementAndGet()

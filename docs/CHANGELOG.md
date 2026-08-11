@@ -10,6 +10,28 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 首页滑动卡顿修复（v1.15，2026-08-11）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈"首页下滑浏览会卡一下，疑似加载下一个页面"，研究定位根因后三处修复。
+
+| 类别 | 改动 |
+|---|---|
+| 根因 | 首页触底瞬间才分页 +20 条 → 新条目批量 bind 时：①视频无缓存被 Coil VideoFrameDecoder 与后台 decodeJob（MediaMetadataRetriever 扫 8 点位）**双重解码同一首帧**，且 getFrameAtTime 阻塞式取消失效、滑走也停不下来；②启动期全库预生成（图片并发最高 16）+ 滚动按需解码 + Coil 三方抢磁盘 IO → 触底那帧明显掉帧 |
+| A 分页提前 | `HomeFragment.onScrolled` 从"触底才加载"（`!canScrollVertically(1)`）改为**距已加载列表底部 ≤6 项提前加载**（`lastVisible >= itemCount - 1 - PRELOAD_THRESHOLD_ITEMS`），加 `displayCount >= items.size` 守卫防重复提交；新常量 `PRELOAD_THRESHOLD_ITEMS=6`——加载发生在滑动中途被动画掩盖，不再是触底瞬间的同步解码风暴 |
+| B 去视频双解 | `MediaThumbnailAdapter.bind`：视频无缓存时 Coil 解首帧后直接 `return`，不再启动后台 decodeJob（同一首帧不再双解）；图片 decodeJob 保留；decodeJob 内 `isVideo` 死分支清理。视频本地 WebP 由启动预生成填充（下次 bind 走缓存文件分支），滚动期间 Coil 首帧走 memoryCacheKey 内存缓存。影响面：GroupedMediaAdapter 共享 Holder，全部/收藏/历史/搜索列表页一并生效 |
+| C 滚动暂停预生成 | `ThumbnailCache` 加 `@Volatile scrollPaused` + `setScrollPaused()`，`processBatch` 解码前 `while(scrollPaused) delay(100)` 让出 IO；`HomeFragment.onScrollStateChanged` 非 IDLE 暂停、IDLE 恢复。滚动期间预生成不再与按需解码争磁盘 |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest` 通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `ui/main/HomeFragment.kt` | 分页提前触发 + 滚动暂停预生成监听 |
+| `ui/adapter/MediaThumbnailAdapter.kt` | 视频去双重解码 |
+| `core/ThumbnailCache.kt` | scrollPaused 滚动暂停 |
+| `docs/GUIDE_UI.md` / `docs/GUIDE_ALGORITHM.md` / `docs/GUIDE_CODE_MAINTENANCE.md` / `docs/CHANGELOG.md` | 文档同步 |
+
 ## 浏览趋势主页面数据源修复（v1.15，2026-08-11）
 
 执行 AI：deepseek-v4-flash

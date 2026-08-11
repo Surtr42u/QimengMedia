@@ -7,7 +7,7 @@
 ## 本项目工程约束
 
 - 媒体列表分页或分批加载，不在 onBindViewHolder 做数据库查询、文件 IO 或复杂计算
-- 滚动中避免启动大量视频首帧生成
+- 滚动中避免启动大量视频首帧生成（v1.15：列表页视频不再"Coil + MediaMetadataRetriever 双解"同一首帧——视频无缓存只用 Coil 解一次，本地缓存由预生成填充；`ThumbnailCache.setScrollPaused()` 滚动期间暂停预生成让出 IO）
 - 大目录扫描分批写入数据库，扫描进度可显示，不阻塞 UI
 - 毛玻璃效果要有降级方案
 - 主题切换避免重建全部复杂资源
@@ -23,4 +23,4 @@
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_ANIMATION.md`
 
-> 最后更新：2026-06-06
+> 最后更新：2026-08-11

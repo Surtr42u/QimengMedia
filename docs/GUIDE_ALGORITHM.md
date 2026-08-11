@@ -339,7 +339,7 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 
 1. 先查 `ThumbnailCache.getThumbnailFile()` 是否存在 → 存在则 Coil 加载缓存文件（`allowHardware(true)` GPU 渲染更快）
 2. 不存在则 Coil 加载原始 URI（图片 `allowHardware(true)`，视频 VideoFrameDecoder `allowHardware(false)`）
-3. 后台 `ThumbnailLoader` 解码并保存到 `ThumbnailCache`（下次加载走缓存）
+3. **图片**：后台 `ThumbnailLoader` 解码并保存到 `ThumbnailCache`（下次加载走缓存）；**视频（v1.15 起不双解）**：只用 Coil 首帧解码（`memoryCacheKey` 走内存缓存），不再起后台 decodeJob——同一首帧双解且 `getFrameAtTime` 阻塞式取消失效会加剧滑动掉帧，视频本地缓存由启动预生成填充
 
 ### 预生成动态并发策略
 
@@ -353,6 +353,7 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
   - 设备总内存<4GB时减半（用`ActivityManager.MemoryInfo.totalMem`判断，非App堆上限`memoryClass`）
   - 高端 8 核设备实测：12 并发
 - **图片/视频分离并发（v1.12）**：图片走全量并发（解码快、内存小）；视频单独限制 2 并发——视频截帧每任务峰值持有 2 张原尺寸帧（`getFrameAtTime` + `convertTo565` 副本），4K 源 12 并发可达约 800MB 原生堆，低端机 OOM 风险
+- **滚动暂停（v1.15）**：列表滚动期间（`ThumbnailCache.scrollPaused`）预生成在 `processBatch` 解码前循环等待让出 IO，避免与滚动触发的按需解码争抢磁盘导致掉帧；停止滚动自动恢复
 - **缓存容量上限（v1.12）**：filesDir 缩略图缓存（含 `_frame.webp` 详情帧）超过 5000 个文件时按修改时间淘汰最旧文件，防止只增不减占用用户存储
 
 ### cache_version 机制
@@ -391,4 +392,4 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 
 ## 验收清单
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-11

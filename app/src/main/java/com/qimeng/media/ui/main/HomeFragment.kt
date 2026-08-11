@@ -153,8 +153,20 @@ class HomeFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
         homeRecycler?.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            // 滚动暂停预生成：滑动期间把磁盘 IO 让给滚动中的按需解码，停止后恢复
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                val paused = newState != RecyclerView.SCROLL_STATE_IDLE
+                com.qimeng.media.core.ThumbnailCache.setScrollPaused(paused)
+            }
+
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (dy > 0 && !recyclerView.canScrollVertically(1)) {
+                // v1.15 防卡顿：触底才加载会在滑动最后一帧同步 +20 条并立即批量 bind，
+                // 新条目图片/视频解码风暴集中发生在那一帧 → 明显"卡一下"。
+                // 改为距已加载列表底部 ≤ PRELOAD_THRESHOLD_ITEMS 个 item 时提前加载，
+                // 让加载发生在滑动中途（滑动动画掩盖解码），而不是触底瞬间。
+                if (dy <= 0 || displayCount >= (tabSortedItems[currentTab]?.size ?: 0)) return
+                val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
+                if (lm.findLastVisibleItemPosition() >= lm.itemCount - 1 - PRELOAD_THRESHOLD_ITEMS) {
                     displayCount += DISPLAY_INCREMENT
                     tabDisplayCounts[currentTab] = displayCount
                     val items = tabSortedItems[currentTab].orEmpty()
@@ -503,6 +515,8 @@ class HomeFragment : Fragment() {
     const val TAB_RANKING = 2
         const val INITIAL_DISPLAY_COUNT = 40
         const val DISPLAY_INCREMENT = 20
+        /** v1.15：距底部剩余 ≤ 此阈值个 item 时提前加载下一页（替代触底才加载） */
+        const val PRELOAD_THRESHOLD_ITEMS = 6
         private const val PREFS_NAME = "media_detail_prefs"
         private const val KEY_LIKE_COUNT_PREFIX = "like_count_"
     }
