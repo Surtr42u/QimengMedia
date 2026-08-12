@@ -126,7 +126,6 @@
 - **返回导航**：结果→空状态（清空搜索词）→补全→空状态→空状态→返回首页（popBackStack）
 - **搜索匹配维度**：文件名/文件夹名/标签 + `SearchContext`（出处名、角色名、COS作者名、COS作品名）
 - **搜索结果**：使用 `GroupedMediaAdapter`（与全部页一致，日期分组+3列网格），搜索和 `buildSearchContext()` 均在 `Dispatchers.Default` 异步执行；支持双指缩放列数 2-5 列（`ScaleGestureDetector`）
-- **搜索输入防抖**：搜索/补全输入使用 debounce，避免每个字符都触发一次重查询；补全匹配和结果查询均在 `Dispatchers.Default` 异步执行，不阻塞主线程
 - **键盘适配**：搜索页使用 `SOFT_INPUT_ADJUST_NOTHING`，键盘弹出时不调整布局，避免底部 tab 显示在键盘上方；退出搜索页恢复 `SOFT_INPUT_ADJUST_RESIZE`。底部导航通过 `BackStackChangedListener` 中 `SearchFragment` 判断隐藏（`GONE`），确保键盘弹出时底部 tab 不可见
 
 ## 全部页

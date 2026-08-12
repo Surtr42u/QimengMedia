@@ -19,8 +19,8 @@
 | 类别 | 改动 |
 |---|---|
 | 背景 | `app/ai-skills/external/`（5 个外部包，Compose 路线与本项目原生 View 冲突）与 `docs/AI_WRITTEN_SKILLS/`（9 个自写技能）仅靠 `GUIDE_USAGE_MATRIX.md` 提示读取，无触发保障 |
-| 决策 | 删除两个 Skill 目录；清理 `AI_README_FIRST.md` / `GUIDE_USAGE_MATRIX.md` / `GUIDE_README.md` / `PROJECT_GUIDE.md` / `DEVELOPMENT_PLAN.md` / `CLAUDE.md` / `AGENTS.md` / `copilot-instructions.md` 中所有 Skill 读取顺序、引用清单、修改规则、冲突优先级条目；自写技能中的薄弱约束已归并进 `GUIDE_THEME.md`（夜间可读性/明暗差异/设计克制）和 `GUIDE_UI.md`（搜索输入防抖） |
-| 改动 | 删除 `app/ai-skills/`、`docs/AI_WRITTEN_SKILLS/`；矩阵清理 32 处外部 + 12 处自写技能引用；`AI_README_FIRST.md` 总读取顺序 15 步精简为 9 步、新增模块流程 7 件事改为 6 件事；`GUIDE_UI.md` 搜索页新增的 debounce 约束源自已删 `KOTLIN_COROUTINES_SKILL.md` 的"搜索输入使用 debounce"规范（注意：`SearchFragment` 当前实现为直接同步查询，该约束为应然规范，实现时需落地） |
+| 决策 | 删除两个 Skill 目录；清理 `AI_README_FIRST.md` / `GUIDE_USAGE_MATRIX.md` / `GUIDE_README.md` / `PROJECT_GUIDE.md` / `DEVELOPMENT_PLAN.md` / `CLAUDE.md` / `AGENTS.md` / `copilot-instructions.md` 中所有 Skill 读取顺序、引用清单、修改规则、冲突优先级条目；自写技能中的薄弱约束已归并进 `GUIDE_THEME.md`（夜间可读性/明暗差异/设计克制）。原 `KOTLIN_COROUTINES_SKILL.md` 的"搜索输入使用 debounce"约束未归并——搜索页已用 nameIndex 预计算 + O(m) 补全匹配机制消除重查询压力，防抖无实际需求，直接废弃（`GUIDE_SCAN.md` 中的同源副本一并删除） |
+| 改动 | 删除 `app/ai-skills/`、`docs/AI_WRITTEN_SKILLS/`；矩阵清理 32 处外部 + 12 处自写技能引用；`AI_README_FIRST.md` 总读取顺序 15 步精简为 9 步、新增模块流程 7 件事改为 6 件事 |
 
 **验证**：全项目 grep 无 `ai-skills` / `AI_WRITTEN_SKILLS` 残留引用（仅本 CHANGELOG 记录）；两个目录已从 git 删除。
 
@@ -31,7 +31,7 @@
 | `docs/GUIDE_USAGE_MATRIX.md` | 清 43 处引用行与外部 Skill 规则 |
 | `docs/GUIDE_README.md` / `docs/PROJECT_GUIDE.md` / `docs/DEVELOPMENT_PLAN.md` | 清目录树与阶段描述 |
 | `.github/copilot-instructions.md` | 删外部 Skill 冲突说明 |
-| `docs/GUIDE_THEME.md` / `docs/GUIDE_UI.md` | 归并自写技能薄弱约束 |
+| `docs/GUIDE_THEME.md` | 归并自写技能薄弱约束（夜间可读性/明暗差异/设计克制） |
 | `docs/CHANGELOG.md` | 本文档记录 |
 
 ## 详细信息弹窗移除"完成"按钮（v1.15，2026-08-12）
