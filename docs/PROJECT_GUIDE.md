@@ -104,9 +104,6 @@ QimengMedia/
 ├── GEMINI.md
 ├── README.md
 ├── app/
-│   ├── ai-skills/
-│   │   ├── README.md
-│   │   └── external/              # 放用户导入或明确下载的外部 Skill
 │   ├── build.gradle.kts
 │   └── src/main/
 │       ├── cpp/                     # NDK/CMake 原生代码
@@ -205,7 +202,6 @@ QimengMedia/
 │                   ├── PinchZoomHelper.kt
 │                   └── PressAnimation.kt        # 按下反馈动画扩展函数 addPressAnimation()
 ├── docs/
-│   ├── AI_WRITTEN_SKILLS/          # 项目内自写通用 AI 参考规范
 │   ├── PROJECT_GUIDE.md
 │   ├── GUIDE_README.md
 │   ├── GUIDE_UI.md
@@ -234,7 +230,7 @@ QimengMedia/
 
 ## 开发阶段
 
-1. 建立 AI Skill 与文档体系。
+1. 建立 AI 接手规则与文档体系。
 2. 搭建 Android 基础架构与底部导航。
 3. 建立 Room 数据和 JSON 备份结构。
 4. 实现 SAF 扫描与只读媒体索引。

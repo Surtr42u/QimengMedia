@@ -145,5 +145,8 @@ context.isNightMode()
 - **禁止用描边做层次**：卡片分层靠 bg/surface/surfaceSoft 色差，不靠 1dp stroke。
 - **强调色使用场景**：`qmColorAccent` 仅用于数据可视化（进度条、图表高亮）、选中态强调，不用于普通文字或背景。
 - **明暗模式切换**：v1.10 起无 App 内切换入口，仅跟随手机系统明暗模式。`ProfileFragment` 的"主题色彩"行**不可点击**（`QimengProfileRow` 默认 `clickable=false`，不设置 `OnClickListener`），不弹窗、不调用 `setDefaultNightMode()`。
+- **夜间可读性**：深色主题必须保证文字与背景的对比度（夜间 `qmColorTextPrimary` `#C8C8C8` / `qmColorTextSecondary` `#808080` 为基准），浅色主题避免低对比灰字。
+- **明暗主题差异**：白天/夜间两套主题必须有明显差异，不只是换主色，整体观感要可区分。
+- **设计克制**：不做"白底列表 + 默认按钮"的普通工具 UI；禁止为了美观牺牲文件名、作者、统计等核心信息可读性。
 
-> 最后更新：2026-08-08
+> 最后更新：2026-08-12

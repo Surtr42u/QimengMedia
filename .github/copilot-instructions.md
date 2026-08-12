@@ -8,4 +8,4 @@
 4. 保持原始媒体文件只读。
 5. 新增或修改功能后同步更新 `docs/PROJECT_GUIDE.md` 和相关 `docs/GUIDE_*.md`。
 
-本项目主 UI 技术为原生 View + ViewBinding，不是 Compose。外部 Skill 中如有冲突建议，以项目文档为准。
+本项目主 UI 技术为原生 View + ViewBinding，不是 Compose。

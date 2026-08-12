@@ -1,6 +1,6 @@
 # GUIDE_USAGE_MATRIX - 指南触发矩阵
 
-本文件用于确保所有外部 Skill、自写通用 Skill、项目专属指南都能发挥作用。任何 AI 在修改代码前，必须按任务类型读取对应指南。
+本文件用于确保所有项目专属指南都能发挥作用。任何 AI 在修改代码前，必须按任务类型读取对应指南。
 
 ## 总规则
 
@@ -9,8 +9,6 @@
 - 触发词采用**模糊匹配**——用户说"这个界面改一下"即命中 UI，说"感觉有点卡"即命中性能，不需要精确命中某个词。
 - 一个任务常命中多个模块，**必须全部读取**。
 - 不确定是否命中时，宁可多读一个指南，不要跳过。
-- 如果外部 Skill 与项目文档冲突，以项目文档为准。
-- 外部 Skill 默认只读，不修改。
 
 ## 修改前快速自检（强制）
 
@@ -45,9 +43,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 - `README.md`
 - `AGENTS.md`
 - `AI_README_FIRST.md`
-- `app/ai-skills/README.md`
-- `app/ai-skills/external/DOWNLOADED_SOURCES.md`
-- `docs/AI_WRITTEN_SKILLS/README.md`
 - `docs/PROJECT_GUIDE.md`
 - `docs/GUIDE_README.md`
 
@@ -84,10 +79,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/awesome-android-agent-skills/Agent.md`
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-architecture-clean/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/architecture.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_ARCHITECTURE_SKILL.md`
 - `docs/PROJECT_GUIDE.md`
 
 ---
@@ -102,8 +93,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-viewsystem-foundations/SKILL.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_VIEW_SKILL.md`
 - `docs/GUIDE_UI.md`
 
 ---
@@ -118,13 +107,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/SKILL.md`
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/anchors.md`
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/component-anatomy.md`
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/ban-patterns.md`
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/verification.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_UI_DESIGN_SKILL.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_VIEW_SKILL.md`
 - `docs/GUIDE_UI.md`
 - `docs/GUIDE_THEME.md`
 - `docs/GUIDE_ANIMATION.md`
@@ -143,9 +125,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/android-lead-agent-skills/references/theming-and-color.md`
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/anchors.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_UI_DESIGN_SKILL.md`
 - `docs/GUIDE_THEME.md`
 - `docs/GUIDE_UI.md`
 
@@ -161,8 +140,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/rshzrh-ui-design-skills/skills/ui-android/motion.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/motion-and-animation.md`
 - `docs/GUIDE_ANIMATION.md`
 - `docs/GUIDE_UI.md`
 
@@ -178,9 +155,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-room-database/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/data-layer.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_ROOM_SKILL.md`
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_BACKUP.md`
 
@@ -196,9 +170,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-coroutines-flow/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/coroutines-and-flow.md`
-- `docs/AI_WRITTEN_SKILLS/KOTLIN_COROUTINES_SKILL.md`
 - 当前相关项目指南。
 
 ---
@@ -213,9 +184,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-permissions-activity-results/SKILL.md`
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-media-files-sharing/SKILL.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_STORAGE_SAF_SKILL.md`
 - `docs/GUIDE_SCAN.md`
 - `docs/GUIDE_ANDROID_COMPAT.md`
 
@@ -231,9 +199,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-media-files-sharing/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/image-loading.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_MEDIA_SKILL.md`
 - `docs/GUIDE_SCAN.md`
 - `docs/GUIDE_UI.md`
 - `docs/GUIDE_DATA.md`
@@ -250,7 +215,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-serialization-offline-sync/SKILL.md`
 - `docs/GUIDE_BACKUP.md`
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_ANDROID_COMPAT.md`
@@ -319,7 +283,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-permissions-activity-results/SKILL.md`
 - `docs/GUIDE_ANDROID_COMPAT.md`
 - `docs/GUIDE_SCAN.md`
 - `docs/GUIDE_BACKUP.md`
@@ -336,9 +299,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-performance-observability/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/performance.md`
-- `docs/AI_WRITTEN_SKILLS/ANDROID_PERFORMANCE_SKILL.md`
 - 当前相关项目指南。
 
 **用户说"感觉卡顿"、"滑动有点掉帧"、"打开好慢"、"发烫"、"太卡了"都触发本节。**
@@ -355,10 +315,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-testing-unit/SKILL.md`
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-testing-ui/SKILL.md`
-- `app/ai-skills/external/claude-adb-skill/SKILL.md`，仅真机/ADB 任务需要
-- `docs/AI_WRITTEN_SKILLS/ANDROID_TESTING_SKILL.md`
 - `docs/GUIDE_DEBUG.md`
 - 当前相关项目指南。
 
@@ -390,8 +346,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 必读：
 
-- `app/ai-skills/external/aotocom-android-agent-skills/skills/android-security-best-practices/SKILL.md`
-- `app/ai-skills/external/android-lead-agent-skills/references/security.md`
 - `docs/GUIDE_SCAN.md`
 - `docs/GUIDE_BACKUP.md`
 - `docs/GUIDE_ANDROID_COMPAT.md`
@@ -419,7 +373,7 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 | 正式词 | 大白话/口语 |
 |---|---|
-| 新增需求、修改需求、项目结构、文档、Skill、交接、换 AI | 加个文档、更新文档、文档不对、文档过时、项目文档、开发文档、交接给、换人接手、给别的 AI 用 |
+| 新增需求、修改需求、项目结构、文档、交接、换 AI | 加个文档、更新文档、文档不对、文档过时、项目文档、开发文档、交接给、换人接手、给别的 AI 用 |
 
 必读：
 
@@ -456,7 +410,6 @@ AI 在阅读用户请求后，应按以下规则判定触发模块：
 
 - 已读取任务命中的所有指南。
 - 已理解冲突优先级。
-- 没有修改外部 Skill 原文。
 
 实现后确认：
 

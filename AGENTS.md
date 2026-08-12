@@ -30,7 +30,6 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 - 禁止修改代码后回复末尾不加 `📋` 已读取文档签名。
 - 禁止在签名中列入未实际读取的文档。
 - 禁止通读完整源码文件来理解项目。
-- 禁止修改 `app/ai-skills/external/` 下外部 Skill 原文，除非用户明确要求。
 - 禁止新增功能后不更新项目文档。
 - 禁止删除功能时只删 UI 层而保留底层实现代码和文档。
 - 禁止修改、删除、移动用户原始媒体文件。
@@ -46,7 +45,5 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 2. `docs/PROJECT_GUIDE.md`。
 3. `docs/GUIDE_*.md`。
 4. `docs/GUIDE_USAGE_MATRIX.md`（触发规则定义）。
-5. `docs/AI_WRITTEN_SKILLS/*.md`。
-6. `app/ai-skills/external/*`。
 
 如果发现自己没有读取当前任务对应指南，必须停止实现并补读。

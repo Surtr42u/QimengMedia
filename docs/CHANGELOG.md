@@ -10,6 +10,30 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 移除 Skill 体系，只保留项目约束文档（2026-08-12）
+
+执行 AI：deepseek-v4-flash
+
+用户确认外部/自写 Skill 从未被实际触发（无强制加载机制，靠 AI 自觉读取），决定删除 Skill 体系，只保留每次必读的项目约束文档（AGENTS / AI_README_FIRST / GUIDE_*.md）。
+
+| 类别 | 改动 |
+|---|---|
+| 背景 | `app/ai-skills/external/`（5 个外部包，Compose 路线与本项目原生 View 冲突）与 `docs/AI_WRITTEN_SKILLS/`（9 个自写技能）仅靠 `GUIDE_USAGE_MATRIX.md` 提示读取，无触发保障 |
+| 决策 | 删除两个 Skill 目录；清理 `AI_README_FIRST.md` / `GUIDE_USAGE_MATRIX.md` / `GUIDE_README.md` / `PROJECT_GUIDE.md` / `DEVELOPMENT_PLAN.md` / `CLAUDE.md` / `AGENTS.md` / `copilot-instructions.md` 中所有 Skill 读取顺序、引用清单、修改规则、冲突优先级条目；自写技能中的薄弱约束已归并进 `GUIDE_THEME.md`（夜间可读性/明暗差异/设计克制）和 `GUIDE_UI.md`（搜索输入防抖） |
+| 改动 | 删除 `app/ai-skills/`、`docs/AI_WRITTEN_SKILLS/`；矩阵清理 32 处外部 + 12 处自写技能引用；`AI_README_FIRST.md` 总读取顺序 15 步精简为 9 步、新增模块流程 7 件事改为 6 件事；`GUIDE_UI.md` 搜索页新增的 debounce 约束源自已删 `KOTLIN_COROUTINES_SKILL.md` 的"搜索输入使用 debounce"规范（注意：`SearchFragment` 当前实现为直接同步查询，该约束为应然规范，实现时需落地） |
+
+**验证**：全项目 grep 无 `ai-skills` / `AI_WRITTEN_SKILLS` 残留引用（仅本 CHANGELOG 记录）；两个目录已从 git 删除。
+
+| 文件 | 改动 |
+|---|---|
+| `app/ai-skills/`、`docs/AI_WRITTEN_SKILLS/` | 整目录删除 |
+| `AI_README_FIRST.md` / `AGENTS.md` / `CLAUDE.md` | 清 Skill 规则与读取顺序 |
+| `docs/GUIDE_USAGE_MATRIX.md` | 清 43 处引用行与外部 Skill 规则 |
+| `docs/GUIDE_README.md` / `docs/PROJECT_GUIDE.md` / `docs/DEVELOPMENT_PLAN.md` | 清目录树与阶段描述 |
+| `.github/copilot-instructions.md` | 删外部 Skill 冲突说明 |
+| `docs/GUIDE_THEME.md` / `docs/GUIDE_UI.md` | 归并自写技能薄弱约束 |
+| `docs/CHANGELOG.md` | 本文档记录 |
+
 ## 详细信息弹窗移除"完成"按钮（v1.15，2026-08-12）
 
 执行 AI：deepseek-v4-flash

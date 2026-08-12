@@ -6,13 +6,13 @@
 
 ### 首次接手项目（以前没做过这个项目）
 
-按《总读取顺序》完整走一遍（约 14 步），建好全局认知。
+按《总读取顺序》完整走一遍（约 9 步），建好全局认知。
 
 ### 日常任务（已经了解项目，来做具体修改）
 
 1. **读 `docs/GUIDE_CODE_MAINTENANCE.md`**（代码规范是写代码的前提，必须先于功能指南阅读）
 2. 打开 `docs/GUIDE_USAGE_MATRIX.md`，匹配用户请求的触发词
-3. 只读命中的 Skill 和文档
+3. 只读命中的指南和文档
 4. 基于文档定位代码片段修改
 5. 改完后更新对应文档 + 回复末尾加 `📋` 签名
 
@@ -23,16 +23,10 @@
 3. `AGENTS.md`
 4. **`docs/GUIDE_CODE_MAINTENANCE.md`**（代码规范第一要务，必须在功能指南之前阅读）
 5. `docs/GUIDE_USAGE_MATRIX.md`
-6. `app/ai-skills/README.md`
-7. `app/ai-skills/external/README.md`
-8. `app/ai-skills/external/DOWNLOADED_SOURCES.md`
-9. 与任务相关的外部 Skill
-10. `docs/AI_WRITTEN_SKILLS/README.md`
-11. 与任务相关的 `docs/AI_WRITTEN_SKILLS/*.md`
-12. `docs/PROJECT_GUIDE.md`
-13. `docs/GUIDE_README.md`
-14. 与任务相关的 `docs/GUIDE_*.md`
-15. 对应源码（仅限本文档允许的片段读取，禁止全文通读）
+6. `docs/PROJECT_GUIDE.md`
+7. `docs/GUIDE_README.md`
+8. 与任务相关的 `docs/GUIDE_*.md`
+9. 对应源码（仅限本文档允许的片段读取，禁止全文通读）
 
 完整任务触发矩阵见 `docs/GUIDE_USAGE_MATRIX.md`。
 
@@ -42,7 +36,6 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 
 - `README.md` + `docs/PROJECT_GUIDE.md`：项目全貌、架构、页面结构、目录
 - `docs/GUIDE_*.md`：各模块详细规则、数据流、文件职责
-- `docs/AI_WRITTEN_SKILLS/*.md`：通用开发规范和参考
 
 仅在以下情况才允许读取源码文件：
 
@@ -87,11 +80,6 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 📋 已读取文档：GUIDE_UI.md, GUIDE_THEME.md, GUIDE_ANIMATION.md
 ```
 
-含外部 Skill 时：
-```
-📋 已读取文档：rshzrh-ui/SKILL.md, ANDROID_UI_DESIGN_SKILL.md, GUIDE_UI.md, GUIDE_THEME.md
-```
-
 ## 文档维护规则
 
 项目文档是 AI 理解项目的唯一入口，数据和规则必须保持与代码同步：
@@ -99,7 +87,7 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 | 代码变更类型 | 必须同步的文档 |
 |---|---|
 | 新增/删除/移动文件 | `docs/PROJECT_GUIDE.md` 目录结构 + 实现进度 |
-| 新增功能模块 | 按本文《新增功能模块的文档流程》7 步执行 |
+| 新增功能模块 | 按本文《新增功能模块的文档流程》6 步执行 |
 | 修改页面行为/布局 | `docs/GUIDE_UI.md` |
 | 修改数据实体/DAO/策略 | `docs/GUIDE_DATA.md`（含 JSON 格式定义）；如导入导出流程变更，同步 `docs/GUIDE_BACKUP.md` |
 | 修改主题/颜色/字体 | `docs/GUIDE_THEME.md` |
@@ -113,10 +101,8 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 | 修改代码结构/重构/测试 | `docs/GUIDE_CODE_MAINTENANCE.md` |
 | 修改模块索引/快速导航 | `docs/GUIDE_README.md` |
 | 新任务触发关系 | `docs/GUIDE_USAGE_MATRIX.md` |
-| 影响通用开发规范 | `docs/AI_WRITTEN_SKILLS/*.md` |
-| 影响外部 Skill 使用说明 | `app/ai-skills/README.md` 或 `app/ai-skills/external/README.md`（不修改外部 Skill 原文） |
 
-文档更新优先级：先更新 `docs/PROJECT_GUIDE.md`，再更新对应 `docs/GUIDE_*.md`，最后如有需要再更新 `docs/AI_WRITTEN_SKILLS/*.md`。
+文档更新优先级：先更新 `docs/PROJECT_GUIDE.md`，再更新对应 `docs/GUIDE_*.md`。
 
 如果发现文档描述与代码实际情况不符，必须先确认哪个是正确版本，再统一为正确版本。
 
@@ -143,17 +129,16 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 
 如果只是对现有模块的扩展（如详情页加个按钮），只需更新已有的指南。
 
-### 新建模块必须完成的 7 件事
+### 新建模块必须完成的 6 件事
 
 | 步骤 | 做什么 | 产出 |
 |---|---|---|
 | 1 | 建项目专属指南 | 创建 `docs/GUIDE_XXX.md`，参照 `docs/_GUIDE_TEMPLATE.md` 模板 |
-| 2 | 如涉及新技术领域，建自写 Skill | 创建 `docs/AI_WRITTEN_SKILLS/NEW_SKILL.md`（可选，不是必做） |
-| 3 | 更新项目总览 | `docs/PROJECT_GUIDE.md`：实现进度加一行 + 目录结构加对应文件 |
-| 4 | 更新触发矩阵 | `docs/GUIDE_USAGE_MATRIX.md`：新增触发词节 + 更新复合触发示例表 |
-| 5 | 更新模块索引 | `docs/GUIDE_README.md`：模块索引表加一行 + 快速导航加场景 |
-| 6 | 更新维护规则表 | 本文档《文档维护规则》表格加新行 |
-| 7 | 更新开发计划 | `docs/DEVELOPMENT_PLAN.md`：新增阶段或阶段内新增待办项 |
+| 2 | 更新项目总览 | `docs/PROJECT_GUIDE.md`：实现进度加一行 + 目录结构加对应文件 |
+| 3 | 更新触发矩阵 | `docs/GUIDE_USAGE_MATRIX.md`：新增触发词节 + 更新复合触发示例表 |
+| 4 | 更新模块索引 | `docs/GUIDE_README.md`：模块索引表加一行 + 快速导航加场景 |
+| 5 | 更新维护规则表 | 本文档《文档维护规则》表格加新行 |
+| 6 | 更新开发计划 | `docs/DEVELOPMENT_PLAN.md`：新增阶段或阶段内新增待办项 |
 
 ### GUIDE_XXX.md 最少要写什么
 
@@ -175,7 +160,7 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 
 1. 打开 `docs/GUIDE_USAGE_MATRIX.md`
 2. 根据用户请求的语义匹配触发词（矩阵已覆盖大量口语/大白话表达）
-3. 读取命中的所有外部 Skill、自写 Skill、项目专属指南
+3. 读取命中的所有项目专属指南
 4. 如果用户请求不在任何已知触发词范围内，也至少读 `docs/PROJECT_GUIDE.md` + `docs/GUIDE_README.md`
 
 ## 工具调用增强原则
@@ -255,7 +240,6 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 - 禁止修改代码后回复末尾不加 `📋` 已读取文档签名。
 - 禁止在签名中列入未实际读取的文档。
 - 禁止通读完整源码文件来理解项目。
-- 禁止修改 `app/ai-skills/external/` 下外部 Skill 原文，除非用户明确要求。
 - 禁止新增功能后不更新项目文档。
 - 禁止删除功能时只删 UI 层而保留底层实现代码和文档。
 - 禁止修改、删除、移动用户原始媒体文件。
@@ -271,8 +255,6 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 2. `docs/PROJECT_GUIDE.md`。
 3. `docs/GUIDE_*.md`。
 4. `docs/GUIDE_USAGE_MATRIX.md`（触发规则定义）。
-5. `docs/AI_WRITTEN_SKILLS/*.md`。
-6. `app/ai-skills/external/*`。
 
 如果发现自己没有读取当前任务对应指南，必须停止实现并补读。
 

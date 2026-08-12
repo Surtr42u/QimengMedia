@@ -2,10 +2,10 @@
 
 本文件只记录各阶段的**目标与当前状态**，具体实现细节见 `PROJECT_GUIDE.md`「当前实现进度」。
 
-## 阶段 0：AI Skill 与开发文档体系
+## 阶段 0：AI 接手规则与文档体系
 
-- 目标：建立 AI 接手规则、外部/自写 Skill 体系、项目专属指南。
-- 状态：已完成。`README.md` / `AI_README_FIRST.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.github/copilot-instructions.md` 就位；`app/ai-skills/external/` 放外部下载 Skill（只读），`docs/AI_WRITTEN_SKILLS/` 放自写通用规范，`docs/GUIDE_*.md` 放项目专属指南，`docs/GUIDE_USAGE_MATRIX.md` 为任务触发矩阵。
+- 目标：建立 AI 接手规则与项目专属指南。
+- 状态：已完成。`README.md` / `AI_README_FIRST.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.github/copilot-instructions.md` 就位；`docs/GUIDE_*.md` 放项目专属指南，`docs/GUIDE_USAGE_MATRIX.md` 为任务触发矩阵。
 
 ## 阶段 1：Android 基础架构
 

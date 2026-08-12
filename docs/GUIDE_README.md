@@ -2,12 +2,10 @@
 
 本目录的 `GUIDE_*.md` 是绮梦影库项目专属工程指南文档。
 
-## 三类文档的区别
+## 文档分类
 
 | 类型 | 位置 | 性质 | 修改权限 |
 |---|---|---|---|
-| 外部下载 Skill | `app/ai-skills/external/` | 第三方通用规范 | 只读，禁止修改 |
-| 自写通用 Skill | `docs/AI_WRITTEN_SKILLS/` | 项目内自写通用规范 | 可随项目维护 |
 | 项目专属指南 | `docs/GUIDE_*.md` | 绮梦影库专属指南 | 必须与代码同步 |
 
 ## 模块索引（按关注领域）
@@ -31,19 +29,19 @@
 ## 你想做什么？（快速导航）
 
 ### 我想改/加一个页面
-→ `GUIDE_UI.md`（看页面结构） → `GUIDE_THEME.md`（颜色规则） → `ANDROID_VIEW_SKILL.md`（View/Adapter 规范）
+→ `GUIDE_UI.md`（看页面结构） → `GUIDE_THEME.md`（颜色规则）
 
 ### 我想改主题或颜色
 → `GUIDE_THEME.md`（9 个属性 + 代码示例） → `GUIDE_UI.md`（确保各页面统一）
 
 ### 我想加/改数据库字段
-→ `GUIDE_DATA.md`（实体列表 + JSON 格式） → `ANDROID_ROOM_SKILL.md`（Migration 规范） → `GUIDE_BACKUP.md`（确认导入导出流程需不需要改）
+→ `GUIDE_DATA.md`（实体列表 + JSON 格式） → `GUIDE_BACKUP.md`（确认导入导出流程需不需要改）
 
 ### 我想改推荐/排序逻辑
 → `GUIDE_ALGORITHM.md`（公式 + 缓存） → `GUIDE_DATA.md`（统计规则）
 
 ### 我想改扫描逻辑
-→ `GUIDE_SCAN.md`（SAF + 格式 + 字段） → `ANDROID_STORAGE_SAF_SKILL.md`（通用规范） → `GUIDE_ANDROID_COMPAT.md`（确认权限不变）
+→ `GUIDE_SCAN.md`（SAF + 格式 + 字段） → `GUIDE_ANDROID_COMPAT.md`（确认权限不变）
 
 ### 我想改备份/导入导出
 → `GUIDE_BACKUP.md`（流程 + JSON 规范） → `GUIDE_DATA.md`（JSON 格式定义）
@@ -52,7 +50,7 @@
 → `GUIDE_AUTHOR.md`（UI + TXT 规则） → `GUIDE_DATA.md`（实体定义） → `GUIDE_BACKUP.md`（确认 JSON 同步）
 
 ### App 太卡了
-→ `ANDROID_PERFORMANCE_SKILL.md`（通用优化） → `GUIDE_SCAN.md`（扫描性能） → `GUIDE_UI.md`（列表性能）
+→ `GUIDE_SCAN.md`（扫描性能） → `GUIDE_UI.md`（列表性能）
 
 ### 闪退了/卡死了/需要看日志
 → `GUIDE_DEBUG.md`（AppLog + ADB 诊断） → `GUIDE_SCAN.md`（扫描相关问题时）
@@ -64,7 +62,7 @@
 → 读 `AI_README_FIRST.md` 的《删除功能的强制规则》 → 逐层删代码（UI→VM→Repo→DAO） → 同步更新 `PROJECT_GUIDE.md` + 对应 `GUIDE_*.md`
 
 ### 我要加一个全新模块（现有文档覆盖不了）
-→ 读 `AI_README_FIRST.md` 的《新增功能模块的文档流程》 → 复制 `docs/_GUIDE_TEMPLATE.md` → 按 7 步清单执行
+→ 读 `AI_README_FIRST.md` 的《新增功能模块的文档流程》 → 复制 `docs/_GUIDE_TEMPLATE.md` → 按 6 步清单执行
 
 ## 修改后必须同步文档
 
@@ -74,4 +72,4 @@
 
 所有人（AI 或程序员）改代码前请先读 `AGENTS.md` 和 `AI_README_FIRST.md`。
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-12
