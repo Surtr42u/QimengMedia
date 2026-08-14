@@ -60,6 +60,12 @@ class AuthorFilesFragment : Fragment() {
     private var charPillsExpanded = false
     private var typePillsExpanded = false
     private val columnsRef = ColumnsRef(DEFAULT_COLUMNS)
+
+    // v1.15：App 偏好管理器（列数持久化用）——从 AppContainer 获取，允许为 null
+    private val appPrefsManager: com.qimeng.media.data.prefs.AppPrefsManager?
+        get() = (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager
+
     private var cachedMedia = emptyList<MediaFileEntity>()
     private var cachedCosMedia = emptyList<MediaFileEntity>()
     private var cachedCosWorks = emptyList<CosWorkEntity>()
@@ -124,6 +130,10 @@ class AuthorFilesFragment : Fragment() {
     }
 
     private fun setupRecycler() {
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        val savedColumns = appPrefsManager?.prefs?.value?.gridColumnsAll ?: DEFAULT_COLUMNS
+        columnsRef.value = savedColumns
+        columnsRef.baseValue = savedColumns
         gridLayoutManager = PinchZoomHelper.createGridLayoutManager(requireContext(), columnsRef.value, adapter)
         binding.authorFilesRecycler.layoutManager = gridLayoutManager
         binding.authorFilesRecycler.adapter = adapter
@@ -133,7 +143,9 @@ class AuthorFilesFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.authorFilesRecycler)
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.authorFilesRecycler,
+            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
     }
 
     private fun setupChips() {
@@ -346,13 +358,14 @@ class AuthorFilesFragment : Fragment() {
         }
         if (renderHash != lastRenderHash) {
             lastRenderHash = renderHash
+            // v1.15：改用 Async 变体——分组行组装与指纹计算移入 Default 线程，大库下主线程不再卡顿
             when {
                 viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, charGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, charGroups, viewLifecycleOwner.lifecycleScope)
                 viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, sourceGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, sourceGroups, viewLifecycleOwner.lifecycleScope)
                 else ->
-                    adapter.submitMedia(displayed)
+                    adapter.submitMediaAsync(displayed, viewLifecycleOwner.lifecycleScope)
             }
         }
 
@@ -476,6 +489,8 @@ class AuthorFilesFragment : Fragment() {
         columnsRef.value = next.coerceIn(PinchZoomHelper.MIN_COLUMNS, PinchZoomHelper.MAX_COLUMNS)
         gridLayoutManager.spanCount = columnsRef.value
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
+        // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
+        appPrefsManager?.updateGridColumnsAll(columnsRef.value)
         val iconRes = when (columnsRef.value) {
             2 -> R.drawable.ic_grid_2
             3 -> R.drawable.ic_grid_3

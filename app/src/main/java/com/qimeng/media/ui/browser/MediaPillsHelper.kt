@@ -188,9 +188,12 @@ object MediaPillsHelper {
         onCollapse: () -> Unit
     ) {
         wrapper.removeAllViews()
-        val sorted = charGroups.entries.sortedByDescending { it.value.size }
+        // v1.15：与 renderSourcePills/renderCharPills 对齐——先排非「其他」项（按数量降序），
+        // 再把「其他」移到列表末尾（GUIDE_UI「其他药丸始终排在列表最下面」）
+        val sorted = charGroups.entries.filter { it.key != "其他" }.sortedByDescending { it.value.size }
+        val otherEntry = charGroups["其他"]
 
-        if (sorted.isEmpty()) {
+        if (sorted.isEmpty() && otherEntry == null) {
             scroller.visibility = View.GONE
             return
         }
@@ -215,6 +218,16 @@ object MediaPillsHelper {
             val pill = createPill(context, "$workName (${files.size})", workName in selectedChars, colors)
             pill.setOnClickListener {
                 if (workName in selectedChars) selectedChars.remove(workName) else selectedChars.add(workName)
+                onPillClick()
+            }
+            flowLayout.addView(pill)
+        }
+
+        if (otherEntry != null) {
+            // 「其他」药丸始终排在列表最下面（不参与数量排序）
+            val pill = createPill(context, "其他 (${otherEntry.size})", "其他" in selectedChars, colors)
+            pill.setOnClickListener {
+                if ("其他" in selectedChars) selectedChars.remove("其他") else selectedChars.add("其他")
                 onPillClick()
             }
             flowLayout.addView(pill)

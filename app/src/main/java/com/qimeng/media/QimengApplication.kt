@@ -61,10 +61,20 @@ class QimengApplication : Application() {
             context = this,
             repository = appContainer.localMediaRepository,
             mediaStoreScanner = appContainer.mediaStoreScanner,
+            // v1.x：空查询时走 SAF 复核，避免 MediaStore 不可见目录被误判为清空整源误删
+            safMediaScanner = appContainer.mediaScanner,
             scope = applicationScope,
             // v1.16：增量刷新产生新增/更新文件时同步预生成缩略图，填充本地 WebP 缓存
             //（视频无本地缓存时滚动中只有 Coil 首帧内存缓存，本地文件缓存靠此处 + 启动预生成填充）
             onFilesChanged = { changedFiles ->
+                // v1.x：增量新增/更新文件后先重匹配已有 TXT 导入，让新文件也能被关联到作者。
+                // 注意本回调被 MediaStoreObserver 内 runCatching 整体包裹——这里单独 try-catch
+                // 保证 rematch 失败不会中断后续缩略图预生成（与 ScanUseCase 中 rematch 模式一致）
+                try {
+                    appContainer.authorImportUseCase.rematchAllTxtImports(appContainer.scanUseCase)
+                } catch (e: Exception) {
+                    AppLog.d("AutoRefresh", "onFilesChanged rematchAllTxtImports failed: ${e.message}")
+                }
                 appContainer.thumbnailUseCase.pregenerateThumbnails(changedFiles, applicationScope)
             }
         )

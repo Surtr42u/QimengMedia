@@ -10,6 +10,7 @@ import com.qimeng.media.data.repository.LocalMediaRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 自动同步 UseCase：负责在数据变化时自动写入备份目录的单文件全量 JSON（qimeng_backup.json）。
@@ -30,8 +31,11 @@ class AutoSyncUseCase(
     private val application: Application,
     private val database: AppDatabase
 ) {
-    private var lastAutoSyncTime = 0L
-    private var lastFullSyncTime = 0L
+    // v1.x：AtomicLong 保证多协程并发下防抖判断的原子性——旧实现为普通 Long，
+    // 「检查 now - lastAutoSyncTime 是否过防抖期 → 更新 lastAutoSyncTime」两步分离，
+    // 多个协程可同时通过检查触发两次 performSync；用 get()/compareAndSet 原子更新防抖时间
+    private val lastAutoSyncTime = AtomicLong(0L)
+    private val lastFullSyncTime = AtomicLong(0L)
 
     /**
      * "建议恢复"信号：空库时自动同步/手动同步被拦截后置 true，UI 据此显示提示。
@@ -45,29 +49,33 @@ class AutoSyncUseCase(
     /** 数据变化后触发：写单文件全量备份，30 秒防抖 */
     suspend fun triggerAutoSyncIfNeeded() {
         val now = System.currentTimeMillis()
-        if (now - lastAutoSyncTime < AUTO_SYNC_DEBOUNCE_MS) return
+        // v1.x：先读当前防抖时间，仍在防抖期内则直接返回，不触发同步
+        if (now - lastAutoSyncTime.get() < AUTO_SYNC_DEBOUNCE_MS) return
 
         val appPrefs = appPrefsManager.prefs.value
         if (!appPrefs.autoSync) return
 
-        lastAutoSyncTime = now
+        // v1.x：compareAndSet 原子更新防抖时间——失败说明其他协程已抢先触发（时间已推进），
+        // 本协程不再重复执行 performSync，避免并发重复写盘
+        if (!lastAutoSyncTime.compareAndSet(lastAutoSyncTime.get(), now)) return
         performSync("自动同步")
     }
 
     /** App 进入后台触发：写单文件全量备份，60 秒防抖 */
     suspend fun triggerFullSync() {
         val now = System.currentTimeMillis()
-        if (now - lastFullSyncTime < FULL_SYNC_DEBOUNCE_MS) return
+        if (now - lastFullSyncTime.get() < FULL_SYNC_DEBOUNCE_MS) return
 
-        lastFullSyncTime = now
-        lastAutoSyncTime = now
+        // v1.x：原子更新两处防抖时间（compareAndSet 失败说明已有并发触发，直接返回不重复执行）
+        if (!lastFullSyncTime.compareAndSet(lastFullSyncTime.get(), now)) return
+        lastAutoSyncTime.set(now)
         performSync("全量同步（后台触发）")
     }
 
     /** 手动同步：无视防抖，立即写单文件全量备份，返回是否成功 */
     suspend fun triggerManualSync(): Boolean {
-        lastFullSyncTime = System.currentTimeMillis()
-        lastAutoSyncTime = System.currentTimeMillis()
+        lastFullSyncTime.set(System.currentTimeMillis())
+        lastAutoSyncTime.set(System.currentTimeMillis())
         return performSync("手动同步")
     }
 

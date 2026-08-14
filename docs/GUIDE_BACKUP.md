@@ -75,7 +75,7 @@
 - 重复作者 ID 时合并关联文件。
 - 统计数据按 recordKey 合并，数值钳制非负。
 - **标签合并**：导入忽略备份 tagId、按 name `INSERT OR IGNORE` 去重后查回本地真实 tagId 建关联，避免 autoGenerate id 撞号导致标签及关联静默丢失（v1.15：恢复计数按 insert 返回值过滤 IGNORE 冲突，重复恢复不再虚增 count）。
-- **收藏合并**：收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏；同时清理备份中已不存在的陈旧点赞键（`like_count_*`/`like_date_*`）。
+- **收藏合并**：收藏改为「本地 ∪ 备份」合并，空 favorites 备份不再清空本地已有收藏。
 - **点赞合并（v1.15）**：点赞恢复改「本地 ∪ 备份」并集合并（与收藏语义一致）——只导入备份中存在的新键，本地独有但备份中没有的点赞保留，不再静默删除（旧实现凡不在备份中的本地点赞键一律 remove）。
 - **专辑规则（v1.15）**：导出改为全部规则（含 `enabled=0` 禁用规则），恢复按备份 enabled 值还原——旧实现只导出启用规则，禁用规则恢复后永久丢失。
 - **时间轴标签去重**：导入前按 `(recordKey, timeMillis, name)` 查重（`TimelineTagDao.findExisting`），已存在则跳过——主键 autoGenerate 使 `@Upsert` 无法去重。

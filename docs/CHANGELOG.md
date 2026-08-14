@@ -10,6 +10,48 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 全项目深度巡检：扫描/数据/UI 跨功能联动修复（v1.16，2026-08-14）
+
+执行 AI：deepseek-v4-flash（主 AI）+ 4 片 researcher + 3 片 executor + 2 轮 reviewer 对抗审查
+
+用户要求深度查询可能出现的 bug 和跨功能联动导致的 bug，确保项目问题基本全部解决、逻辑一致、安全、代码规范。四片并行只读巡检（数据+备份/扫描+UseCase+核心/浏览筛选 UI 系/详情统计我的）后按方案基线修复，reviewer 两轮闭环（首轮发现 ThumbnailUseCase 取消路径缺陷，复审发现 observer 注册遗漏，均返工修复）。
+
+| 类别 | 改动 |
+|---|---|
+| 高危·扫描误删 | `MediaStoreObserver` 空查询先走 SAF `scanTreeFast` 复核：MediaStore 对 `.nomedia`/Android 16 非标准目录恒查不到，空结果原逻辑整源删除（连带 stats/history/tags/作者关联）；SAF 复核有文件则以 SAF 结果为准，SAF 也为空才清理残留。`QimengApplication` 注入 `appContainer.mediaScanner` |
+| 高危·SQLite 上限 | `MediaStoreObserver` 增量 upsert 分块 500；`rebuildAuthorAssociations` authors 分块 300（3 列）、crossRefs 分块 200（4 列）、`deleteCrossRefsByAuthorIds` 分块 500——规避旧设备 999 绑定参数上限（DELETE IN 单列 500 模式对多列 upsert 不成立，按 列数×条数<999 计算） |
+| 高危·备份导入 | `BackupManager` 导入 authors/authorMediaRefs 分块 300/200；history 导入后 `pruneToLimit(500)` 对齐历史上限（导出上限 1000 维持不变） |
+| 中危·预生成竞态 | `ThumbnailUseCase.isPregenerating` @Volatile 改 AtomicBoolean + compareAndSet 原子入队/启动；finally 处理队列 CAS 保护（失败放回队尾）；**取消路径修复**：CAS 成功后 withContext(Main) 抛 CancellationException 时复位标记并放回 next，杜绝任务丢失 + 标记永久卡 true |
+| 中危·COS 刷新 | `refreshCosSource` 同名覆盖/重编码文件用 `hasScanMetadataChanged` 判定更新，对齐 `refreshScanSource`（修复元数据永久陈旧） |
+| 中危·启动清理 | `cleanupStaleRefs` 三处全实体加载改轻量投影（新增 ViewStats/ViewHistory/TimelineTag DAO `getAllRecordKeys` + Repository 3 方法） |
+| 中危·偏好锁 | `AppPrefsManager.importFromJson` 包 `synchronized(lock)`，与 setter 锁一致防并发丢更新 |
+| 中危·自动同步 | `AutoSyncUseCase` 防抖时间戳改 AtomicLong + CAS，多协程并发只触发一次 |
+| 中危·详情页统计 | `MediaDetailFragment` viewCount 会话级去重（`viewedRecordKeys`，仿 playedRecordKeys，横滑切回不重复计数）；`startVideoPlayback` 幂等防双击重置；点赞/收藏写入即 `triggerAutoSyncIfNeeded` |
+| 中危·首页刷新 | `HomeFragment` fingerprint 追加 likeVersion/statsVersion（点赞监听器与 stats 变化驱动重排），修复详情页点赞/浏览后返回首页排行推荐不刷新 |
+| 联动·收藏/关注 | `FavoriteFragment` 监听 KEY_FAVORITES 自动刷新（详情页切换收藏返回即更新）；`AuthorListFragment` 监听 followed_authors 自动刷新 |
+| 联动·列表 | 全部/收藏/历史/作者文件页 submit 改 Async 变体（分组移出主线程）；`AllFilesFragment` 指纹补 stats/tags 维度 |
+| 联动·相册 | `AlbumFragment` COS 分组补「其他」桶（无作者关联的 COS 文件不再不可见）；`AlbumDetailFragment` 切模式默认展开药丸；`MediaPillsHelper` COS 作品药丸「其他」排列表末尾 |
+| 联动·统计/图表 | `DataStatsFragment.renderOverviewExtra` 序号防重（快速切范围旧协程不覆盖新结果）；`LineChartView` ACTION_DOWN 决策——命中数据点消费、空白放行父容器滚动 |
+| 联动·列数持久化 | `PinchZoomHelper` onScaleEnd 回调 + Home/AllFiles/AlbumDetail/BrowseHistory/AuthorFiles/Favorite 六页读写 `AppPrefsManager.updateGridColumns*`（重启不再丢列数，备份 JSON 不再写死默认值） |
+| ViewModel 健壮性 | init 两协程 try-catch；`loadMedia` 纯加载方法（`loadAndRecordView` 复用）；autoRefreshAllSources 恢复 GUIDE_SCAN 设计语义（不设 Running、静默不阻塞手动扫描，observer 注册必达） |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（153 tests，0 failures）通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `scan/MediaStoreObserver.kt` | SAF 空查询复核 + upsert 分块 500 |
+| `domain/ThumbnailUseCase.kt` | AtomicBoolean/CAS/取消路径复位放回 |
+| `domain/ScanUseCase.kt` | refreshCosSource 元数据更新 + cleanupStaleRefs 轻量投影 |
+| `domain/AutoSyncUseCase.kt` | 防抖 AtomicLong |
+| `ui/library/MediaLibraryViewModel.kt` | init try-catch + loadMedia + autoRefresh 语义恢复 |
+| `QimengApplication.kt` | 注入 SafMediaScanner + onFilesChanged 回调 rematch |
+| `data/db/dao/{ViewStats,ViewHistory,TimelineTag}Dao.kt` | 新增 getAllRecordKeys 轻量投影 |
+| `data/repository/{LocalMediaRepository,DefaultLocalMediaRepository}.kt` | 3 轻量方法 + rebuildAuthorAssociations 分块 |
+| `backup/BackupManager.kt` | 导入分块 + history 裁剪 |
+| `data/prefs/AppPrefsManager.kt` | importFromJson 加锁 |
+| `ui/detail/MediaDetailFragment.kt` / `ui/main/HomeFragment.kt` / `ui/favorite/FavoriteFragment.kt` / `ui/author/AuthorListFragment.kt` / `ui/album/{AlbumFragment,AlbumDetailFragment}.kt` / `ui/browser/MediaPillsHelper.kt` / `ui/all/AllFilesFragment.kt` / `ui/history/BrowseHistoryFragment.kt` / `ui/author/AuthorFilesFragment.kt` / `ui/stats/DataStatsFragment.kt` / `ui/widget/{LineChartView,PinchZoomHelper}.kt` | UI 联动修复（见上表） |
+| `docs/GUIDE_SCAN.md` / `GUIDE_DATA.md` / `GUIDE_BACKUP.md` / `GUIDE_UI.md` / `GUIDE_ALGORITHM.md` / `GUIDE_CODE_MAINTENANCE.md` / `DATA_MIGRATION_SPEC.md` / `PROJECT_GUIDE.md` / `CHANGELOG.md` | 文档同步（含陈旧描述修正：点赞并集语义/历史 500 条/URI 精确匹配/dailyPenalty 递增/updateTxtWorks 移除/itemViewCacheSize=20/点击空白收起功能移除/行数备案） |
+
 ## 缩略图缓存收尾：增量预生成 + 死代码清理 + 键逻辑单测化（v1.16，2026-08-14）
 
 执行 AI：deepseek-v4-flash

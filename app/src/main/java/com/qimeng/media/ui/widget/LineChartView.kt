@@ -517,25 +517,22 @@ class LineChartView @JvmOverloads constructor(
     /**
      * 处理点击：找到距离触摸点最近的数据点（48dp 阈值内），高亮并显示数值气泡。
      * 点击空白处取消选中。动画进行中不响应点击。
+     *
+     * v1.15 交互语义调整：图表区域约占 240dp，原 onTouchEvent 恒返回 true 会吞掉
+     * 所有触摸，导致图表区域内无法滚动外层 NestedScrollView/ScrollView。
+     * 改为 ACTION_DOWN 决策：命中数据点（48dp 阈值内）则消费事件并保持原有
+     * 高亮/气泡逻辑（UP 时生效）；未命中数据点立即返回 false 放行父容器滚动
+     * （DOWN 返回 false 后后续事件不再到达本 view，因此必须在 DOWN 决策）。
      */
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_DOWN) {
+            // 动画进行中不响应点击，未命中数据点时放行父容器滚动
+            val hit = pointCoords.isNotEmpty() && animatedProgress >= 0.95f &&
+                hitIndexAt(event.x, event.y) >= 0
+            return hit
+        }
         if (event.action == MotionEvent.ACTION_UP && pointCoords.isNotEmpty() && animatedProgress >= 0.95f) {
-            val touchX = event.x
-            val touchY = event.y
-            var minDist = Float.MAX_VALUE
-            var minIdx = -1
-            pointCoords.forEachIndexed { idx, entry ->
-                val dx = touchX - entry.x
-                val dy = touchY - entry.y
-                val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-                if (dist < minDist) {
-                    minDist = dist
-                    minIdx = idx
-                }
-            }
-            // 48dp 命中阈值，方便手指点击
-            val threshold = 48f.dp(context)
-            val newSelected = if (minDist < threshold) minIdx else -1
+            val newSelected = hitIndexAt(event.x, event.y)
             if (newSelected != selectedIndex) {
                 selectedIndex = newSelected
                 invalidate()
@@ -545,6 +542,24 @@ class LineChartView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /** 返回距离触摸点最近的数据点下标（48dp 命中阈值内），未命中返回 -1 */
+    private fun hitIndexAt(touchX: Float, touchY: Float): Int {
+        var minDist = Float.MAX_VALUE
+        var minIdx = -1
+        pointCoords.forEachIndexed { idx, entry ->
+            val dx = touchX - entry.x
+            val dy = touchY - entry.y
+            val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+            if (dist < minDist) {
+                minDist = dist
+                minIdx = idx
+            }
+        }
+        // 48dp 命中阈值，方便手指点击
+        val threshold = 48f.dp(context)
+        return if (minDist < threshold) minIdx else -1
     }
 
     override fun onDetachedFromWindow() {

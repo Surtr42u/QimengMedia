@@ -79,11 +79,25 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     init {
         // 启动时清理孤立文件（扫描源已删除但文件仍残留）
         viewModelScope.launch(Dispatchers.IO) {
-            scanUseCase.cleanupOrphanFiles()
+            try {
+                scanUseCase.cleanupOrphanFiles()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // v1.x：取消异常透传，不吞
+            } catch (e: Exception) {
+                AppLog.e("VM", "cleanupOrphanFiles failed", e)
+            }
         }
         // 启动时一次性重建作者关联（修复升级前遗留的跨TXT同名作者关联被覆盖的脏数据，仅首次启动执行）
+        // 注：rebuildAssociationsOnceIfNeeded 内部已捕获重建失败异常（失败不置 flag 下次启动重试），
+        // 外层 try-catch 仅兜底外部不可预期异常
         viewModelScope.launch(Dispatchers.IO) {
-            authorImportUseCase.rebuildAssociationsOnceIfNeeded(scanUseCase)
+            try {
+                authorImportUseCase.rebuildAssociationsOnceIfNeeded(scanUseCase)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // v1.x：取消异常透传，不吞
+            } catch (e: Exception) {
+                AppLog.e("VM", "rebuildAssociationsOnceIfNeeded failed", e)
+            }
         }
         // 启动时从数据库预加载已有文件的缩略图到本地缓存
         viewModelScope.launch(Dispatchers.IO) {
@@ -214,25 +228,32 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 
     fun autoRefreshAllSources() {
         viewModelScope.launch(Dispatchers.IO) {
-            val autoRefreshMedia = scanUseCase.autoRefreshAllSources()
-
-            // 注册 MediaStoreObserver 监听后续变化
+            // 按 GUIDE_SCAN 防重入设计：自动刷新是后台静默操作，不设置 ScanStatus.Running，
+            // 不阻塞用户手动扫描（手动扫描入口的 Running 检查互不干扰）。
+            // 并发防护由 ScanUseCase.autoRefreshAllSources 内部 isAutoRefreshing 承担。
             try {
-                val app = getApplication<QimengApplication>()
-                val allSources = repository.getScanSources()
-                val sources = allSources.filter { !it.isBackupDirectory && !it.isCosDirectory }
-                app.mediaStoreObserver.register(sources)
-            } catch (e: Exception) { com.qimeng.media.core.AppLog.d("VM", "MediaStoreObserver register failed: ${e.message}") }
+                val autoRefreshMedia = scanUseCase.autoRefreshAllSources()
 
-            // 自动刷新完成后预生成缩略图到本地缓存
-            if (autoRefreshMedia.isNotEmpty()) {
-                thumbnailUseCase.pregenerateThumbnails(autoRefreshMedia, viewModelScope)
+                // 注册 MediaStoreObserver 监听后续变化
+                try {
+                    val app = getApplication<QimengApplication>()
+                    val allSources = repository.getScanSources()
+                    val sources = allSources.filter { !it.isBackupDirectory && !it.isCosDirectory }
+                    app.mediaStoreObserver.register(sources)
+                } catch (e: Exception) { com.qimeng.media.core.AppLog.d("VM", "MediaStoreObserver register failed: ${e.message}") }
+
+                // 自动刷新完成后预生成缩略图到本地缓存
+                if (autoRefreshMedia.isNotEmpty()) {
+                    thumbnailUseCase.pregenerateThumbnails(autoRefreshMedia, viewModelScope)
+                }
+
+                // 自动刷新可能有新增/删除文件或作者关联变化，触发备份自动同步
+                // （v1.13：补齐启动同步；triggerAutoSyncIfNeeded 内置 30 秒防抖 + autoSync 开关前置，
+                // 不会因 App 内频繁操作反复写盘）
+                autoSyncUseCase.triggerAutoSyncIfNeeded()
+            } catch (e: Exception) {
+                com.qimeng.media.core.AppLog.e("VM", "autoRefreshAllSources failed: ${e.message}", e)
             }
-
-            // 自动刷新可能有新增/删除文件或作者关联变化，触发备份自动同步
-            // （v1.13：补齐启动同步；triggerAutoSyncIfNeeded 内置 30 秒防抖 + autoSync 开关前置，
-            // 不会因 App 内频繁操作反复写盘）
-            autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
@@ -327,15 +348,36 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 
     // ===== 统计记录（保留在 ViewModel）=====
 
+    /**
+     * 纯加载指定媒体实体（不触发 recordView）。
+     *
+     * 与 [loadAndRecordView] 的关系：本方法是其「加载」部分的提取，供详情页 viewCount
+     * 会话级去重用（只查实体、回主线程回调，不写浏览统计）；[loadAndRecordView] 复用
+     * [loadMediaInternal] 的加载逻辑后额外执行 recordView，对外行为不变（加载 + 记录）。
+     * @param recordKey 媒体主键
+     * @param onLoaded 主线程回调，查询结果（不存在时为 null）
+     */
+    fun loadMedia(recordKey: String, onLoaded: (MediaFileEntity?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val media = loadMediaInternal(recordKey)
+            withContext(Dispatchers.Main) { onLoaded(media) }
+        }
+    }
+
     fun loadAndRecordView(recordKey: String, onLoaded: (MediaFileEntity?) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
-            val media = repository.getMediaByKey(recordKey)
+            // v1.x：复用 loadMedia 的纯加载逻辑（见 [loadMedia] 注释），加载完成后再记录浏览
+            val media = loadMediaInternal(recordKey)
             if (media != null) {
                 repository.recordView(recordKey, media.fileName)
             }
             withContext(Dispatchers.Main) { onLoaded(media) }
         }
     }
+
+    /** 纯加载媒体实体（[loadMedia]/[loadAndRecordView] 共用的加载部分，不触发 recordView） */
+    private suspend fun loadMediaInternal(recordKey: String): MediaFileEntity? =
+        repository.getMediaByKey(recordKey)
 
     /** v1.14：视频真正开始播放时记一次播放（修复 playCount 从无写入点的问题） */
     fun recordPlay(recordKey: String, fileName: String) {

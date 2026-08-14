@@ -46,6 +46,16 @@ class AuthorListFragment : Fragment() {
     private var sortMode = SORT_DEFAULT
     private var filterMode = FILTER_ALL
     private var searchQuery = ""
+
+    // v1.15：关注变化监听——「特别关注」排序读取 followed_authors SharedPreferences，
+    // 详情页快速转跳弹窗切换关注后本页无 SP 监听不刷新；监听 key 变化强制重渲染
+    private val followPrefsListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_FOLLOWED_AUTHORS) {
+                lastRenderHash = ""
+                renderAuthors()
+            }
+        }
     private var cachedAuthors = emptyList<AuthorEntity>()
     private var cachedFileCounts = emptyList<AuthorFileCount>()
     private var cachedStats = emptyList<ViewStatsEntity>()
@@ -99,6 +109,10 @@ class AuthorListFragment : Fragment() {
 
         setFilterMode(FILTER_ALL)
         observeData()
+        // v1.15：注册关注监听，详情页切换关注后返回本页自动刷新「特别关注」列表
+        // （prefs 名与 key 对齐 MediaLibraryViewModel 的 PREFS_AUTHOR_FOLLOW/KEY_FOLLOWED_AUTHORS）
+        requireContext().getSharedPreferences(AUTHOR_FOLLOW_PREFS, Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(followPrefsListener)
     }
 
     private fun observeData() {
@@ -372,10 +386,18 @@ class AuthorListFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // v1.15：注销关注监听，避免泄漏
+        requireContext().getSharedPreferences(AUTHOR_FOLLOW_PREFS, Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(followPrefsListener)
         _binding = null
     }
 
     companion object {
+        /** 关注数据 SharedPreferences 文件名（与 MediaLibraryViewModel.PREFS_AUTHOR_FOLLOW 一致） */
+        private const val AUTHOR_FOLLOW_PREFS = "author_follow_prefs"
+        /** 关注作者集合 key（与 MediaLibraryViewModel.KEY_FOLLOWED_AUTHORS 一致） */
+        private const val KEY_FOLLOWED_AUTHORS = "followed_authors"
+
         const val SORT_DEFAULT = "default"
         const val SORT_FREQUENT = "frequent"
         const val SORT_FILE_COUNT = "file_count"

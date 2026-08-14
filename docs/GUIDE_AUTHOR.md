@@ -83,6 +83,7 @@
   - 经常浏览：按7天内浏览次数降序（viewCount+playCount，仅统计 lastOpenedAtMillis 在7天内的文件）
   - 浏览次数：按作者所有文件的 viewCount+playCount 总和降序
   - 文件数量：按关联文件数降序
+- **特别关注模式自动刷新（v1.15）**：注册 `author_follow_prefs` 的 `OnSharedPreferenceChangeListener`，`followed_authors` key 变化时（详情页快速转跳弹窗切换关注）强制重渲染列表，`onDestroyView` 注销监听
 
 ## 作者文件浏览页
 
@@ -378,4 +379,4 @@ COS根目录/
 - `docs/GUIDE_DATA.md`
 - `docs/GUIDE_BACKUP.md`
 
-> 最后更新：2026-08-09
+> 最后更新：2026-08-14（v1.15 巡检：特别关注模式监听关注变化自动刷新）

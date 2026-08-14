@@ -225,9 +225,9 @@
 | 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
-| `MediaDetailFragment` | 1371 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，新增播放计数会话级集合/弹窗防重/时间轴暂停等逻辑，未跨档） |
+| `MediaDetailFragment` | 1402 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，二次巡检新增 viewCount 会话级去重/播放幂等/同步触发后 1371→1402，未跨档） |
 | `ProfileFragment` | 259 行 | 绿色 | v1.13 数据管理/数据备份迁移至独立页面（DataManagementFragment/DataBackupFragment）后大幅瘦身；保留推荐偏好/兼容性检查弹层编排 |
-| `StatsDetailFragment` | 823 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染 |
+| `StatsDetailFragment` | 931 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染（备案行数 823 滞后于实际 931，2026-08-14 巡检同步） |
 | `BiliPlayerView` | 834 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度（v1.15 修复手势轮询竞争/倍速恢复/listener 对称后 819→834） |
 | `MediaLibraryViewModel` | 37 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
@@ -235,7 +235,7 @@
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
-| `BackupManager` | 684 行 | 黄色（类总行数） | 备份管理天然多方法：17 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 13 个数据段保持单方法（拆分会破坏事务原子性）（v1.15 备份加固 .bak 暂存/写侧上限/schemaVersion 校验后 627→684） |
+| `BackupManager` | 689 行 | 黄色（类总行数） | 备份管理天然多方法：17 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 13 个数据段保持单方法（拆分会破坏事务原子性）（v1.15 备份加固 .bak 暂存/写侧上限/schemaVersion 校验后 627→684；二次巡检导入分块/历史裁剪后 684→689） |
 | `SourceGroupsData` | 1674 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 历史审查与重构记录

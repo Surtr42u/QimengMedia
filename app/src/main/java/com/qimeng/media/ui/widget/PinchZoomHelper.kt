@@ -24,6 +24,7 @@ object PinchZoomHelper {
      * @param recyclerView 目标 RecyclerView
      * @param minCols 最小列数（默认 MIN_COLUMNS）
      * @param maxCols 最大列数（默认 MAX_COLUMNS）
+     * @param onColumnsChanged 缩放结束后的列数回调（v1.15：用于把新列数持久化到 AppPrefsManager）
      * @return 创建的 ScaleGestureDetector
      */
     fun setup(
@@ -32,7 +33,8 @@ object PinchZoomHelper {
         layoutManager: GridLayoutManager,
         recyclerView: android.view.View,
         minCols: Int = MIN_COLUMNS,
-        maxCols: Int = MAX_COLUMNS
+        maxCols: Int = MAX_COLUMNS,
+        onColumnsChanged: ((Int) -> Unit)? = null
     ): ScaleGestureDetector {
         var pinchStartSpan = 0f
         var pinchBaseCols = columns.value
@@ -62,6 +64,8 @@ object PinchZoomHelper {
             override fun onScaleEnd(detector: ScaleGestureDetector) {
                 columns.value = pinchCurrentCols
                 columns.baseValue = pinchCurrentCols
+                // v1.15：双指缩放结束时把新列数持久化（AppPrefsManager 写入），重启后保留
+                onColumnsChanged?.invoke(pinchCurrentCols)
             }
         })
 

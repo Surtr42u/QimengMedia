@@ -69,6 +69,12 @@ class FavoriteFragment : Fragment() {
     private var cachedTags = emptyList<MediaTagName>()
     private var cachedAllTags = emptyList<TagEntity>()
     private val columnsRef = ColumnsRef(DEFAULT_COLUMNS)
+
+    // v1.15：App 偏好管理器（列数持久化用）——从 AppContainer 获取，允许为 null
+    private val appPrefsManager: com.qimeng.media.data.prefs.AppPrefsManager?
+        get() = (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager
+
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
 
@@ -80,6 +86,14 @@ class FavoriteFragment : Fragment() {
     }
 
     private var scrollListener: ViewTreeObserver.OnScrollChangedListener? = null
+
+    // v1.15：收藏变化监听——详情页 toggleFavorite 只写 SharedPreferences，本页 combine 不含
+    // 收藏键数据源，从详情页返回时 repeatOnLifecycle 不重新收集，列表不刷新；
+    // 监听 KEY_FAVORITES 变化主动重读收藏并重渲染
+    private val favPrefsListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_FAVORITES) refreshFavoriteData()
+        }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -95,6 +109,9 @@ class FavoriteFragment : Fragment() {
             refreshFavoriteData()
             binding.favoriteSwipeRefresh.isRefreshing = false
         }
+        // v1.15：注册收藏键监听，详情页切换收藏后返回本页自动刷新
+        requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(favPrefsListener)
         scrollListener = ViewTreeObserver.OnScrollChangedListener {
             _binding?.let { binding ->
                 binding.favoriteSwipeRefresh.isEnabled = !binding.favoritePillsScroller.canScrollVertically(-1)
@@ -108,6 +125,10 @@ class FavoriteFragment : Fragment() {
     }
 
     private fun setupRecycler() {
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        val savedColumns = appPrefsManager?.prefs?.value?.gridColumnsAll ?: DEFAULT_COLUMNS
+        columnsRef.value = savedColumns
+        columnsRef.baseValue = savedColumns
         gridLayoutManager = PinchZoomHelper.createGridLayoutManager(requireContext(), columnsRef.value, adapter)
         binding.favoriteRecycler.layoutManager = gridLayoutManager
         binding.favoriteRecycler.adapter = adapter
@@ -117,8 +138,9 @@ class FavoriteFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        // v1.12：双指缩放列数（与全部页/历史页一致）
-        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.favoriteRecycler)
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.favoriteRecycler,
+            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
     }
 
     private fun setupChips() {
@@ -317,13 +339,14 @@ class FavoriteFragment : Fragment() {
         )
         if (renderHash != lastRenderHash) {
             lastRenderHash = renderHash
+            // v1.15：改用 Async 变体——分组行组装与指纹计算移入 Default 线程，大库下主线程不再卡顿
             when {
                 viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, charGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, charGroups, viewLifecycleOwner.lifecycleScope)
                 viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, sourceGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, sourceGroups, viewLifecycleOwner.lifecycleScope)
                 else ->
-                    adapter.submitMedia(displayed)
+                    adapter.submitMediaAsync(displayed, viewLifecycleOwner.lifecycleScope)
             }
         }
 
@@ -573,6 +596,9 @@ class FavoriteFragment : Fragment() {
         super.onDestroyView()
         scrollListener?.let { _binding?.favoritePillsScroller?.viewTreeObserver?.removeOnScrollChangedListener(it) }
         scrollListener = null
+        // v1.15：注销收藏键监听，避免泄漏
+        requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(favPrefsListener)
         _binding = null
     }
 

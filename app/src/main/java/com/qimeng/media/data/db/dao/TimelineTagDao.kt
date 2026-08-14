@@ -30,4 +30,8 @@ interface TimelineTagDao {
 
     @Query("SELECT * FROM timeline_tags ORDER BY recordKey, timeMillis ASC")
     suspend fun getAll(): List<TimelineTagEntity>
+
+    /** v1.15 巡检：轻量投影，仅取去重后的全部 recordKey（供 cleanupStaleRefs 比对残留，避免全量加载实体） */
+    @Query("SELECT DISTINCT recordKey FROM timeline_tags")
+    suspend fun getAllRecordKeys(): List<String>
 }

@@ -127,15 +127,19 @@ class AppPrefsManager(context: Context) {
     }
 
     fun importFromJson(json: String): Boolean {
-        return try {
-            val obj = JSONObject(json)
-            val imported = prefsFromJson(obj)
-            _prefs.value = imported
-            saveToDisk(imported)
-            true
-        } catch (e: Exception) {
-            com.qimeng.media.core.AppLog.d("Prefs", "importFromJson failed: ${e.message}")
-            false
+        // v1.15 巡检：与各 setter 共用同一把锁（锁设计一致）。读-改-写（_prefs.value + saveToDisk）
+        // 不进锁会与并发 setter 的写盘竞争，导致一方覆盖另一方刚写入的偏好、丢更新。
+        return synchronized(lock) {
+            try {
+                val obj = JSONObject(json)
+                val imported = prefsFromJson(obj)
+                _prefs.value = imported
+                saveToDisk(imported)
+                true
+            } catch (e: Exception) {
+                com.qimeng.media.core.AppLog.d("Prefs", "importFromJson failed: ${e.message}")
+                false
+            }
         }
     }
 

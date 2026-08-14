@@ -51,6 +51,12 @@ class AlbumDetailFragment : Fragment() {
     private var filterState = MediaFilterState()
     private var filterType: String? = null
     private val columnsRef = ColumnsRef(DEFAULT_COLUMNS)
+
+    // v1.15：App 偏好管理器（列数持久化用）——从 AppContainer 获取，允许为 null
+    private val appPrefsManager: com.qimeng.media.data.prefs.AppPrefsManager?
+        get() = (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager
+
     private var viewMode = VIEW_MODE_CHARACTER
     private var selectedChars = mutableSetOf<String>()
     private var charPillsExpanded = false
@@ -101,6 +107,10 @@ class AlbumDetailFragment : Fragment() {
     }
 
     private fun setupRecycler() {
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        val savedColumns = appPrefsManager?.prefs?.value?.gridColumnsAlbum ?: DEFAULT_COLUMNS
+        columnsRef.value = savedColumns
+        columnsRef.baseValue = savedColumns
         gridLayoutManager = PinchZoomHelper.createGridLayoutManager(requireContext(), columnsRef.value, adapter)
         binding.albumDetailRecycler.layoutManager = gridLayoutManager
         binding.albumDetailRecycler.adapter = adapter
@@ -110,7 +120,9 @@ class AlbumDetailFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.albumDetailRecycler)
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.albumDetailRecycler,
+            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAlbum(newCols) })
     }
 
     private fun setupChips() {
@@ -373,8 +385,10 @@ class AlbumDetailFragment : Fragment() {
         }
         viewMode = mode
         selectedChars.clear()
-        if (mode == VIEW_MODE_CHARACTER) charPillsExpanded = false
-        if (mode == VIEW_MODE_TYPE) typePillsExpanded = false
+        // v1.15：与其他页面对齐（GUIDE_UI「切换到新模式时默认展开」）——
+        // 原实现切到角色/类型时折叠药丸，改为切到新模式默认展开
+        if (mode == VIEW_MODE_CHARACTER) charPillsExpanded = true
+        if (mode == VIEW_MODE_TYPE) typePillsExpanded = true
         lastRenderedFingerprint = ""
         updateChipStyles()
         render()
@@ -384,6 +398,8 @@ class AlbumDetailFragment : Fragment() {
         columnsRef.value = next.coerceIn(PinchZoomHelper.MIN_COLUMNS, PinchZoomHelper.MAX_COLUMNS)
         gridLayoutManager.spanCount = columnsRef.value
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
+        // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
+        appPrefsManager?.updateGridColumnsAlbum(columnsRef.value)
         val iconRes = when (columnsRef.value) {
             2 -> R.drawable.ic_grid_2
             3 -> R.drawable.ic_grid_3

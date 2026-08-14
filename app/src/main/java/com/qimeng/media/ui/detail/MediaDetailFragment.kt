@@ -100,6 +100,11 @@ class MediaDetailFragment : Fragment() {
     // 会重复计播放；改为集合后同一会话内每个视频只计一次，退出详情时清空。
     private val playedRecordKeys = mutableSetOf<String>()
 
+    // v1.15：同一次详情打开的"已计浏览"文件集合（会话级）。
+    // 仿 playedRecordKeys 为 viewCount 做去重——showMediaAt 每次横滑切换都会触发
+    // loadAndRecordView，滑走滑回会重复 +1；改为集合后同一会话内每个文件只计一次浏览。
+    private val viewedRecordKeys = mutableSetOf<String>()
+
     /** v1.15：详细信息弹窗是否已展示（防重复弹窗，dismiss 时复位） */
     private var infoSheetShowing = false
     private var chromeVisible = true
@@ -395,7 +400,14 @@ class MediaDetailFragment : Fragment() {
         updateLikeButton()
         updateFavoriteButton()
         observeTimelineTags(media.recordKey)
-        viewModel.loadAndRecordView(media.recordKey) { }
+        // v1.15：viewCount 会话级去重——同一次详情打开每个文件只计一次浏览，
+        // 首次浏览走 loadAndRecordView（记一次 viewCount），重复浏览（滑走滑回）只纯加载不计数
+        val onMediaLoaded: (MediaFileEntity?) -> Unit = { }
+        if (viewedRecordKeys.add(media.recordKey)) {
+            viewModel.loadAndRecordView(media.recordKey, onMediaLoaded)
+        } else {
+            viewModel.loadMedia(media.recordKey, onMediaLoaded)
+        }
 
         when (media.mediaType) {
             MediaType.IMAGE, MediaType.ANIMATED_IMAGE -> showImage(media)
@@ -583,6 +595,9 @@ class MediaDetailFragment : Fragment() {
 
     private fun startVideoPlayback(player: BiliPlayerView) {
         val media = currentMedia ?: return
+        // v1.15：幂等保护——播放中再次点击（双击/快速重点播放）直接返回，
+        // 防止重复 setVideoUri 重建 MediaItem + prepare 导致播放被重置
+        if (isVideoPlaying) return
         isVideoPlaying = true
         binding.detailImageView.isVisible = false
         binding.detailVideoPlayer.isVisible = true
@@ -809,6 +824,8 @@ class MediaDetailFragment : Fragment() {
         prefs.edit {
             putInt(KEY_LIKE_COUNT_PREFIX + media.recordKey, currentCount + 1)
         }
+        // v1.15：点赞写入后触发自动同步，不再等退出详情页才落盘（与 toggleAuthorFollow 一致）
+        viewModel.triggerAutoSyncIfNeeded()
         updateLikeButton()
         Toast.makeText(requireContext(), "已点赞", Toast.LENGTH_SHORT).show()
     }
@@ -840,6 +857,8 @@ class MediaDetailFragment : Fragment() {
         }
         requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit { putStringSet(KEY_FAVORITES, favorites) }
+        // v1.15：收藏写入后触发自动同步，不再等退出详情页才落盘（与 toggleAuthorFollow 一致）
+        viewModel.triggerAutoSyncIfNeeded()
         updateFavoriteButton()
         Toast.makeText(requireContext(), if (added) "已收藏" else "已取消收藏", Toast.LENGTH_SHORT).show()
     }
@@ -1185,6 +1204,7 @@ class MediaDetailFragment : Fragment() {
         }
         updateCurrentDuration()
         playedRecordKeys.clear()
+        viewedRecordKeys.clear()  // v1.15：退出详情页时同步清空 viewCount 会话级去重集合
         restorePortraitOrientation()
         restoreMainWindow()
         syncSystemBars(true)

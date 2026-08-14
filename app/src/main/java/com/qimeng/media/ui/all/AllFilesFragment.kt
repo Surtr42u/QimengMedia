@@ -71,6 +71,12 @@ class AllFilesFragment : Fragment() {
     private var charGroupsKey = ""     // 缓存键：partition+filterType+selectedSources+dataVersion
     private var dataVersion = 0        // 数据变化时递增，用于判断分组是否需要重算
     private val columnsRef = ColumnsRef(DEFAULT_COLUMNS)
+
+    // v1.15：App 偏好管理器（列数持久化用）——从 AppContainer 获取，允许为 null
+    private val appPrefsManager: com.qimeng.media.data.prefs.AppPrefsManager?
+        get() = (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager
+
     private var cachedMedia = emptyList<MediaFileEntity>()
     private var cachedCosMedia = emptyList<MediaFileEntity>()
     private var cachedCosWorks = emptyList<CosWorkEntity>()
@@ -110,6 +116,10 @@ class AllFilesFragment : Fragment() {
     }
 
     private fun setupRecycler() {
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        val savedColumns = appPrefsManager?.prefs?.value?.gridColumnsAll ?: DEFAULT_COLUMNS
+        columnsRef.value = savedColumns
+        columnsRef.baseValue = savedColumns
         gridLayoutManager = PinchZoomHelper.createGridLayoutManager(requireContext(), columnsRef.value, adapter)
         binding.allFilesRecycler.layoutManager = gridLayoutManager
         binding.allFilesRecycler.adapter = adapter
@@ -119,7 +129,9 @@ class AllFilesFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.allFilesRecycler)
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.allFilesRecycler,
+            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
     }
 
     private var scrollListener: ViewTreeObserver.OnScrollChangedListener? = null
@@ -207,7 +219,15 @@ class AllFilesFragment : Fragment() {
                     // 分区药丸点击回调（renderPartitionPills 内）仍通过 computeSourceGroups() 触发 render。
                     // v1.12：指纹纳入 COS 侧数据（cosMedia/cosWorks 的首条与数量）——旧指纹只含
                     // nonCosMedia，COS 文件新增/作品表变更时 fp 不变 → 全部页不自动重渲染
-                    val fp = "${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}|${cosMedia.size}|${cosMedia.firstOrNull()?.recordKey.orEmpty()}|${cosWorks.size}"
+                    // v1.15：对齐 AuthorFilesFragment 补 stats/tags 维度——标签增删/浏览统计变化后
+                    // （详情页点赞、浏览、标签管理）自动重渲染，不再依赖下拉刷新
+                    val fp = buildString {
+                        append("${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}|${cosMedia.size}|${cosMedia.firstOrNull()?.recordKey.orEmpty()}|${cosWorks.size}")
+                        append("|stats=")
+                        stats.forEach { append("${it.recordKey}:${it.viewCount + it.playCount},") }
+                        append("|tags=")
+                        tags.forEach { append("${it.recordKey}:${it.tagId},") }
+                    }
                     if (fp != mediaFingerprint || !observeStarted) {
                         mediaFingerprint = fp
                         observeStarted = true
@@ -222,6 +242,8 @@ class AllFilesFragment : Fragment() {
         columnsRef.value = next.coerceIn(PinchZoomHelper.MIN_COLUMNS, PinchZoomHelper.MAX_COLUMNS)
         gridLayoutManager.spanCount = columnsRef.value
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
+        // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
+        appPrefsManager?.updateGridColumnsAll(columnsRef.value)
         val iconRes = when (columnsRef.value) {
             2 -> R.drawable.ic_grid_2
             3 -> R.drawable.ic_grid_3
@@ -383,10 +405,11 @@ class AllFilesFragment : Fragment() {
         binding.allFilesSummaryText.text = "${filtered.size} $label · ${MediaBrowserLogic.formatSize(totalSize)}"
         if (fingerprint != lastRenderedFingerprint) {
             lastRenderedFingerprint = fingerprint
+            // v1.15：改用 Async 变体——分组行组装与指纹计算移入 Default 线程，大库下主线程不再卡顿
             when (viewMode) {
-                VIEW_MODE_CHARACTER -> if (selectedChars.isEmpty()) adapter.submitMediaWithGroups(filtered, charGroups) else adapter.submitMedia(filtered)
-                VIEW_MODE_SOURCE -> if (selectedSources.isEmpty()) adapter.submitMediaWithGroups(filtered, sourceGroups) else adapter.submitMedia(filtered)
-                else -> adapter.submitMedia(filtered)
+                VIEW_MODE_CHARACTER -> if (selectedChars.isEmpty()) adapter.submitMediaWithGroupsAsync(filtered, charGroups, viewLifecycleOwner.lifecycleScope) else adapter.submitMediaAsync(filtered, viewLifecycleOwner.lifecycleScope)
+                VIEW_MODE_SOURCE -> if (selectedSources.isEmpty()) adapter.submitMediaWithGroupsAsync(filtered, sourceGroups, viewLifecycleOwner.lifecycleScope) else adapter.submitMediaAsync(filtered, viewLifecycleOwner.lifecycleScope)
+                else -> adapter.submitMediaAsync(filtered, viewLifecycleOwner.lifecycleScope)
             }
         }
 

@@ -88,9 +88,9 @@
 | 点赞 (likeScore) | 0.05 | likeCount / 全库最大点赞数，归一化到 0~1 |
 | 浏览深度 (browseDepth) | 0.03 | totalBrowseSeconds / 全库最大浏览时长，归一化到 0~1 |
 | 随机扰动 (randomFactor) | 0~0.30 | 基于 seed 的确定性随机：`(recordKey.hashCode() xor seed).and(0xFFFF) / 65535 * maxRandom`，同 seed 可复现 |
-| 每日去重 (dailyPenalty) | 0 / -0.8 | 固定惩罚项，**不计入 0.95 固定权重**：该文件今日已被展示过则 -0.8f，未展示过 0f。由 `recommend()` 的 `dailyShownCountMap` 参数传入，让已展示文件排到后面、新文件排到前面。详见下方「每日推荐去重」 |
+| 每日去重 (dailyPenalty) | 0 / -0.8×n | 惩罚项，**不计入 0.95 固定权重**：该文件今日已被展示 n 次则 `-0.8f × n`（v1.12 起惩罚随展示次数递增，原实现恒 -0.8），未展示过 0f。由 `recommend()` 的 `dailyShownCountMap` 参数传入，让已展示文件排到后面、新文件排到前面。详见下方「每日推荐去重」 |
 
-**固定权重合计**：0.95（前 9 维），randomFactor 为额外加分（0~0.30 或自适应后 0~0.485），dailyPenalty 为惩罚项（0 / -0.8），三者共同构成 10 维最终评分。
+**固定权重合计**：0.95（前 9 维），randomFactor 为额外加分（0~0.30 或自适应后 0~0.485），dailyPenalty 为惩罚项（0 / -0.8×n），三者共同构成 10 维最终评分。
 
 ### 标签相关性详解
 
@@ -122,7 +122,7 @@
 
 `recommend()` 接收 `dailyShownCountMap` 参数（`Map<String, Int>`），对已出现过的文件施加惩罚：
 - 出现 0 次：无惩罚
-- 出现 1 次及以上：-0.8（强惩罚，让已展示文件排到后面，新文件排到前面）
+- 出现 n 次：`-0.8f × n`（v1.12 起惩罚随展示次数递增，高频刷新时让重复展示的文件更快沉底）
 
 HomeFragment 中 `dailyShownCountMap` 记录逻辑：每次 render 后，将展示的文件计数 +1。下拉刷新时保留 `dailyShownCountMap`（不清空），确保已展示的文件被惩罚。每日零点自动清空。
 
@@ -241,7 +241,7 @@ Material `BottomSheetDialog` + `ChipGroup` 实现。`FilterConfig` 控制各筛�
 - 多角色匹配：文件名包含多个角色别名时（如"守望先锋 天使+dva"），返回 `["天使", "dva"]`，按 canonical 字典序排序后显示为"dva+天使"，确保不同文件名顺序（"天使+dva"和"dva 天使"）归入同一药丸
 - 多角色匹配使用区域重叠检测，避免同一位置被不同角色重复匹配
 - 角色分隔符支持：`+`、`x`、`&` 均可作为多角色分隔符（子串匹配天然支持，无需特殊处理）
-- `matchAll(fileName)` 方法：一次调用同时返回出处和角色列表（`Pair<String?, List<String>>`），避免对同一文件名重复调用 `match()`。支持多出处匹配：文件名含"+"时（如"恶魔战士+铁拳8  莫妮卡+莉莉"），按"+"分割分别匹配出处，再合并所有出处的角色结果，出处显示为"恶魔战士+铁拳"。**结果缓存**（2026-06-22 优化）：按 fileName 缓存到 `matchAllCache`（`ConcurrentHashMap`，容量上限 8192 超限清空重建），批量遍历（如 `groupBySource` 对数千文件、同文件被多页面重复匹配）时命中缓存 O(1)，消除重复的出处+角色匹配 CPU 开销。`updateCustomSources`/`updateTxtWorks` 时清空缓存保证一致性。**charMiss 日志采样**：未命中角色时按 50 次记 1 条（`charMiss(N): file=...`），避免批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
+- `matchAll(fileName)` 方法：一次调用同时返回出处和角色列表（`Pair<String?, List<String>>`），避免对同一文件名重复调用 `match()`。支持多出处匹配：文件名含"+"时（如"恶魔战士+铁拳8  莫妮卡+莉莉"），按"+"分割分别匹配出处，再合并所有出处的角色结果，出处显示为"恶魔战士+铁拳"。**结果缓存**（2026-06-22 优化）：按 fileName 缓存到 `matchAllCache`（`ConcurrentHashMap`，容量上限 8192 超限清空重建），批量遍历（如 `groupBySource` 对数千文件、同文件被多页面重复匹配）时命中缓存 O(1)，消除重复的出处+角色匹配 CPU 开销。`updateCustomSources` 时清空缓存保证一致性。**charMiss 日志采样**：未命中角色时按 50 次记 1 条（`charMiss(N): file=...`），避免批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
 - `matchCharacter(fileName, sourceName)` 方法：兼容旧接口，内部调用 `matchCharacters` 并用"+"拼接返回
 - 角色匹配只走检索表，不做前缀去除或回退，未匹配归入"其他"
 - 检索表覆盖 131 个出处，涵盖游戏/动漫/小说，含高人气女角色及热门游戏中的非热门女角色

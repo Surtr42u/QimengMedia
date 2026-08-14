@@ -14,7 +14,6 @@ import com.qimeng.media.data.repository.LocalMediaRepository
 import com.qimeng.media.scan.MediaStoreScanner
 import com.qimeng.media.scan.SafMediaScanner
 import com.qimeng.media.scan.ScanUtils
-import kotlinx.coroutines.flow.firstOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -218,9 +217,20 @@ class ScanUseCase(
 
             val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
 
-            val newFiles = newCosMedia.filter { it.recordKey !in existingCosKeys }
-            if (newFiles.isNotEmpty()) {
-                newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+            // v1.x：对齐 refreshScanSource 模式——只加载"扫描结果中已存在库中的 key"的实体用于
+            // 元数据比较，同名覆盖/重编码文件元数据（sizeBytes/duration/width/height/modifiedAtMillis）
+            // 有变化时也更新，避免永久陈旧（旧实现只 upsert 新 key，覆盖文件元数据永远不更新）
+            val existingCosByKey = newCosMedia
+                .mapNotNull { it.recordKey.takeIf { k -> k in existingCosKeys } }
+                .distinct()
+                .mapNotNull { k -> repository.getMediaByKey(k)?.let { k to it } }
+                .toMap()
+            val newOrUpdated = newCosMedia.filter { file ->
+                file.recordKey !in existingCosKeys ||
+                    existingCosByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+            }
+            if (newOrUpdated.isNotEmpty()) {
+                newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
             }
 
             repository.upsertCosWorks(newCosWorks)
@@ -267,7 +277,7 @@ class ScanUseCase(
             }
             crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
 
-            return ScanResult.Success(newFiles.size, 1, cosRefreshMedia)
+            return ScanResult.Success(newOrUpdated.size, 1, cosRefreshMedia)
         } catch (e: Exception) {
             return ScanResult.Error(e.message ?: "COS刷新失败", cosRefreshMedia)
         }
@@ -480,25 +490,28 @@ class ScanUseCase(
         val validKeys = repository.getAllRecordKeys().toSet()
         if (validKeys.isEmpty()) return
 
+        // v1.x：三处残留检测改用 repository 轻量投影（仅取 recordKey 列），
+        // 替代旧的 observeAllStats/observeLatestHistory/getAllTimelineTags 全实体加载后
+        // 在 Kotlin 侧过滤——对齐 GUIDE_DATA 轻量查询原则，避免大库下无谓全行物化
         // 清理 view_stats 残留
-        val allStats = repository.observeAllStats().firstOrNull().orEmpty()
-        val staleStatsKeys = allStats.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }
+        val staleStatsKeys = repository.getViewStatsRecordKeys()
+            .mapNotNull { if (it !in validKeys) it else null }
         if (staleStatsKeys.isNotEmpty()) {
             AppLog.d("ScanUseCase", "cleanupStaleRefs: stale view_stats=${staleStatsKeys.size}")
             repository.deleteMediaAndRefs(staleStatsKeys)
         }
 
         // 清理 view_history 残留
-        val allHistory = repository.observeLatestHistory().firstOrNull().orEmpty()
-        val staleHistoryKeys = allHistory.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }
+        val staleHistoryKeys = repository.getHistoryRecordKeys()
+            .mapNotNull { if (it !in validKeys) it else null }
         if (staleHistoryKeys.isNotEmpty()) {
             AppLog.d("ScanUseCase", "cleanupStaleRefs: stale view_history=${staleHistoryKeys.size}")
             repository.deleteMediaAndRefs(staleHistoryKeys)
         }
 
-        // 清理 timeline_tags 残留
-        val allTimelineTags = repository.getAllTimelineTags()
-        val staleTimelineKeys = allTimelineTags.mapNotNull { if (it.recordKey !in validKeys) it.recordKey else null }.distinct()
+        // 清理 timeline_tags 残留（DAO 查询已 DISTINCT，无需再次去重）
+        val staleTimelineKeys = repository.getTimelineTagRecordKeys()
+            .mapNotNull { if (it !in validKeys) it else null }
         if (staleTimelineKeys.isNotEmpty()) {
             AppLog.d("ScanUseCase", "cleanupStaleRefs: stale timeline_tags=${staleTimelineKeys.size}")
             repository.deleteMediaAndRefs(staleTimelineKeys)

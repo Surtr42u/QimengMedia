@@ -93,6 +93,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 
 - 图片进入详情页后查看次数 +1，同一次打开只计一次。
 - 视频进入详情页后点击播放按钮播放次数 +1，同一次打开只计一次（v1.14 补真实写入点：`startVideoPlayback` 时经 ViewModel.recordPlay → repository.recordPlay → view_stats.playCount + daily_browse.playCount 原子 +1；修复旧版 playCount 从无写入点恒为 0 的问题）。
+- **详情页计数会话级去重（v1.15）**：图片 viewCount 与视频 playCount 都按会话级集合去重——`viewedRecordKeys`（viewCount，showMediaAt 首次切换调用 `loadAndRecordView` 记一次，横滑切走切回只纯加载 `loadMedia` 不再计数）与 `playedRecordKeys`（playCount），退出详情页时两集合同步清空，下次打开重新计数。
 - 浏览时长记录详情页停留秒数。
 - 历史记录同一文件只保留最新一条，上限 500 条。
 - **按天浏览聚合（v1.14）**：每次浏览/播放/时长更新同步写 `daily_browse`（每文件每天一行，`recordKeyDay = recordKey@当天零点毫秒`），无限保留不做裁剪；是统计页趋势图、窗口内排行、沉浸时长的唯一数据来源。浏览历史明细（view_history）仅作最近轻量展示，不入备份。
@@ -134,6 +135,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 - 详情页下方 tab 点赞按钮：未点赞显示空心图标，今日已点赞显示填满图标。
 - 排行榜排序逻辑：浏览次数(viewCount + playCount) + 点赞次数(likeCount)。
 - 点赞计数缓存：`readLikeCounts()` 使用 `cachedLikeCounts` + `likeCountsDirty` 标记缓存，通过 `OnSharedPreferenceChangeListener` 监听点赞变化自动失效缓存，避免每次 render 遍历全部 SharedPreferences。
+- **点赞/收藏写入即触发自动同步（v1.15）**：详情页 `toggleLike`/`toggleFavorite` 写入 SharedPreferences 后调用 `viewModel.triggerAutoSyncIfNeeded()`（30 秒防抖），不再等退出详情页才落盘，与 `toggleAuthorFollow` 一致。
 
 ## 推荐算法
 
@@ -273,7 +275,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - 重建索引（`rebuildMediaIndex()`）只清空并重建 `media_files` 表，不清空统计、历史、标签、作者和设置表。
 - 备份保存位置属于 App 偏好，使用 `settings` 表保存目录 Uri 和显示名。
 - 扫描源使用 `ScanSourceEntity` 保存多个 SAF 目录；重新扫描时合并所有非备份扫描源后重建 `media_files` 索引。
-- 删除扫描源时，自动清理不属于任何剩余扫描源的媒体文件（通过 URI 前缀匹配判断归属），同时级联删除对应的 `author_media_cross_refs`、`media_tag_cross_refs`，并清理无关联文件的孤立作者。
+- 删除扫描源时，自动清理不属于任何剩余扫描源的媒体文件（按 `sourceUri` 精确匹配判断归属，旧版迁移数据该列为 null 时保守保留），同时级联删除对应的 `author_media_cross_refs`、`media_tag_cross_refs`，并清理无关联文件的孤立作者。
 - 删除 COS 扫描源时（`deleteCosScanSource`），在事务中级联删除 `author_media_cross_refs`、`media_tag_cross_refs`、`view_stats`、`view_history`、`daily_browse`、`timeline_tags`、`media_files`、`cos_works`，清理孤立 COS 作者；事务外清理 SharedPreferences（点赞计数/日期、收藏记录）和缓存（Coil 内存缓存、ThumbnailCache 本地文件缓存），与 `deleteMediaAndRefs` 级联范围一致。
 - **启动时孤立文件清理**：`ScanUseCase.cleanupOrphanFiles()` 在 ViewModel 初始化时自动执行，检测并删除没有对应扫描源的残留媒体文件（包括非COS和COS），修复历史遗留的孤立数据问题；同时调用 `cleanupStaleRefs()` 清理 view_stats/view_history/timeline_tags/SharedPreferences 中引用了已删除文件的残留数据。
 - **启动时一次性重建作者关联**：`AuthorImportUseCase.rebuildAssociationsOnceIfNeeded()` 在 ViewModel 初始化时自动执行，用 settings flag `author_rebuild_v2_done` 保证**仅升级后首次启动执行一次**，调用 `rebuildAssociationsFromBlocks` 从全部已导入 TXT 重建关联，修复 v2 统一重建之前的版本遗留的脏数据（跨 TXT 同名作者关联被单 TXT 导入覆盖清空为 0）。重建失败不标记 flag，下次启动自动重试。这样用户覆盖安装新版后首次打开即自动修复，无需卸载重装或手动重新扫描。
@@ -344,4 +346,4 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - Repository 负责历史上限、统计规则、作者关联规则
 - 媒体列表查询避免一次加载无关大字段
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重、点赞/收藏写入即触发自动同步）

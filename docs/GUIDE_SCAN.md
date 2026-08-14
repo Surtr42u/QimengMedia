@@ -63,7 +63,7 @@
 - 对每个已注册的常规扫描目录，用 MediaStoreScanner 重新查询
 - 增量 upsert 新文件（**同名覆盖/重编码文件元数据有变化时也更新**，v1.15 修复旧版只 upsert 新 key 导致元数据永久陈旧），删除已移除的文件
 - **只监听常规目录**（`isCosDirectory=false`）
-- **空查询也执行残留清理**（v1.15）：目录被清空导致查询为空时，仍按 sourceUri 查出库中存量 key 并全部删除，避免 DB 行残留
+- **空查询 SAF 复核**（v1.15 二次巡检）：MediaStore 查询为空时先走 SAF `scanTreeFast` 复核——`.nomedia`/Android 16 非标准目录 MediaStore 恒查不到，直接按空结果清理会把库中全部文件连带统计/历史/标签整源误删；SAF 复核有文件则以 SAF 结果为准（对齐手动/自动刷新路径的空→SAF 回退语义），SAF 也为空才确认目录真被清空并清理残留
 - **单飞保护**（v1.15）：`isRefreshing` AtomicBoolean 保证同一时刻只有一个自动刷新在跑（防抖 `cancel()` 只能取消挂起点，旧 job 已进 DB 事务时新 job 并发执行 upsert/delete 会产生竞态）
 
 ### .nomedia 场景下的刷新依赖
@@ -101,7 +101,7 @@
 ### 入口方法
 
 - `scanCosDirectory(uri, displayName?)`：首次添加 COS 目录
-- `refreshCosSource(uriString)`：增量刷新已有 COS 目录
+- `refreshCosSource(uriString)`：增量刷新已有 COS 目录（v1.15 二次巡检：同名覆盖/重编码文件元数据有变化时也更新，与 `refreshScanSource` 的 `hasScanMetadataChanged` 判定一致，修复 COS 文件被替换后尺寸/时长永久陈旧的缺陷）
 - `autoRefreshAllSources()`：App 启动时自动刷新所有 COS 目录（5 分钟防抖，`COS_AUTO_REFRESH_INTERVAL`，5000+ 文件扫描成本高，避免频繁刷新）
 
 ### COS 路径解析算法（`queryCosFolder`）

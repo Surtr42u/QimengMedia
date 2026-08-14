@@ -142,13 +142,15 @@ class BackupManager(private val context: Context) {
             // 5. authors + authorMediaRefs
             val authors = importArray(data.optJSONArray("authors")) { it.toAuthorEntity() }
             if (authors.isNotEmpty()) {
-                database.authorDao().upsertAllAuthors(authors)
+                // SQLite 绑定参数上限旧设备为 999：authors 表 3 列 × 300 = 900 < 999，分块写入
+                authors.chunked(300).forEach { database.authorDao().upsertAllAuthors(it) }
                 count++
             }
             val authorRefs = importArray(data.optJSONArray("authorMediaRefs")) { it.toAuthorMediaCrossRef() }
                 .filter { it.recordKey in mediaMap }
             if (authorRefs.isNotEmpty()) {
-                database.authorDao().upsertAllAuthorMedia(authorRefs)
+                // author_media_cross_ref 表 4 列 × 200 = 800 < 999，分块写入
+                authorRefs.chunked(200).forEach { database.authorDao().upsertAllAuthorMedia(it) }
                 count++
             }
 
@@ -175,6 +177,9 @@ class BackupManager(private val context: Context) {
             val history = importArray(data.optJSONArray("history")) { it.toViewHistoryEntity() }
                 .filter { it.recordKey in mediaMap }
             history.forEach { database.viewHistoryDao().upsert(it) }
+            // 导入条目可能超过本地 500 条上限（导出上限 HISTORY_EXPORT_LIMIT=1000 维持不变），
+            // 立即裁剪对齐数据规则
+            database.viewHistoryDao().pruneToLimit(500)
             if (history.isNotEmpty()) count++
 
             // 9. scanSources

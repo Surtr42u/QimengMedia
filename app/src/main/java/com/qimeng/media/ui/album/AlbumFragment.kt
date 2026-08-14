@@ -125,6 +125,14 @@ class AlbumFragment : Fragment() {
                 cosGroups.getOrPut(authorName) { mutableListOf() }.add(file)
             }
 
+            // v1.15：COS 分组兜底「其他」桶——未出现在任何作者分组 key 下的 COS 文件
+            // （无 AuthorMediaCrossRef 关联、作者名缺失等）归入「其他」，避免此类文件在相册页整体不可见
+            val groupedKeys = cosGroups.values.flatten().map { it.recordKey }.toSet()
+            val ungroupedCos = cosMedia.filter { it.recordKey !in groupedKeys }
+            if (ungroupedCos.isNotEmpty()) {
+                cosGroups.getOrPut("其他") { mutableListOf() }.addAll(ungroupedCos)
+            }
+
             val renderHash = buildString {
                 append(groups.entries.sortedBy { it.key }.joinToString("|") { "${it.key}:${it.value.size}" })
                 append("|cos|")

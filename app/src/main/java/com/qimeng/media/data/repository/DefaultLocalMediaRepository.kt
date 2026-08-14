@@ -118,6 +118,15 @@ class DefaultLocalMediaRepository(
     override suspend fun getAllRecordKeys(): List<String> =
         mediaFileDao.getAllRecordKeys()
 
+    override suspend fun getViewStatsRecordKeys(): List<String> =
+        viewStatsDao.getAllRecordKeys()
+
+    override suspend fun getHistoryRecordKeys(): List<String> =
+        viewHistoryDao.getAllRecordKeys()
+
+    override suspend fun getTimelineTagRecordKeys(): List<String> =
+        database.timelineTagDao().getAllRecordKeys()
+
     override suspend fun recordView(recordKey: String, fileName: String) {
         database.withTransaction {
             val now = System.currentTimeMillis()
@@ -267,12 +276,15 @@ class DefaultLocalMediaRepository(
     ) {
         database.withTransaction {
             if (authorEntities.isNotEmpty()) {
-                authorDao.upsertAllAuthors(authorEntities)
+                // SQLite 绑定参数上限旧设备为 999：authors 表 3 列 × 300 = 900 < 999，分块写入
+                authorEntities.chunked(300).forEach { authorDao.upsertAllAuthors(it) }
                 // 先删除这些作者的旧 crossRef，再插入新的（避免匹配规则变更后旧数据残留）
-                authorDao.deleteCrossRefsByAuthorIds(authorEntities.map { it.authorId })
+                // 单列 IN 列表同样受 999 上限约束，按 deleteAllRefsChunked 的 500 分块模式对齐
+                authorEntities.map { it.authorId }.chunked(500).forEach { authorDao.deleteCrossRefsByAuthorIds(it) }
             }
             if (crossRefs.isNotEmpty()) {
-                authorDao.upsertAllAuthorMedia(crossRefs)
+                // author_media_cross_ref 表 4 列 × 200 = 800 < 999，分块写入
+                crossRefs.chunked(200).forEach { authorDao.upsertAllAuthorMedia(it) }
             }
         }
     }

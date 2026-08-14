@@ -91,6 +91,13 @@ class HomeFragment : Fragment() {
     private var flingConsumedAt = 0L
     private var cachedLikeCounts: Map<String, Int> = emptyMap()
     private var likeCountsDirty = true
+    // v1.15：点赞变化版本号——点赞（likeCountsDirty 置脏）后递增，
+    // 追加进 render fingerprint 强制触发重排，详情页点赞后返回首页排行/推荐随之刷新
+    private var likeVersion = 0
+    // v1.15：浏览统计变化版本号——cachedStats 内容变化时递增（详见 observeData collect），
+    // 追加进 render fingerprint，浏览（viewCount+1）后返回首页自动重排
+    private var statsVersion = 0
+    private var lastStatsHash = 0
     // v1.12：render 并发去重——旧实现每次 setTab/刷新/collect 都 launch 新协程不取消旧的，
     // 旧 render 在 withContext(Default) 挂起期间 currentTab 已被改写时，会把旧 tab 的排序
     // 结果写入新 tab 键并提交旧列表（旧查询覆盖新查询）。这里取消上一个 render job。
@@ -98,6 +105,8 @@ class HomeFragment : Fragment() {
     private val likePrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key != null && key.startsWith(KEY_LIKE_COUNT_PREFIX)) {
             likeCountsDirty = true
+            // v1.15：点赞计数变化标记版本号，fingerprint 变化后自动重排
+            likeVersion++
         }
     }
 
@@ -107,6 +116,11 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         bindViews(view)
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager?.prefs?.value?.gridColumnsHome?.let {
+                if (it in 1..2) columns = it
+            }
         setupRecycler()
         setupActions()
         observeData()
@@ -292,6 +306,13 @@ class HomeFragment : Fragment() {
                     cachedAuthorMedia = authorMedia
                     cachedAuthors = authors
                     cachedStats = stats
+                    // v1.15：统计内容变化时递增 statsVersion（列表 hashCode 相同则视为未变化），
+                    // 详情页浏览（viewCount+1）后返回首页，fingerprint 变化触发重排
+                    val statsHash = stats.hashCode()
+                    if (statsHash != lastStatsHash) {
+                        statsVersion++
+                        lastStatsHash = statsHash
+                    }
                     cachedTags = tags
                     cachedAllTags = allTags
                     cachedHistory = history
@@ -343,6 +364,9 @@ class HomeFragment : Fragment() {
     private fun toggleColumns() {
         columns = if (columns == 1) 2 else 1
         layoutManager?.spanCount = columns
+        // v1.15：列数切换持久化到 AppPrefsManager（重启后保留）
+        (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager?.updateGridColumnsHome(columns)
         columnButton?.setImageResource(if (columns == 1) R.drawable.ic_grid_1 else R.drawable.ic_grid_2)
         updateThumbnailSize()
     }
@@ -350,6 +374,9 @@ class HomeFragment : Fragment() {
     private fun setColumns(count: Int) {
         columns = count.coerceIn(1, 2)
         layoutManager?.spanCount = columns
+        // v1.15：setColumns 同样持久化列数（setupRecycler 初始调用会写入当前已存值，幂等无害）
+        (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager?.updateGridColumnsHome(columns)
         columnButton?.setImageResource(if (columns == 1) R.drawable.ic_grid_1 else R.drawable.ic_grid_2)
         updateThumbnailSize()
     }
@@ -398,7 +425,8 @@ class HomeFragment : Fragment() {
         } else {
             cachedMedia
         }
-        val newFp = "${workingMedia.size}|$currentTab|$rankPeriod|${filterState.hashCode()}|$query|$refreshSeed"
+        // v1.15：fingerprint 追加 likeVersion/statsVersion，点赞或浏览统计变化时强制触发重排
+        val newFp = "${workingMedia.size}|$currentTab|$rankPeriod|${filterState.hashCode()}|$query|$refreshSeed|$likeVersion|$statsVersion"
         val oldFp = tabSortFingerprints[currentTab].orEmpty()
         if (newFp != oldFp) {
             // 日志放在短路块内：fingerprint 相同时（详情页切换、无关 Flow emit）静默，避免视觉噪音

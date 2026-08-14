@@ -223,7 +223,7 @@
 
 ### dailyBrowse（v1.14 新增）
 
-按天浏览聚合段，每文件每天一行，**无限保留**（不做裁剪）。恢复后统计页的趋势图、窗口排行、沉浸时长与备份时完全一致。备份的是聚合数据而非浏览历史明细（明细 history 仅保留最近 1000 条）。
+按天浏览聚合段，每文件每天一行，**无限保留**（不做裁剪）。恢复后统计页的趋势图、窗口排行、沉浸时长与备份时完全一致。备份的是聚合数据而非浏览历史明细（明细 history 仅保留最近 500 条，与 `view_history` 上限一致）。
 
 ```json
 "dailyBrowse": [{
@@ -401,7 +401,7 @@
 | scanSources | upsert 扫描源 | 按 uriString 合并 |
 | timelineTags | upsert，按 (recordKey,timeMillis,name) 查重 | 已存在则跳过 |
 | cosWorks | upsert | 按 (sourceUri,authorName,workName) 唯一索引合并 |
-| likes | 写 SharedPreferences | 按 recordKey 覆盖计数，清理备份中已不存在的陈旧点赞键 |
+| likes | 写 SharedPreferences | 按 recordKey 并集合并（本地 ∪ 备份），只导入备份中存在的新键，本地独有键保留（v1.15 语义） |
 | favorites | 写 SharedPreferences | 本地 ∪ 备份合并 |
 | followedAuthorIds | 写 SharedPreferences | 整体覆盖为备份值 |
 | appPrefs | 写 app_prefs.json | 整体覆盖 |

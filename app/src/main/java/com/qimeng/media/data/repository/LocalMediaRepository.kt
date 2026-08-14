@@ -52,6 +52,12 @@ interface LocalMediaRepository {
     suspend fun getCosKeysAndUris(): List<MediaFileDao.NonCosKeyUri>
     suspend fun getNonCosKeysAndFileNames(): List<MediaFileDao.NonCosKeyFileName>
     suspend fun getAllRecordKeys(): List<String>
+    /** v1.15 巡检：轻量投影，供 cleanupStaleRefs 比对 view_stats 残留（比全量加载实体省内存） */
+    suspend fun getViewStatsRecordKeys(): List<String>
+    /** v1.15 巡检：轻量投影，供 cleanupStaleRefs 比对 view_history 残留（比全量加载实体省内存） */
+    suspend fun getHistoryRecordKeys(): List<String>
+    /** v1.15 巡检：轻量投影，供 cleanupStaleRefs 比对 timeline_tags 残留（比全量加载实体省内存） */
+    suspend fun getTimelineTagRecordKeys(): List<String>
     suspend fun recordView(recordKey: String, fileName: String)
     /** v1.14：视频真正开始播放时记一次播放（view_stats.playCount + daily_browse.playCount 原子 +1） */
     suspend fun recordPlay(recordKey: String, fileName: String)

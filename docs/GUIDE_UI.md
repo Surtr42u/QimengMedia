@@ -86,6 +86,7 @@
 - 首页推荐：B站式刷新，下拉时 `refreshSeed++` 强制重新推荐，清空所有 tab 的排序缓存（`tabSortFingerprints`/`tabSortedItems`/`tabDisplayCounts`），推荐结果通过 `.shuffled()` 全量随机重排，确保每次下拉内容明显变化；视频图片自然混合（`balanceVideoImage`，按比例随机取，不做连续分组）
 - **左右滑动切换 tab 不重新推荐**：每个 tab（推荐/COS/排行榜）独立维护排序缓存，左右滑动切换 tab 时恢复之前的排序结果和滚动位置，不触发重新推荐
 - **熄屏亮屏/底部 Tab 切换不刷新**：`observeData()` 使用 `repeatOnLifecycle(STARTED)` 重新收集 Flow 时，不清空排序缓存和渲染指纹，数据未变化时 `render()` 跳过重排和 UI 更新
+- **点赞/浏览后返回自动重排（v1.15）**：render fingerprint 追加 `likeVersion`/`statsVersion` 维度——详情页点赞（likePrefsListener 递增 likeVersion）或浏览（cachedStats 内容变化递增 statsVersion）后返回首页，fingerprint 变化强制触发重排，排行/推荐随之更新
 - 收藏：重新从 SharedPreferences 读取收藏键并匹配媒体
 - 浏览历史/作者管理：下拉即刷新，数据由 Room Flow 自动驱动
 - **SwipeRefreshLayout 系统栏 inset**：SwipeRefreshLayout 根布局**不要**设置 `android:fitsSystemWindows="true"`，否则会与 `MainActivity` 主容器的 inset padding 重复应用，导致内容下沉一个状态栏高度。系统栏 padding 统一由 `MainActivity` 的 `setOnApplyWindowInsetsListener` 在主容器层处理，与数据页/相册页（ScrollView 根布局）保持一致。涉及布局：`fragment_home.xml`、`fragment_all_files.xml`、`fragment_author_files.xml`、`fragment_browse_history.xml`、`fragment_favorite.xml`
@@ -98,7 +99,7 @@
 - 二级 chip：推荐 / COS / 排行榜（三选一 tab，左右横滑切换），3 个胶囊切换按钮通过 `addPressAnimation()` 添加按下缩放反馈
 - 排行榜 chip：日榜 / 周榜 / 月榜 / 年榜
 - COS chip：切换到 COS 推荐模式，只显示 `isCosFile=true` 的媒体
-- 双列 RecyclerView（`MediaThumbnailAdapter`，Coil 加载，`itemViewCacheSize=40`）
+- 双列 RecyclerView（`MediaThumbnailAdapter`，Coil 加载，`itemViewCacheSize=20`）
 - **距底部 ≤6 项提前增量加载下一页，不重排**（v1.15：原"滚动到底增量加载"在触底最后一帧同步 +20 条并立即批量 bind，新条目视频双重解码 + 预生成抢 IO 集中在那帧 → 明显"卡一下"；改提前加载让解码发生在滑动中途被动画掩盖）
 - 左右横滑切换推荐/COS/排行榜：使用 `GestureDetector.onFling` 检测快速水平滑动，阈值 50dp + 速度 300
 - 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式，传当前页面已分页加载显示的文件列表（`adapter.currentList`，非完整排序列表 `tabSortedItems[currentTab]`），详情页仅可左右滑动浏览当前推荐页已可见的文件，数目与推荐页显示一致
@@ -145,8 +146,11 @@
 - **collect 块不重复 render**（2026-06-22 修复）：数据变化 collect 回调中只调用一次 `render()`（经 fingerprint 检查），不再先调 `computeSourceGroups()` 再调 `render()`——`computeSourceGroups()` 已退化为 `render()` 的空壳委托，两者连调会导致同一 fingerprint 的 render 执行两次（实测全部页首次进入浪费 210ms，每次数据更新浪费 ~47ms）。`computeSourceGroups()` 保留供分区药丸点击回调（`renderPartitionPills` 内）触发 render
 - **分组缓存**：`cachedSourceGroups`/`cachedCharGroups` 通过缓存键（`sourceGroupsKey`/`charGroupsKey`，由 partition+filterType+dataVersion+selectedSources 组成）判断是否需要重算。点击胶囊项只更新选中状态+filter，不重新 groupBy；仅数据变化（`dataVersion++`）、filterType 变化、selectedSources 变化时才重算分组。COS 5518 文件场景下首次 groupBy 约 600-800ms，缓存命中后 render 降至 <50ms
 - 双指缩放列数 2-5 列（`ScaleGestureDetector`）
+- **列数持久化（v1.15）**：双指缩放结束与列数按钮切换都会把新列数写入 `AppPrefsManager`（首页→`updateGridColumnsHome`，全部/浏览历史/作者文件/收藏→`updateGridColumnsAll`，相册详情→`updateGridColumnsAlbum`），各页初始化时从 `app_prefs.json` 读取作为初始值，重启后保留
 - 筛选面板（`MediaFilterSheet`）：标签区域支持选择/取消选择标签、长按删除标签（从数据库删除标签选项及所有关联）、"+ 添加标签"按钮创建新标签
 - `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：viewMode + partitions + displayed.size + displayed.firstRecordKey + selectedSources + selectedChars + filterType + typePillsExpanded + 分组摘要（SOURCE 模式含 sourceGroups entries，CHARACTER 模式含 charGroups entries）
+- **数据指纹补 stats/tags 维度（v1.15）**：全部页 `mediaFingerprint` 追加 stats（recordKey:viewCount+playCount）与 tags（recordKey:tagId）维度（对齐 AuthorFilesFragment），标签增删/浏览统计变化（详情页点赞、浏览、标签管理）后返回全部页自动重渲染，不再依赖下拉刷新
+- **列表提交异步化（v1.15）**：全部/收藏/浏览历史/作者文件四页的 `submitMediaWithGroups`/`submitMedia` 已改为 `GroupedMediaAdapter` 的 `submitMediaWithGroupsAsync`/`submitMediaAsync` 变体（分组行组装与指纹计算在 `Dispatchers.Default`，主线程只提交），大库下不再卡顿
 - 空状态：无数据时不显示任何提示文本，保持空白
 
 ## 详情页
@@ -157,6 +161,8 @@
 - chrome 显示态跟随系统白天/夜间主题，白天浅底深色图标，夜间黑底浅色图标；chrome 隐藏态始终黑底沉浸
 - 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**智能分层渲染**（2026-06-20 优化，2026-06-21 修复超大图渲染阈值，2026-06-23 去重）：`ZoomImageView.setImageDrawable` 调用 `applyOptimalLayerType()` 按图尺寸智能选层（`setImageBitmap` 不再单独调用，由 `super.setImageBitmap` 链式触发的 `setImageDrawable` 统一负责，消除同图二次判断冗余）——GIF（`AnimatedImageDrawable`）→ `LAYER_TYPE_HARDWARE`（动画依赖硬件刷新帧）；普通图长边 ≤ **硬件渲染安全阈值 4096**（`HARDWARE_RENDER_SAFE_SIZE`）→ `LAYER_TYPE_HARDWARE`（GPU 直渲，4096 图绘制从 ~50ms 降到 ~5ms，消除来回切大图卡顿）；普通图长边 > 4096 → `LAYER_TYPE_SOFTWARE`（CPU 软件渲染，正确应用 MATRIX 缩放）。**⚠️ 阈值选择根因**（2026-06-21 修复）：原方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，旗舰机实测可达 16384）作阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap（如 8000x8000=256MB）无法正确应用 MATRIX 缩放——超大图走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。4096 是业界公认稳定值（Glide/Fresco 默认上限，Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 `GpuInfo` 探测失败回退值 `DEFAULT_MAX_TEXTURE_SIZE=4096` 一致。手势期间（双指缩放/拖拽）同样用 `shouldUseHardwareForCurrent()` **同 4096 阈值**判断，超大图手势时保持 SOFTWARE。不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**两个独立阈值需区分**：①渲染安全阈值 4096（`HARDWARE_RENDER_SAFE_SIZE`，HARDWARE/SOFTWARE 分层判断，保渲染正确性）②Coil maxBitmapSize = `gpuMax`（`GpuInfo.maxTextureSize()`，解码降采样上限，放开让 8192 解原图）。两者独立，改其一不影响另一个；**Coil maxBitmapSize 放开**（2026-06-20）：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样（8192→4096），偏离"始终原图"决策。`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 放开到 GPU 上限，让 8192/7680 等超大图显示原图。代价是内存上升（超大图原图 ARGB_8888 ~150MB/张，浏览多张超大图 Native Heap 峰值可达 ~900MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制；**超大图 SOFTWARE 渲染 trade-off**（2026-06-21）：超大图（>4096）走 SOFTWARE 比 HARDWARE 慢（CPU 逐像素处理，8000x8000 量级可能 100ms+），但保证 matrix 缩放正确、显示位置正常。保正确性优先于渲染速度，这是已知 trade-off；**缩放范围**：0.5x~5x，双击放大1.8x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
 - 视频（仅 `MediaType.VIDEO`）：未播放时用 `ZoomImageView` 显示视频帧预览（透明背景，透出主题色，与图片分支一致；优先使用 `MediaMetadataRetriever` 提取首帧，失败时回退到 Coil VideoFrameDecoder），中央显示 ▶ 播放按钮；单击预览区直接启动播放（进入 BiliPlayerView），横滑浏览其他文件。播放时 BiliPlayerView 接管触摸
+- **视频播放幂等（v1.15）**：`startVideoPlayback` 开头以 `if (isVideoPlaying) return` 做幂等保护，双击/快速重复点击不会重复 setVideoUri 重建 MediaItem 导致播放被重置
+- **点赞/收藏写入即触发自动同步（v1.15）**：`toggleLike`/`toggleFavorite` 写入 SharedPreferences 后调用 `viewModel.triggerAutoSyncIfNeeded()`（30 秒防抖），不再等退出详情页才落盘
 - 按返回键：播放中先退到 chrome 浏览模式（暂停+chrome显示），再按退回首页
 - 按需解码媒体元数据（`showInfoSheet`）：**v1.15 防重复弹窗 + 先 show 再补解码 + 占位行原地更新 + 无"完成"按钮**——`infoSheetShowing` 标志防解码期间重复点击堆叠多个对话框；解码协程改 `viewLifecycleOwner.lifecycleScope`（Fragment 退栈后自动取消，不再操作已销毁视图）；先展示已有行与"解码中…"占位，解码完成后**原地替换占位行文本**（`addInfoRow` 返回 value TextView 引用，避免追加重复"尺寸"行）；详细信息弹窗**无"完成"按钮**（BottomSheet 下滑手势 / 点外部空白关闭即可，显式关闭按钮冗余，v1.0 历史遗留已删除；`sheetDone` 保留供标签管理/快速转跳弹窗使用）。
 - 时间轴标签弹窗（v1.15）：打开添加标记弹窗前暂停播放，dismiss 后恢复（`wasPlaying` 快照）——标记时间点与实际画面一致，不再因播放中弹窗而偏移。
@@ -201,6 +207,7 @@
 - 总览数字卡片（两行 6 个指标，前 4 个随时间范围联动，总文件数/总占用为库存静态值）：
   - 第一行：总浏览次数 / 总播放次数 / 总浏览时长（窗口内聚合）
   - 第二行：总文件数 / 总占用空间 / 平均浏览次数（窗口内总浏览 ÷ 窗口内有浏览的文件数，v1.14 由「平均浏览深度」改名）
+  - **快速切换防覆盖（v1.15）**：`renderOverviewExtra` 增加序号防重（`renderOverviewSeq`，回写 UI 前校验仍是最新），与 `renderTrend` 的 `renderTrendSeq` 模式一致，快速切换时间范围时旧协程晚完成不再覆盖新结果
 - 浏览趋势折线图卡片（`LineChartView`，**v1.15 起基于按天浏览聚合 daily_browse** 而非浏览历史明细——history 同文件只保留最新一条且上限 500，多次浏览只算 1 次导致趋势图数值偏小、与详情页/数字卡对不上；改后主页面与详情页分类型趋势同源同口径，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**；**点击卡片进入分类型趋势详情**，右上角"分类型趋势 ›"）
 - 分布统计小入口卡片（纯文字「类型与来源的库存构成 / 查看详情 ›」，**点击进入原分布详情页**；v1.14 移除库存环形图，简化外形）
 - 常看文件卡片（文件名 + 浏览次数紧凑文本列表 Top 3，**点击进入常看详情**）
@@ -232,7 +239,7 @@
 - 标签浏览聚合：`viewModel.allMediaTags`（MediaTagName，关联 recordKey 匹配窗口浏览）
 
 **自绘图表组件**（`ui/widget/`）：
-- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除
+- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；**v1.15 触摸拦截修复**——`onTouchEvent` 改为 ACTION_DOWN 决策：命中数据点（48dp 阈值内）才消费事件保持点击高亮/气泡，未命中返回 false 放行外层 NestedScrollView/ScrollView 滚动，图表区域内不再无法滚动页面；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除
 
 **排行榜组件**（`ui/stats/`）：
 - `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
@@ -334,8 +341,8 @@
   - 展开时：显示全部药丸 + 末尾"收起 ▲"药丸，点击可折叠
   - 切换到新模式时默认展开
   - **多选不退出**：点击胶囊项（出处/角色/类型等）只更新选中状态，不收起胶囊栏；只有点击"收起 ▲"按钮才收起。`MediaPillsHelper` 的回调拆分为 `onPillClick`（胶囊项点击，不收起）和 `onCollapse`（收起按钮点击，设 `expanded=false`）
+  - **相册详情页切模式默认展开（v1.15）**：`AlbumDetailFragment.setViewMode` 切到角色/类型时默认展开药丸（`charPillsExpanded = true`/`typePillsExpanded = true`），与其他页面一致；COS 作品药丸「其他」与出处/角色药丸一致始终排列表末尾（`renderCosWorkPills` 已对齐）
   - **收起即时响应**：`render()` 开头立即根据 expanded 状态隐藏 scroller 和清空 wrapper，避免异步计算期间旧UI残留
-  - **点击空白区域自动收起**：在 RecyclerView 上使用 `GestureDetector.onSingleTapConfirmed` 检测单击，点击内容区域时自动将所有 `*PillsExpanded` 置为 `false` 并重新渲染；与 ScaleGestureDetector 共存（AllFilesFragment/AlbumDetailFragment），不影响滚动和 item 点击
   - 涉及 Fragment：AllFilesFragment、FavoriteFragment、BrowseHistoryFragment、AlbumDetailFragment、AuthorFilesFragment
   - 状态变量：`sourcePillsExpanded`、`charPillsExpanded`、`partitionPillsExpanded`、`typePillsExpanded`
 
@@ -345,6 +352,7 @@
 - COS 分区卡片显示 "COS · N 个文件 · 图片 X / 视频 Y"
 - 点击 COS 分区卡片跳转到 COS 相册详情页（`showAlbumDetail(name, isCos=true)`）
 - COS 分组逻辑：遍历 `cosWorks`，按 `authorName` 归类，通过 `AuthorMediaCrossRef` 查询每个作者关联的文件
+- **COS 分组「其他」兜底（v1.15）**：`AlbumFragment.computeGroups` 末尾把 cosMedia 中未出现在任何作者分组 key 下的文件（无 crossRef 关联/作者名缺失）归入「其他」桶，避免此类 COS 文件在相册页整体不可见
 
 ### 相册详情页
 
@@ -394,6 +402,7 @@
 - 布局：`fragment_favorite.xml`（返回+标题 + 芯片栏 + 药丸滚动容器 + 计数 + RecyclerView + 空状态）
 - 适配器：`GroupedMediaAdapter`（支持分组标题头），3列网格
 - 收藏存储机制详见 `GUIDE_DATA.md`「收藏」章节
+- **详情页返回自动刷新（v1.15）**：注册 `media_detail_prefs` 的 `OnSharedPreferenceChangeListener`，`KEY_FAVORITES` 变化时调用 `refreshFavoriteData()`（详情页 toggleFavorite 只写 SharedPreferences，9 流 combine 不含收藏键数据源，原实现仅下拉刷新才感知），`onDestroyView` 注销监听
 - 滑动暂停缩略图加载
 - `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：与浏览历史一致，fingerprint 中 `selectedSources.sorted().joinToString(",")` 和 `selectedChars.sorted().joinToString(",")`；空状态由 `updateFavoriteEmptyState` 处理（COS 模式"没有COS收藏"，常规模式"还没有收藏"）
 
@@ -458,7 +467,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-12
+> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重/播放幂等、首页指纹加点赞浏览维度、收藏页与作者页 SP 监听、相册 COS 其他桶与切模式默认展开、全部页指纹补 stats/tags、列表提交异步化、LineChartView 触摸放行滚动、统计页序号防重、列数持久化）
 
 ## 应用图标
 

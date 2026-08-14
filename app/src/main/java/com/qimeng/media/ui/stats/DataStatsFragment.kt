@@ -182,8 +182,12 @@ class DataStatsFragment : Fragment() {
         binding.totalBrowseTimeValue.text = formatDuration(totalMinutes)
     }
 
+    /** 渲染总览序号：快速切换时间范围时只采纳最后一次请求的结果，避免旧协程晚完成覆盖新结果（同 renderTrendSeq 模式） */
+    private var renderOverviewSeq = 0
+
     /** 渲染总览数字卡片（第二行：文件数/占用空间/平均浏览次数；聚合计算在 Default 线程，避免主线程重复全量聚合卡顿） */
     private fun renderOverviewExtra() {
+        val seq = ++renderOverviewSeq
         val media = cachedMedia
         val window = windowDaily()
         viewLifecycleOwner.lifecycleScope.launch {
@@ -202,6 +206,8 @@ class DataStatsFragment : Fragment() {
                     if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
                 )
             }
+            // v1.15：序号校验——期间有更新的渲染请求时丢弃本次结果，防止旧协程晚完成覆盖新结果
+            if (seq != renderOverviewSeq) return@launch
             binding.totalFilesValue.text = StatsFormatHelper.formatNumber(result.first)
             binding.totalSizeValue.text = StatsFormatHelper.formatSize(result.second)
             binding.avgBrowseValue.text = String.format(Locale.US, "%.1f", result.third)

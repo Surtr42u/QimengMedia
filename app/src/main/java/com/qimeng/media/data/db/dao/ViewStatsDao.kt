@@ -34,4 +34,8 @@ interface ViewStatsDao {
 
     @Query("DELETE FROM view_stats WHERE recordKey IN (:recordKeys)")
     suspend fun deleteByRecordKeys(recordKeys: List<String>)
+
+    /** v1.15 巡检：轻量投影，仅取全部 recordKey（供 cleanupStaleRefs 比对残留，避免全量加载实体） */
+    @Query("SELECT recordKey FROM view_stats")
+    suspend fun getAllRecordKeys(): List<String>
 }

@@ -70,6 +70,12 @@ class BrowseHistoryFragment : Fragment() {
     private var cachedTags = emptyList<MediaTagName>()
     private var cachedAllTags = emptyList<TagEntity>()
     private val columnsRef = ColumnsRef(DEFAULT_COLUMNS)
+
+    // v1.15：App 偏好管理器（列数持久化用）——从 AppContainer 获取，允许为 null
+    private val appPrefsManager: com.qimeng.media.data.prefs.AppPrefsManager?
+        get() = (requireActivity().application as? com.qimeng.media.QimengApplication)
+            ?.appContainer?.appPrefsManager
+
     private lateinit var gridLayoutManager: GridLayoutManager
     private lateinit var adapter: GroupedMediaAdapter
 
@@ -112,6 +118,10 @@ class BrowseHistoryFragment : Fragment() {
     }
 
     private fun setupRecycler() {
+        // v1.15：列数持久化——启动/重建时从 AppPrefsManager 读取上次保存的列数作为初始值
+        val savedColumns = appPrefsManager?.prefs?.value?.gridColumnsAll ?: DEFAULT_COLUMNS
+        columnsRef.value = savedColumns
+        columnsRef.baseValue = savedColumns
         gridLayoutManager = PinchZoomHelper.createGridLayoutManager(requireContext(), columnsRef.value, adapter)
         binding.historyRecycler.layoutManager = gridLayoutManager
         binding.historyRecycler.adapter = adapter
@@ -121,8 +131,9 @@ class BrowseHistoryFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        // 双指缩放列数（与全部页一致）
-        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.historyRecycler)
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.historyRecycler,
+            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
     }
 
     private fun setupChips() {
@@ -321,13 +332,14 @@ class BrowseHistoryFragment : Fragment() {
         )
         if (renderHash != lastRenderHash) {
             lastRenderHash = renderHash
+            // v1.15：改用 Async 变体——分组行组装与指纹计算移入 Default 线程，大库下主线程不再卡顿
             when {
                 viewMode == VIEW_MODE_CHARACTER && selectedChars.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, charGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, charGroups, viewLifecycleOwner.lifecycleScope)
                 viewMode == VIEW_MODE_SOURCE && selectedSources.isEmpty() ->
-                    adapter.submitMediaWithGroups(displayed, sourceGroups)
+                    adapter.submitMediaWithGroupsAsync(displayed, sourceGroups, viewLifecycleOwner.lifecycleScope)
                 else ->
-                    adapter.submitMedia(displayed)
+                    adapter.submitMediaAsync(displayed, viewLifecycleOwner.lifecycleScope)
             }
         }
 
