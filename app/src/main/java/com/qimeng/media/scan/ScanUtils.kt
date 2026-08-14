@@ -26,9 +26,13 @@ object ScanUtils {
 
     /**
      * SHA-256 前8字符短哈希，用于路径去重和 recordKey 高级区分。
+     *
+     * 编码显式 UTF-8：`toByteArray()` 无参重载使用平台默认字符集（Android 恒为 UTF-8，
+     * 但 JVM 单元测试环境随平台变化），显式指定保证 pathHash 与运行环境无关、
+     * 与 ThumbnailCacheKeys.hashKey 编码策略一致（v1.16 统一）。
      */
     fun shortHash(value: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         // v1.x 修复：Byte 为负数（如 -1）时 "%02x".format(byte) 直接格式化会输出 16 位
         // "ffffffffffffffff"，take(8) 后恒等于 "ffffffff"，导致不同文件 pathHash 互相冲突、
         // recordKey 主键互相覆盖。先转 Int 并掩码 0xFF 再按两位十六进制格式化。

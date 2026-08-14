@@ -21,10 +21,15 @@ import java.io.FileOutputStream
  * 将缩略图和视频截帧保存为本地 WebP 文件，加载时直接读取文件，
  * 不需要重新解码原始文件，大幅提升 SAF URI 文件的缩略图加载速度。
  *
- * 缓存目录：`app_cache/thumbnails/`
- * 文件命名：`{hash(recordKey)}.webp`（缩略图）和 `{hash(recordKey)}_frame.webp`（视频详情帧）
+ * 缓存目录：`filesDir/thumbnails/`
+ * 文件命名：`{hash(recordKey)}.webp`
  *
  * 统一策略：图片缩略图和视频截帧都保存到本地文件
+ *
+ * 缓存规模（v1.16）：有效文件的缓存永不因数量上限被删（旧版按 5000 文件数淘汰最旧，
+ * 库文件 >5000 时会误删有效缓存导致每次启动重新缓存一部分缩略图）。
+ * 目录规模与库文件数成正比，不残留孤儿由「删除文件时同步清理（deleteMediaAndRefs →
+ * MediaCacheCleaner）+ 启动预生成前 pruneOrphanThumbnails 对账」保证。
  */
 object ThumbnailCache {
     private const val DIR_NAME = "thumbnails"
@@ -94,26 +99,12 @@ object ThumbnailCache {
 
     /** 缩略图文件名：{hash}.webp */
     private fun thumbFile(context: Context, recordKey: String): File {
-        return File(cacheDir(context), "${hashKey(recordKey)}.webp")
+        return File(cacheDir(context), "${ThumbnailCacheKeys.hashKey(recordKey)}.webp")
     }
 
     /** 获取缩略图文件对象（不检查是否存在），用于 Coil 直接加载 */
     fun getThumbnailFile(context: Context, recordKey: String): File {
         return thumbFile(context, recordKey)
-    }
-
-    /** 视频详情帧文件名：{hash}_frame.webp */
-    private fun frameFile(context: Context, recordKey: String): File {
-        return File(cacheDir(context), "${hashKey(recordKey)}_frame.webp")
-    }
-
-    private fun hashKey(key: String): String {
-        // 使用 SHA-256 前16字符，避免 hashCode 碰撞
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(key.toByteArray())
-        // v1.15：负字节转正再格式化（原 `"%02x".format(Byte)` 对负值输出 16 位十六进制，
-        // 导致缓存文件名长度不一致），与 ScanUtils.shortHash 修复同根因
-        return hash.take(8).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     // ===== 缩略图（列表页用，480x270） =====
@@ -145,32 +136,6 @@ object ThumbnailCache {
     /** 检查缩略图是否已缓存 */
     fun isThumbnailCached(context: Context, recordKey: String): Boolean {
         return thumbFile(context, recordKey).exists()
-    }
-
-    // ===== 视频详情帧（详情页用，1440x2560） =====
-
-    /** 读取本地缓存的视频详情帧，不存在返回 null */
-    suspend fun readFrame(context: Context, recordKey: String): Bitmap? = withContext(Dispatchers.IO) {
-        val file = frameFile(context, recordKey)
-        if (!file.exists()) return@withContext null
-        try {
-            BitmapFactory.decodeFile(file.absolutePath)
-        } catch (e: Exception) {
-            AppLog.d("ThumbCache", "readFrame failed: ${e.message}")
-            null
-        }
-    }
-
-    /** 将视频详情帧 Bitmap 保存到本地文件 */
-    suspend fun writeFrame(context: Context, recordKey: String, bitmap: Bitmap): Unit = withContext(Dispatchers.IO) {
-        try {
-            val file = frameFile(context, recordKey)
-            FileOutputStream(file).use { fos ->
-                bitmap.compress(Bitmap.CompressFormat.WEBP, COMPRESS_QUALITY, fos)
-            }
-        } catch (e: Exception) {
-            AppLog.d("ThumbCache", "writeFrame failed: ${e.message}")
-        }
     }
 
     // ===== 批量预生成并缓存 =====
@@ -283,63 +248,68 @@ object ThumbnailCache {
         runPool(uncachedImages, concurrency)
         runPool(uncachedVideos, VIDEO_CONCURRENCY)
 
-        // v1.12：缓存容量治理——filesDir 缩略图缓存无上限只增不减，超限时按修改时间
-        // 淘汰最旧文件，避免长期使用占用用户存储数百 MB
-        enforceCacheLimit(context)
-
         AppLog.d("ThumbCache", "pregenerateThumbnails: done, $total/$total processed (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
     }
 
     // ===== 缓存管理 =====
 
-    /** 缩略图缓存文件数量上限（v1.12）。超出时淘汰最旧文件，防止 filesDir 只增不减。 */
-    private const val MAX_CACHE_FILES = 5000
+    /**
+     * 孤儿缓存最小存活时长：仅清理写入超过该时长的孤儿文件。
+     * 防护：validRecordKeys 是启动时 DB 快照，若 prune 遍历期间有其他线程
+     * （adapter decodeJob / 用户触发扫描的预生成）并发写入新缓存，刚写入的文件
+     * 不在快照内会被误删——限制只删「旧孤儿」后，新写入的缓存（mtime 新）自动跳过，
+     * 下次启动再按新快照对账。真孤儿（删除文件/扫描源残留）删除路径已同步清理
+     * （deleteMediaAndRefs → MediaCacheCleaner），此处 24h 延迟兜底无实际影响。
+     */
+    private const val ORPHAN_MIN_AGE_MS = 24L * 60 * 60 * 1000
 
     /**
-     * v1.12：缓存容量治理——超过 [MAX_CACHE_FILES] 时按修改时间淘汰最旧文件，
-     * 确保 filesDir 下缩略图缓存（含 *_frame.webp 详情帧）有界。
+     * 清理孤儿缩略图缓存：删除 recordKey 不在 [validRecordKeys] 中、且写入超过 24 小时的缓存文件。
+     *
+     * v1.16：替代原 enforceCacheLimit（按 5000 文件数淘汰最旧）——旧逻辑在库文件 > 5000
+     * 时，只要有一个未缓存文件触发预生成，就会按 lastModified 淘汰一批**有效**缓存砍回 5000，
+     * 下次启动这些文件 isThumbnailCached=false 又被重新解码生成，形成稳态抖动：
+     * 每次打开软件都会重新缓存一部分缩略图。改为孤儿对账后，有效文件的缓存
+     * 永不因数量上限被删；缓存目录规模与库文件数成正比，随删除文件同步清理
+     * （deleteMediaAndRefs → MediaCacheCleaner）+ 此处启动对账保持不残留孤儿。
+     *
+     * 调用时机：启动预生成前传入**全库** recordKey 集合（ViewModel init），
+     * 不可传入局部批次集合（会把批次外的有效缓存误删）。
      */
-    private fun enforceCacheLimit(context: Context) {
+    fun pruneOrphanThumbnails(context: Context, validRecordKeys: Set<String>) {
         try {
+            val validHashes = validRecordKeys.mapTo(mutableSetOf()) { ThumbnailCacheKeys.hashKey(it) }
             val dir = cacheDir(context)
-            val files = dir.listFiles()?.filter { it.isFile } ?: return
-            if (files.size <= MAX_CACHE_FILES) return
-            files.sortedBy { it.lastModified() }
-                .take(files.size - MAX_CACHE_FILES)
-                .forEach { it.delete() }
-            AppLog.d("ThumbCache", "enforceCacheLimit: ${files.size} -> $MAX_CACHE_FILES (淘汰 ${files.size - MAX_CACHE_FILES})")
+            val files = dir.listFiles() ?: return
+            // 并发写防护：只清理写入超过 24h 的孤儿，避开并发预生成/adapter 刚写入的新缓存
+            val cutoff = System.currentTimeMillis() - ORPHAN_MIN_AGE_MS
+            var removed = 0
+            for (file in files) {
+                val isOldOrphan = file.isFile && file.lastModified() <= cutoff
+                if (isOldOrphan && ThumbnailCacheKeys.hashFromFileName(file.name) !in validHashes && file.delete()) {
+                    removed++
+                }
+            }
+            if (removed > 0) {
+                AppLog.d("ThumbCache", "pruneOrphanThumbnails: removed $removed orphan cache files (valid=${validRecordKeys.size})")
+            }
         } catch (e: Exception) {
-            AppLog.d("ThumbCache", "enforceCacheLimit failed: ${e.message}")
+            AppLog.d("ThumbCache", "pruneOrphanThumbnails failed: ${e.message}")
         }
     }
 
-    /** 获取缓存目录大小（字节） */
-    fun cacheSize(context: Context): Long {
-        val dir = cacheDir(context)
-        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-    }
-
-    /** 获取缓存文件数量 */
-    fun cacheCount(context: Context): Int {
-        val dir = cacheDir(context)
-        return dir.listFiles()?.count { it.isFile } ?: 0
-    }
-
-    /** 清除所有缓存 */
-    fun clearCache(context: Context) {
-        val dir = cacheDir(context)
-        dir.listFiles()?.forEach { it.delete() }
-    }
-
-    /** 清除指定 recordKey 的缓存 */
+    /**
+     * 清除指定 recordKey 的缓存
+     * 删除媒体文件时同步调用（deleteMediaAndRefs → MediaCacheCleaner），
+     * 保证已删除文件的缓存不残留
+     */
     fun removeCache(context: Context, recordKey: String) {
         thumbFile(context, recordKey).delete()
-        frameFile(context, recordKey).delete()
     }
 
     /**
-     * 清除视频缩略图缓存（用于黑帧检测后重新生成）
-     * 只删除不含 _frame 后缀的缓存文件中，对应视频的缩略图
+     * 清除视频缩略图缓存（用于黑帧检测版本升级后重新生成）
+     * 只删除对应视频的缩略图缓存文件
      */
     fun clearVideoThumbnails(context: Context, videoRecordKeys: List<String>) {
         videoRecordKeys.forEach { key ->

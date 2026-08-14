@@ -10,6 +10,50 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 缩略图缓存收尾：增量预生成 + 死代码清理 + 键逻辑单测化（v1.16，2026-08-14）
+
+执行 AI：deepseek-v4-flash
+
+用户要求不留任何遗留/搁置问题，对上一轮缩略图缓存修复做收尾。
+
+| 类别 | 改动 |
+|---|---|
+| 增量预生成 | 遗留项：`MediaStoreObserver` 增量刷新不触发缩略图预生成，滚动中新增的视频文件本地 WebP 缓存要等下次启动才填充。新增构造参数 `onFilesChanged: (suspend (List<MediaFileEntity>) -> Unit)?`，增量刷新产生新增/更新文件后回调；`QimengApplication` 注入 `thumbnailUseCase.pregenerateThumbnails(files, applicationScope)`。防抖/单飞保持原样，回调内部自 launch，失败由 ThumbnailUseCase 兜底 |
+| 死代码清理 | `ThumbnailCache.clearCache/cacheSize/cacheCount` 全项目无调用者，按删除规则移除（grep 确认后删除） |
+| 键逻辑单测化 | 缓存文件名 hash 生成/提取从 `ThumbnailCache` 抽离为纯 JVM `core/ThumbnailCacheKeys.kt`，新增 `ThumbnailCacheKeysTest`（12 个测试：负字节格式化回归、UTF-8 编码、16 位 hex 长度、`_frame` 兼容提取、确定性）。期望值由外部工具按 SHA-256 预计算，防测试自证自 |
+| 编码统一 | `hashKey` 显式 `toByteArray(Charsets.UTF_8)`（原无参重载用平台默认字符集；Android 恒为 UTF-8 无行为变化，JVM 单测环境随平台变化，显式指定保证文件名与运行环境无关、测试可复现）；同步将 `ScanUtils.shortHash` 编码显式 UTF-8 化，两套 hash 体系编码策略统一 |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（153 tests，0 failures）通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `core/ThumbnailCacheKeys.kt` | 新增（纯 JVM 缓存键逻辑，hashKey/hashFromFileName） |
+| `core/ThumbnailCache.kt` | hashKey 委托 ThumbnailCacheKeys；prune 用 hashFromFileName；删除 clearCache/cacheSize/cacheCount 死代码 |
+| `scan/MediaStoreObserver.kt` | 新增 onFilesChanged 回调，增量新增/更新文件后触发缩略图预生成 |
+| `QimengApplication.kt` | 注入 onFilesChanged 回调 |
+| `test/ThumbnailCacheKeysTest.kt` | 新增 9 个单元测试 |
+| `docs/GUIDE_ALGORITHM.md` / `docs/GUIDE_SCAN.md` / `docs/CHANGELOG.md` | 文档同步 |
+
+## 修复"每次打开软件重新缓存一部分缩略图"（v1.16，2026-08-14）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈每次打开软件都会重新缓存一部分缩略图。
+
+| 类别 | 改动 |
+|---|---|
+| 根因 | `ThumbnailCache.enforceCacheLimit`（v1.12 加的 5000 文件数上限）在每次预生成后按 `lastModified` 淘汰最旧缓存砍回 5000。用户库文件数 > 5000 时，只要有一个未缓存文件触发预生成（新增/缓存损坏/cache_version 升级清视频缓存），就会误删约 (总数-5000) 个**有效**缓存 → 下次启动这批复读解码生成 → 又超限又删 → 稳态抖动，每次启动重缓存并重删固定比例缩略图 |
+| 修复 | 移除按数量淘汰机制（`enforceCacheLimit` + `MAX_CACHE_FILES` + 预生成末尾调用）；新增 `ThumbnailCache.pruneOrphanThumbnails(validRecordKeys)` 孤儿对账——只删除 recordKey 不在库中、且写入超 24h 的缓存文件（24h 门槛避开并发预生成/adapter 刚写入的新缓存被旧 DB 快照误删），有效缓存永不因数量上限被删；`MediaLibraryViewModel` init 预生成前以全库 recordKey 执行对账。目录规模与库文件数成正比，不残留孤儿由「删除文件时同步清理（`deleteMediaAndRefs` → `MediaCacheCleaner`）+ 启动对账」保证 |
+| 深挖 | 顺带清理 `ThumbnailCache.readFrame/writeFrame/frameFile`（`_frame.webp` 视频详情帧）死代码——全项目无调用者（详情页视频预览一直走 Coil `VideoFrameDecoder`），并修正 `GUIDE_UI.md` 中描述该链路的过时文档 |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest` 通过；`gradlew --stop` 已执行。
+
+| 文件 | 改动 |
+|---|---|
+| `core/ThumbnailCache.kt` | 移除 enforceCacheLimit/MAX_CACHE_FILES/_frame 死代码；新增 pruneOrphanThumbnails |
+| `ui/library/MediaLibraryViewModel.kt` | init 预生成前执行孤儿缓存对账 |
+| `docs/GUIDE_ALGORITHM.md` / `docs/GUIDE_UI.md` / `docs/GUIDE_SCAN.md` / `docs/CHANGELOG.md` | 文档同步 |
+
 ## 移除 Skill 体系，只保留项目约束文档（2026-08-12）
 
 执行 AI：deepseek-v4-flash

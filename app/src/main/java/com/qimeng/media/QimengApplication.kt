@@ -61,7 +61,12 @@ class QimengApplication : Application() {
             context = this,
             repository = appContainer.localMediaRepository,
             mediaStoreScanner = appContainer.mediaStoreScanner,
-            scope = applicationScope
+            scope = applicationScope,
+            // v1.16：增量刷新产生新增/更新文件时同步预生成缩略图，填充本地 WebP 缓存
+            //（视频无本地缓存时滚动中只有 Coil 首帧内存缓存，本地文件缓存靠此处 + 启动预生成填充）
+            onFilesChanged = { changedFiles ->
+                appContainer.thumbnailUseCase.pregenerateThumbnails(changedFiles, applicationScope)
+            }
         )
 
         // 放开 maxBitmapSize 到 GPU 纹理上限（默认 Coil 限制 4096，会让 8192 等超大图降采样，

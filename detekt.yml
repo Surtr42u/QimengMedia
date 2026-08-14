@@ -17,6 +17,10 @@ complexity:
   LongParameterList:
     functionThreshold: 8
     constructorThreshold: 8
+  TooManyFunctions:
+    thresholdInObjects: 15   # 工具单例 object（ThumbnailCache 等）方法数合理放宽；
+                             # class/interface 保持默认 11。Repository/DAO 等多方法类属
+                             # 既有备案范围（ignoreFailures=true 不阻断构建），不在此列
 
 style:
   MagicNumber:

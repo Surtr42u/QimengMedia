@@ -99,6 +99,11 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
             }
 
             val existingMedia = repository.getAllMedia()
+            // v1.16：启动预生成前用全库 recordKey 对账清理孤儿缩略图缓存。
+            // 替代旧版按数量淘汰最旧文件（enforceCacheLimit）——大库（文件数 > 5000）下
+            // 数量淘汰会误删有效缓存，导致每次打开软件都重新缓存一部分缩略图。
+            // 有效文件的缓存永不因数量上限被删，缓存目录有界性由本对账 + 删除文件时清理保证。
+            ThumbnailCache.pruneOrphanThumbnails(getApplication(), existingMedia.map { it.recordKey }.toSet())
             if (existingMedia.isNotEmpty()) {
                 AppLog.d("Scan", "init: pregenerating ${existingMedia.size} thumbnails from DB")
                 // 按常规/COS分组，分别通过 ThumbnailUseCase 调用，确保进度 Flow 更新

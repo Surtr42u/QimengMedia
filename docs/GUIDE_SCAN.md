@@ -184,6 +184,8 @@ COS 目录的三种文件夹结构（作者→文件、作者→作品→文件�
 - **先检查本地缓存**：`ThumbnailCache.isThumbnailCached()` 已缓存的自动跳过
 - **批量预过滤短路**（2026-06-22 优化）：`ThumbnailCache.pregenerateThumbnails()` 入口先批量过滤已缓存文件，全量缓存命中时（如 autoRefresh 触发的预生成常出现 `skipped=total, generated=0`）直接返回，跳过 `coroutineScope` + `chunked(concurrency)` + `async` 并发池调度开销；部分缓存时只对未缓存文件走并发池，并发解码前二次检查防竞态
 - **cache_version 机制**：版本升级时自动清除视频缩略图缓存重新生成
+- **缓存规模治理（v1.16）**：有效文件的缩略图缓存永不因数量上限被删（v1.12 的 5000 文件数淘汰已移除——大库下误删有效缓存导致每次启动重新缓存一部分缩略图）。目录规模与库文件数成正比，不残留孤儿由「删除文件时同步清理 + 启动预生成前 `ThumbnailCache.pruneOrphanThumbnails` 全库 key 对账（仅清理写入超 24h 的孤儿）」保证，详见 `GUIDE_ALGORITHM.md`
+- **增量刷新同步预生成（v1.16）**：`MediaStoreObserver` 增量刷新产生新增/更新文件后，通过 `onFilesChanged` 回调同步触发缩略图预生成填充本地 WebP 缓存——视频无本地缓存时滚动中只有 Coil 首帧内存缓存，本地文件缓存靠此 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底
 - **来源标识**：`pregenerateThumbnails()` 接受 `ThumbnailSource` 参数（`GENERAL`/`COS`），COS 扫描传入 `ThumbnailSource.COS`，进度 UI 区分显示"常规"/"COS"来源
 
 **启动预生成**：ViewModel `init` 块从数据库读取已有文件的 `MediaFileEntity` 列表，立即开始预生成，不等扫描完成。

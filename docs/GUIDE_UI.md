@@ -273,7 +273,7 @@
 - **本地缓存优先**（`ThumbnailCache`）：缩略图保存为本地 WebP 文件（`filesDir/thumbnails/`），用 Coil 加载缓存文件；**GIF 例外**：GIF 缩略图跳过本地缓存（缓存是静态帧），直接从原始 URI 加载并使用 `AnimatedImageDecoder`（API 28+）或 `GifDecoder`（低版本）产生动画 drawable
 - 缩略图解码三级策略和预生成机制详见 `GUIDE_ALGORITHM.md`
 - **动态分辨率**：`MediaThumbnailAdapter` 和 `GroupedMediaAdapter` 支持 `thumbnailWidth`/`thumbnailHeight` 属性，首页1列时使用 960x540，2列时使用 480x270，其他页面默认 480x270
-- 详情页视频预览：先查 Coil 内存缓存（预加载） → `ThumbnailCache.readFrame()` → Coil `VideoFrameDecoder` → `MediaMetadataRetriever` 回退
+- 详情页视频预览：先查 Coil 内存缓存（预加载） → Coil `VideoFrameDecoder`（`videoFrameMillis(0)` 取首帧）。v1.16 移除 `ThumbnailCache.readFrame/writeFrame` 详情帧缓存（`_frame.webp`）——全项目无调用者，视频预览一直走 Coil 首帧
 - **列表页视频不双解（v1.15）**：列表（首页/全部/收藏/历史/搜索等，`MediaThumbnailAdapter.Holder` 共享）视频无本地缓存时只用 Coil `VideoFrameDecoder` 解一次首帧（`videoFrameMillis(0)` + `memoryCacheKey` 走内存缓存），不再额外起 `MediaMetadataRetriever` decodeJob——同一首帧双解且 `getFrameAtTime` 阻塞式取消不掉会加剧滑动掉帧；视频本地 WebP 由启动预生成填充，下次 bind 走缓存文件分支
 - 详情页预加载：`preloadAround()` 双向预加载（1前2后，内存充裕时2前3后），每次切换取消所有旧预加载并重新预加载范围内所有项（Coil 内部缓存去重，已命中的项预加载会直接跳过）；使用 `LargeImageDecoder.buildPreloadRequest()` 构建请求
 - 占位色用 `R.color.qm_placeholder`（亮色 `#E0E0E0`，暗色 `#2A2A2A`），避免深色模式下占位与背景同色

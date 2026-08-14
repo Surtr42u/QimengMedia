@@ -354,11 +354,21 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
   - 高端 8 核设备实测：12 并发
 - **图片/视频分离并发（v1.12）**：图片走全量并发（解码快、内存小）；视频单独限制 2 并发——视频截帧每任务峰值持有 2 张原尺寸帧（`getFrameAtTime` + `convertTo565` 副本），4K 源 12 并发可达约 800MB 原生堆，低端机 OOM 风险
 - **滚动暂停（v1.15）**：列表滚动期间（`ThumbnailCache.scrollPaused`）预生成在 `processBatch` 解码前循环等待让出 IO，避免与滚动触发的按需解码争抢磁盘导致掉帧；停止滚动自动恢复
-- **缓存容量上限（v1.12）**：filesDir 缩略图缓存（含 `_frame.webp` 详情帧）超过 5000 个文件时按修改时间淘汰最旧文件，防止只增不减占用用户存储
+- **缓存规模治理（v1.16）**：有效文件的缩略图缓存**永不因数量上限被删**——旧版（v1.12）按 5000 文件数淘汰最旧文件，库文件数 >5000 时只要有一个未缓存文件触发预生成，就会误删一批有效缓存，下次启动重新解码生成，形成"每次打开软件都重新缓存一部分缩略图"的稳态抖动，v1.16 已移除该机制。目录规模与库文件数成正比，不残留孤儿由「删除文件时同步清理（`deleteMediaAndRefs` → `MediaCacheCleaner`）+ 启动预生成前 `ThumbnailCache.pruneOrphanThumbnails` 用全库 recordKey 对账（仅清理写入超 24h 的孤儿，避开并发预生成刚写入的新缓存）」保证
+- **增量刷新同步预生成（v1.16）**：`MediaStoreObserver` 增量刷新产生新增/更新文件后，通过 `onFilesChanged` 回调同步触发缩略图预生成填充本地 WebP 缓存——视频无本地缓存时滚动中只有 Coil 首帧内存缓存，本地文件缓存靠此 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底
+- **缓存键逻辑（v1.16）**：缓存文件名 hash 生成与提取（`ThumbnailCacheKeys`，纯 JVM 可单测）——SHA-256 前 8 字节 hex，UTF-8 编码；文件名后缀兼容历史遗留 `_frame.webp`（详见下方「缩略图缓存键」）
 
 ### cache_version 机制
 
 版本升级时自动清除视频缩略图缓存重新生成（黑帧检测逻辑变更后需要重新缓存）。
+
+### 缩略图缓存键（ThumbnailCacheKeys）
+
+缓存文件名 hash 逻辑收拢在 `core/ThumbnailCacheKeys.kt`（纯 JVM 无 Android 依赖，可单元测试）：
+
+- `hashKey(recordKey)`：SHA-256 前 8 字节的十六进制（16 字符），**UTF-8 编码**（`toByteArray(Charsets.UTF_8)`，与 `ScanUtils.shortHash` 编码策略一致，保证缓存文件名与运行环境/测试环境无关）；v1.15 修复负字节格式化（`"%02x".format(Byte)` 对负值符号扩展输出不定长，先 `toInt() and 0xFF` 掩码）
+- `hashFromFileName(fileName)`：`.webp` 后缀 → 兼容历史遗留 `_frame` 后缀（v1.16 前详情帧命名），供孤儿对账识别
+- 单元测试：`ThumbnailCacheKeysTest`（12 个测试，期望值由外部工具按 SHA-256 预计算，防自证自）
 
 ## 日期分组
 

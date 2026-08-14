@@ -8,6 +8,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.net.toUri
 import com.qimeng.media.core.AppLog
+import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * 3. 防抖期间用计数器统计合并的变更通知次数，防抖结束后对所有常规扫描目录全量增量刷新
  * 4. 对每个已注册的常规扫描目录，用 MediaStoreScanner 重新查询
  * 5. 增量 upsert 新文件，删除已移除的文件
+ * 6. 增量新增/更新文件通过 [onFilesChanged] 回调触发缩略图预生成（v1.16）
  *
  * 注意：只监听常规目录（isCosDirectory=false），COS 目录不在系统媒体库中。
  */
@@ -34,7 +36,9 @@ class MediaStoreObserver(
     private val context: Context,
     private val repository: LocalMediaRepository,
     private val mediaStoreScanner: MediaStoreScanner,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /** v1.16：增量刷新产生新增/更新文件时回调（用于触发缩略图预生成填充本地 WebP 缓存） */
+    private val onFilesChanged: (suspend (List<MediaFileEntity>) -> Unit)? = null
 ) {
     private val resolver = context.contentResolver
     private val handler = Handler(Looper.getMainLooper())
@@ -184,6 +188,11 @@ class MediaStoreObserver(
                 if (newOrUpdated.isNotEmpty()) {
                     repository.upsertMedia(newOrUpdated)
                     AppLog.d("AutoRefresh", "Auto-refreshed ${source.displayName}: +${newOrUpdated.size} files")
+                    // v1.16：增量新增/更新文件同步触发缩略图预生成，填充本地 WebP 缓存。
+                    // 视频文件无缓存时滚动中只有 Coil 首帧内存缓存（adapter 不再后台双解），
+                    // 本地文件缓存依赖此处 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底。
+                    // 回调内部自行 launch，不阻塞增量刷新；异常已由 ThumbnailUseCase 内部兜底。
+                    runCatching { onFilesChanged?.invoke(newOrUpdated) }
                 }
 
                 // 清理已删除的文件（v1.x：目录被清空导致查询为空时也要执行 staleKeys 清理，

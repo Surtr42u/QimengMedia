@@ -261,6 +261,7 @@
 | `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
 | `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
 | `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（9 个测试，v1.13 新增） |
+| `ThumbnailCacheKeysTest` | 缩略图缓存键 hash 生成/提取（UTF-8 编码/负字节格式化/16 位 hex 长度/`_frame` 兼容/确定性，v1.16 新增，期望值外部预计算防自证自）（12 个测试） |
 
 ### detekt CI 集成
 
