@@ -59,7 +59,7 @@
 - 5 个核心测试类覆盖纯逻辑（RecordKeyFactory/MediaBrowserLogic/SourceMatcher/MediaGroupHelper/MediaRenderHelper）
 - 当前已备案黄色/红色区项详见 `GUIDE_CODE_MAINTENANCE.md`「当前已备案的黄色区项」
 - v1.15 全项目巡检：修复 8 个高危（数据丢失/崩溃级）与 40+ 中低危问题，reviewer 审查闭环（详见 CHANGELOG）
-- v1.15 第二轮巡检（2026-08-14）：UI 跨功能联动缺陷批量修复——详情页 viewCount 会话级去重/播放幂等/点赞收藏写入即同步、首页指纹加点赞浏览维度、收藏页与作者页 SP 监听自动刷新、相册 COS 其他桶与切模式默认展开、全部页指纹补 stats/tags、列表提交异步化、统计页序号防重、LineChartView 触摸放行滚动、双指缩放与列数按钮列数持久化
+- v1.15 第二轮巡检（2026-08-14）：UI 跨功能联动缺陷批量修复——详情页 viewCount 会话级去重/播放幂等/点赞收藏写入即同步、首页指纹加点赞维度（浏览统计不入指纹，浏览退出保持原样）、收藏页与作者页 SP 监听自动刷新、相册 COS 其他桶与切模式默认展开、全部页/作者文件页指纹补 tags 维度（不含 stats）、列表提交异步化、统计页序号防重、LineChartView 触摸放行滚动、双指缩放与列数按钮列数持久化
 
 ## 核心原则
 

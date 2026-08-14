@@ -29,7 +29,9 @@
 | 中危·详情页统计 | `MediaDetailFragment` viewCount 会话级去重（`viewedRecordKeys`，仿 playedRecordKeys，横滑切回不重复计数）；`startVideoPlayback` 幂等防双击重置；点赞/收藏写入即 `triggerAutoSyncIfNeeded` |
 | 中危·首页刷新 | `HomeFragment` fingerprint 追加 likeVersion/statsVersion（点赞监听器与 stats 变化驱动重排），修复详情页点赞/浏览后返回首页排行推荐不刷新 |
 | 联动·收藏/关注 | `FavoriteFragment` 监听 KEY_FAVORITES 自动刷新（详情页切换收藏返回即更新）；`AuthorListFragment` 监听 followed_authors 自动刷新 |
-| 联动·列表 | 全部/收藏/历史/作者文件页 submit 改 Async 变体（分组移出主线程）；`AllFilesFragment` 指纹补 stats/tags 维度 |
+| 联动·列表 | 全部/收藏/历史/作者文件页 submit 改 Async 变体（分组移出主线程）；`AllFilesFragment`/`AuthorFilesFragment` 指纹补 tags 维度（不含 stats） |
+
+**回归修复（同日）**：浏览退出后首页/全部页/作者文件页概率性自动刷新——上一轮将浏览统计（stats）纳入渲染指纹，详情页浏览（viewCount/时长写入）后返回即触发重排导致内容跳动。修复：首页 fingerprint 仅保留 `likeVersion`（点赞是用户显式操作，点赞后返回刷新合理），浏览统计不再入指纹；全部页/作者文件页同样移除 stats 维度（按日期/出处分组、不按热度排序，浏览不影响列表内容）。编译 + 153 测试通过。
 | 联动·相册 | `AlbumFragment` COS 分组补「其他」桶（无作者关联的 COS 文件不再不可见）；`AlbumDetailFragment` 切模式默认展开药丸；`MediaPillsHelper` COS 作品药丸「其他」排列表末尾 |
 | 联动·统计/图表 | `DataStatsFragment.renderOverviewExtra` 序号防重（快速切范围旧协程不覆盖新结果）；`LineChartView` ACTION_DOWN 决策——命中数据点消费、空白放行父容器滚动 |
 | 联动·列数持久化 | `PinchZoomHelper` onScaleEnd 回调 + Home/AllFiles/AlbumDetail/BrowseHistory/AuthorFiles/Favorite 六页读写 `AppPrefsManager.updateGridColumns*`（重启不再丢列数，备份 JSON 不再写死默认值） |

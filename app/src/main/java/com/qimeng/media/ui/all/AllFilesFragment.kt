@@ -219,12 +219,11 @@ class AllFilesFragment : Fragment() {
                     // 分区药丸点击回调（renderPartitionPills 内）仍通过 computeSourceGroups() 触发 render。
                     // v1.12：指纹纳入 COS 侧数据（cosMedia/cosWorks 的首条与数量）——旧指纹只含
                     // nonCosMedia，COS 文件新增/作品表变更时 fp 不变 → 全部页不自动重渲染
-                    // v1.15：对齐 AuthorFilesFragment 补 stats/tags 维度——标签增删/浏览统计变化后
-                    // （详情页点赞、浏览、标签管理）自动重渲染，不再依赖下拉刷新
+                    // v1.15：指纹追加 tags 维度——详情页标签管理（显式操作）后自动重渲染；
+                    // 不纳入浏览统计（stats）：全部页按日期/出处分组不按热度排序，浏览只改变
+                    // viewCount 不影响列表内容，纳入会导致"浏览退出→返回"无意义重渲染
                     val fp = buildString {
                         append("${media.size}|${media.firstOrNull()?.recordKey.orEmpty()}|${cosMedia.size}|${cosMedia.firstOrNull()?.recordKey.orEmpty()}|${cosWorks.size}")
-                        append("|stats=")
-                        stats.forEach { append("${it.recordKey}:${it.viewCount + it.playCount},") }
                         append("|tags=")
                         tags.forEach { append("${it.recordKey}:${it.tagId},") }
                     }

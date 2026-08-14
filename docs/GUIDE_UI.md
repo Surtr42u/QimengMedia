@@ -86,7 +86,7 @@
 - 首页推荐：B站式刷新，下拉时 `refreshSeed++` 强制重新推荐，清空所有 tab 的排序缓存（`tabSortFingerprints`/`tabSortedItems`/`tabDisplayCounts`），推荐结果通过 `.shuffled()` 全量随机重排，确保每次下拉内容明显变化；视频图片自然混合（`balanceVideoImage`，按比例随机取，不做连续分组）
 - **左右滑动切换 tab 不重新推荐**：每个 tab（推荐/COS/排行榜）独立维护排序缓存，左右滑动切换 tab 时恢复之前的排序结果和滚动位置，不触发重新推荐
 - **熄屏亮屏/底部 Tab 切换不刷新**：`observeData()` 使用 `repeatOnLifecycle(STARTED)` 重新收集 Flow 时，不清空排序缓存和渲染指纹，数据未变化时 `render()` 跳过重排和 UI 更新
-- **点赞/浏览后返回自动重排（v1.15）**：render fingerprint 追加 `likeVersion`/`statsVersion` 维度——详情页点赞（likePrefsListener 递增 likeVersion）或浏览（cachedStats 内容变化递增 statsVersion）后返回首页，fingerprint 变化强制触发重排，排行/推荐随之更新
+- **点赞后返回自动重排、浏览退出保持原样（v1.15）**：render fingerprint 追加 `likeVersion` 维度——详情页点赞（likePrefsListener 递增 likeVersion）后返回首页强制重排，排行/推荐随之更新；**不纳入浏览统计**——普通浏览（viewCount/时长）退出后首页保持原样，避免"浏览→返回"被统计变化触发自动重排导致内容跳动
 - 收藏：重新从 SharedPreferences 读取收藏键并匹配媒体
 - 浏览历史/作者管理：下拉即刷新，数据由 Room Flow 自动驱动
 - **SwipeRefreshLayout 系统栏 inset**：SwipeRefreshLayout 根布局**不要**设置 `android:fitsSystemWindows="true"`，否则会与 `MainActivity` 主容器的 inset padding 重复应用，导致内容下沉一个状态栏高度。系统栏 padding 统一由 `MainActivity` 的 `setOnApplyWindowInsetsListener` 在主容器层处理，与数据页/相册页（ScrollView 根布局）保持一致。涉及布局：`fragment_home.xml`、`fragment_all_files.xml`、`fragment_author_files.xml`、`fragment_browse_history.xml`、`fragment_favorite.xml`
@@ -149,7 +149,7 @@
 - **列数持久化（v1.15）**：双指缩放结束与列数按钮切换都会把新列数写入 `AppPrefsManager`（首页→`updateGridColumnsHome`，全部/浏览历史/作者文件/收藏→`updateGridColumnsAll`，相册详情→`updateGridColumnsAlbum`），各页初始化时从 `app_prefs.json` 读取作为初始值，重启后保留
 - 筛选面板（`MediaFilterSheet`）：标签区域支持选择/取消选择标签、长按删除标签（从数据库删除标签选项及所有关联）、"+ 添加标签"按钮创建新标签
 - `fingerprint` 机制（`MediaRenderHelper.buildFingerprint`）：viewMode + partitions + displayed.size + displayed.firstRecordKey + selectedSources + selectedChars + filterType + typePillsExpanded + 分组摘要（SOURCE 模式含 sourceGroups entries，CHARACTER 模式含 charGroups entries）
-- **数据指纹补 stats/tags 维度（v1.15）**：全部页 `mediaFingerprint` 追加 stats（recordKey:viewCount+playCount）与 tags（recordKey:tagId）维度（对齐 AuthorFilesFragment），标签增删/浏览统计变化（详情页点赞、浏览、标签管理）后返回全部页自动重渲染，不再依赖下拉刷新
+- **数据指纹补 tags 维度（v1.15）**：全部页 `mediaFingerprint` 追加 tags（recordKey:tagId）维度（对齐 AuthorFilesFragment），标签增删（详情页标签管理）后返回全部页自动重渲染；**不纳入浏览统计（stats）**——全部页按日期/出处分组不按热度排序，浏览只改变 viewCount 不影响列表内容，纳入会导致"浏览退出→返回"无意义重渲染（作者文件页同此策略）
 - **列表提交异步化（v1.15）**：全部/收藏/浏览历史/作者文件四页的 `submitMediaWithGroups`/`submitMedia` 已改为 `GroupedMediaAdapter` 的 `submitMediaWithGroupsAsync`/`submitMediaAsync` 变体（分组行组装与指纹计算在 `Dispatchers.Default`，主线程只提交），大库下不再卡顿
 - 空状态：无数据时不显示任何提示文本，保持空白
 
@@ -467,7 +467,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重/播放幂等、首页指纹加点赞浏览维度、收藏页与作者页 SP 监听、相册 COS 其他桶与切模式默认展开、全部页指纹补 stats/tags、列表提交异步化、LineChartView 触摸放行滚动、统计页序号防重、列数持久化）
+> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重/播放幂等、首页指纹加点赞维度（浏览统计不入指纹防内容跳动）、收藏页与作者页 SP 监听、相册 COS 其他桶与切模式默认展开、全部页/作者文件页指纹补 tags 维度（不含 stats）、列表提交异步化、LineChartView 触摸放行滚动、统计页序号防重、列数持久化）
 
 ## 应用图标
 

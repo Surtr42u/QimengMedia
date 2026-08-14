@@ -94,10 +94,6 @@ class HomeFragment : Fragment() {
     // v1.15：点赞变化版本号——点赞（likeCountsDirty 置脏）后递增，
     // 追加进 render fingerprint 强制触发重排，详情页点赞后返回首页排行/推荐随之刷新
     private var likeVersion = 0
-    // v1.15：浏览统计变化版本号——cachedStats 内容变化时递增（详见 observeData collect），
-    // 追加进 render fingerprint，浏览（viewCount+1）后返回首页自动重排
-    private var statsVersion = 0
-    private var lastStatsHash = 0
     // v1.12：render 并发去重——旧实现每次 setTab/刷新/collect 都 launch 新协程不取消旧的，
     // 旧 render 在 withContext(Default) 挂起期间 currentTab 已被改写时，会把旧 tab 的排序
     // 结果写入新 tab 键并提交旧列表（旧查询覆盖新查询）。这里取消上一个 render job。
@@ -306,13 +302,6 @@ class HomeFragment : Fragment() {
                     cachedAuthorMedia = authorMedia
                     cachedAuthors = authors
                     cachedStats = stats
-                    // v1.15：统计内容变化时递增 statsVersion（列表 hashCode 相同则视为未变化），
-                    // 详情页浏览（viewCount+1）后返回首页，fingerprint 变化触发重排
-                    val statsHash = stats.hashCode()
-                    if (statsHash != lastStatsHash) {
-                        statsVersion++
-                        lastStatsHash = statsHash
-                    }
                     cachedTags = tags
                     cachedAllTags = allTags
                     cachedHistory = history
@@ -425,8 +414,10 @@ class HomeFragment : Fragment() {
         } else {
             cachedMedia
         }
-        // v1.15：fingerprint 追加 likeVersion/statsVersion，点赞或浏览统计变化时强制触发重排
-        val newFp = "${workingMedia.size}|$currentTab|$rankPeriod|${filterState.hashCode()}|$query|$refreshSeed|$likeVersion|$statsVersion"
+        // v1.15：fingerprint 仅追加 likeVersion（点赞是用户显式操作，点赞后返回首页
+        // 排行/推荐随之刷新）；不纳入浏览统计——普通浏览退出后首页保持原样，
+        // 避免"浏览→返回"被统计变化（viewCount/时长）触发自动重排导致内容跳动
+        val newFp = "${workingMedia.size}|$currentTab|$rankPeriod|${filterState.hashCode()}|$query|$refreshSeed|$likeVersion"
         val oldFp = tabSortFingerprints[currentTab].orEmpty()
         if (newFp != oldFp) {
             // 日志放在短路块内：fingerprint 相同时（详情页切换、无关 Flow emit）静默，避免视觉噪音

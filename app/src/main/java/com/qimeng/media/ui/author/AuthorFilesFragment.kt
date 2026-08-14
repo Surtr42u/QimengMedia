@@ -236,11 +236,11 @@ class AuthorFilesFragment : Fragment() {
                         }
                     }
 
-                    // v1.12 修复：fp 追加 stats/tags 维度，标签增删/浏览统计变化后筛选能随之刷新
+                    // v1.12 修复：fp 追加 tags 维度，标签增删后筛选能随之刷新；
+                    // 不纳入浏览统计（stats）——作者文件页按日期/出处分组展示不按热度排序，
+                    // 浏览只改变 viewCount 不影响列表内容，纳入会导致"浏览退出→返回"无意义重渲染
                     val fp = buildString {
                         append("${media.size}|${authorFiles.size}|${cosMedia.size}|${media.firstOrNull()?.recordKey.orEmpty()}")
-                        append("|stats=")
-                        stats.forEach { append("${it.recordKey}:${it.viewCount + it.playCount},") }
                         append("|tags=")
                         tags.forEach { append("${it.recordKey}:${it.tagId},") }
                     }
