@@ -10,6 +10,20 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 崩溃专项日志 + 定位过快滑动闪退真凶（v1.16，2026-08-16）
+
+执行 AI：GLM-5.3
+
+用户报告"启动时偶发闪退、过快滑动容易闪退（不扫描时也出现）"，要求内置轻量闪退日志。实施中先读真机现有 app_log.txt，**直接抓到历史崩溃完整堆栈并锁定真凶**。
+
+| 类别 | 改动 |
+|---|---|
+| 崩溃日志 | `AppLog.recordCrash`：UncaughtExceptionHandler 先写 `files/crash_log.txt`（与 app_log.txt 分离——后者 2MB 滚动截断会把崩溃记录冲掉），带年份时间/线程/完整堆栈，保最近 20 次，仅崩溃时写零日常开销；读法 `adb shell run-as com.qimeng.media cat files/crash_log.txt` |
+| 真凶定位 | 历史崩溃堆栈：`SpngDecoder.decodePng` 的 `ByteBuffer.allocateDirect(134MB)`（4800×7000 PNG 原始像素）× LargeImageDecoder 并发 2 → 268MB 顶满 256MB Java 堆 → OutOfMemoryError 闪退在 main 线程抛出（协程 Suppressed 显示 Cancelling 状态，即快速滑动触发取消中仍完成分配）。对应场景：详情页过快滑动浏览超大图；与扫描无关 |
+| 已知待修（记录） | 修复方案待用户拍板：a) LargeImageDecoder 并发按图字节加权（大图独占降为 1）；b) 分配前检查可用堆不足时降级 Coil 降采样路径；c) 局部 catch OOM 回退（不优雅但有效） |
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（180 tests，0 failures）通过；`gradlew --stop` 已执行。
+
 ## 真机性能监控驱动的两项优化：扫描期预生成降速 + 看门狗降级记录带栈（v1.16，2026-08-16）
 
 执行 AI：GLM-5.3

@@ -49,9 +49,11 @@ class QimengApplication : Application() {
         anrWatchdog = AnrWatchdog()
         anrWatchdog.start()
 
-        // 全局异常处理：记录日志后委托给系统默认处理器，避免吞掉异常导致主线程静默死亡（ANR）
+        // 全局异常处理：崩溃专项记录（crash_log.txt，不受 app_log 2MB 截断）+ 常规日志后
+        // 委托给系统默认处理器，避免吞掉异常导致主线程静默死亡（ANR）
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            AppLog.recordCrash(thread.name, throwable)
             AppLog.e("QimengMedia", "Uncaught exception on ${thread.name}", throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }

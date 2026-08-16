@@ -345,6 +345,8 @@ while ($true) {
 - **D 级**日志（`主线程慢 Xms（高负载推进中，栈顶变化），非死锁，降级记录，栈顶:\n...`）= 高负载下推进变慢，非真 ANR，可忽略或用于性能观察。**v1.16 起附栈顶前 8 行**——此前仅摘要行无法定位代码位置（真机性能监控会话中 5-6 秒级"推进中变慢"多次出现，只能靠帧数据+内存交叉推断成因），现在栈顶直接给出慢在哪。
 - 旧版本（v1.7）的 E 级 `主线程阻塞 Xms（超过阈值 5000ms），疑似 ANR` 若栈顶在系统框架内部（非业务代码）且阻塞 6 秒左右，多为推进变慢误报，v1.8 已降级为 D 级。
 
+**崩溃专项日志**（v1.16 新增）：`files/crash_log.txt`，与 app_log.txt 分离（后者 2MB 滚动截断会把崩溃记录冲掉，尤其闪退重启后扫描日志量大）。UncaughtExceptionHandler 先写崩溃专项（带年份时间/线程/完整堆栈，保最近 20 次）再写 app_log 并委托系统。读取：`adb shell run-as com.qimeng.media cat files/crash_log.txt`，条目以 `==== CRASH ` 分隔。**已用它定位的真凶（v1.16 实测）**：详情页过快滑动浏览超大图时 `SpngDecoder.decodePng` 的 134MB direct 缓冲 ×2 并发顶满 256MB Java 堆 → OutOfMemoryError 闪退（与扫描无关）。
+
 **注意**：仅记录日志，不弹窗、不杀进程。ANR 发生时 App 仍可能响应（取决于阻塞是否解除）。
 
 **v1.15 加固**：`tickTimestamp` 加 `@Volatile`（主线程写、看门狗线程读的共享 Long，防 32 位设备 Long 撕裂读与可见性延迟导致误报/漏报）；`GpuInfo.maxTextureSize()` 的 `await` 加 2 秒超时兜底（探测线程若异常死亡不再主线程永久阻塞）。
