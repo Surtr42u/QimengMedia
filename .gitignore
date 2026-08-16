@@ -37,3 +37,6 @@ CON
 app/src/main/assets/FORMAT_SPEC.md
 PRN
 AUX
+
+# 数据备份功能导出的用户数据（含真实媒体库统计，绝不能提交）
+/qimeng_backup.json
