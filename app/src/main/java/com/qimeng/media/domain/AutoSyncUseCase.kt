@@ -49,25 +49,29 @@ class AutoSyncUseCase(
     /** 数据变化后触发：写单文件全量备份，30 秒防抖 */
     suspend fun triggerAutoSyncIfNeeded() {
         val now = System.currentTimeMillis()
-        // v1.x：先读当前防抖时间，仍在防抖期内则直接返回，不触发同步
-        if (now - lastAutoSyncTime.get() < AUTO_SYNC_DEBOUNCE_MS) return
+        // v1.x：防抖检查与 CAS 必须用同一快照值做期望——若分别两次 get()，两个触发
+        // 几乎同时到达时都能拿对方刚推进的新值成功 CAS，防抖被绕过导致重复写盘
+        val last = lastAutoSyncTime.get()
+        if (now - last < AUTO_SYNC_DEBOUNCE_MS) return
 
         val appPrefs = appPrefsManager.prefs.value
         if (!appPrefs.autoSync) return
 
         // v1.x：compareAndSet 原子更新防抖时间——失败说明其他协程已抢先触发（时间已推进），
         // 本协程不再重复执行 performSync，避免并发重复写盘
-        if (!lastAutoSyncTime.compareAndSet(lastAutoSyncTime.get(), now)) return
+        if (!lastAutoSyncTime.compareAndSet(last, now)) return
         performSync("自动同步")
     }
 
     /** App 进入后台触发：写单文件全量备份，60 秒防抖 */
     suspend fun triggerFullSync() {
         val now = System.currentTimeMillis()
-        if (now - lastFullSyncTime.get() < FULL_SYNC_DEBOUNCE_MS) return
+        // v1.x：同 triggerAutoSyncIfNeeded——检查与 CAS 用同一快照值，防并发双写
+        val last = lastFullSyncTime.get()
+        if (now - last < FULL_SYNC_DEBOUNCE_MS) return
 
         // v1.x：原子更新两处防抖时间（compareAndSet 失败说明已有并发触发，直接返回不重复执行）
-        if (!lastFullSyncTime.compareAndSet(lastFullSyncTime.get(), now)) return
+        if (!lastFullSyncTime.compareAndSet(last, now)) return
         lastAutoSyncTime.set(now)
         performSync("全量同步（后台触发）")
     }

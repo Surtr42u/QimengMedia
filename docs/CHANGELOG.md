@@ -10,6 +10,16 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 自动同步防抖 CAS 快照竞态修复（v1.16，2026-08-16）
+
+执行 AI：GLM-5.3
+
+对 8-14 巡检成果做"存活代码逐项亲读复核"时发现：`AutoSyncUseCase.triggerAutoSyncIfNeeded`/`triggerFullSync` 的防抖检查与 `compareAndSet(lastAutoSyncTime.get(), now)` 用了两次独立的 `get()`——两个数据变化触发几乎同时到达时，都可能通过检查并各自用对方刚推进的新值成功 CAS，防抖被绕过导致偶发重复执行 `performSync`（重复写一次备份；原子写+空库防护兜底，无数据风险）。修复：检查与 CAS 改用同一局部快照值做期望值（`AutoSyncUseCase.kt:50-77`），CAS 失败即放弃，并发双写窗口关闭。
+
+**同轮亲读复核结论**：8-14 巡检存活 16 项（分块数值/孤儿对账/监听配对/指纹回退/触摸决策等）全部真实落地且与 CHANGELOG 一致，无其他问题。
+
+**验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（180 tests，0 failures）通过；`gradlew --stop` 已执行。
+
 ## 全项目审查修复：45 项 bug/漏洞全量闭环（v1.16，2026-08-16）
 
 执行 AI：GLM-5.3（主 AI：审查派发/方案基线/点验/补丁/文档）+ 4 片 executor（扫描组/备份数据组/UI-A 组/UI-B 组）+ 1 轮 reviewer 对抗审查
