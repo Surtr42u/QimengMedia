@@ -10,6 +10,19 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 常看作者与标签详情页拆分双排行卡（v1.16，2026-08-16）
+
+执行 AI：GLM-5.3
+
+用户要求统计详情页（数据 tab「常看作者与标签」卡片点入）内的「常看排行」单卡拆为两张独立排行卡：「常看作者」Top 15 + 「常看标签」Top 10。主页面外部卡片保持作者/标签混合 Top 3 预览不变。
+
+| 类别 | 改动 |
+|---|---|
+| 布局 | `fragment_stats_detail.xml` 新增 `tagRankContainer` 标签排行卡（`bg_stat_card` 同卡样式 + `tagListTitleText`/`tagListSubtitleText`/`tagRankRecyclerView`，默认 gone，仅 MODE_AUTHORS 显示） |
+| 逻辑 | `StatsDetailFragment` 新增 `tagAdapter`（与作者排行共用点击回调：`tag:` 前缀跳搜索页、作者 id 跳作者文件页）；`observeAuthorsTagsMode` 设两卡标题/副标题（作者 Top 15 / 标签 Top 10），其余三模式显式隐藏 `tagRankContainer`；`renderAuthorsTags` 由 `adapter.submitList(authorItems + tagItems)`（混合 Top 20+20 单列表）改为作者 `take(15)` 与标签 `take(10)` 分别提交两张卡 |
+
+**验证**：`:app:assembleDebug` 通过；`gradlew --stop` 已执行。
+
 ## 全项目深度巡检：扫描/数据/UI 跨功能联动修复（v1.16，2026-08-14）
 
 执行 AI：deepseek-v4-flash（主 AI）+ 4 片 researcher + 3 片 executor + 2 轮 reviewer 对抗审查

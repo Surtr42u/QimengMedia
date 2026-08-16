@@ -228,7 +228,7 @@
 - 四种模式：
   - `MODE_TYPE_TREND`：类型浏览趋势——**两张独立对比卡**：「类型浏览趋势」卡（图片/视频/动图胶囊可多选，不同颜色折线叠加）+「来源浏览趋势」卡（常规/COS 胶囊可多选叠加），各卡一张 240dp 折线图（`LineChartView.setMultiSeries`，顶部图例 + 点击气泡含系列名）；基于按天浏览聚合。**v1.15：来源趋势 COS 判定改 combine 等待 dailyBrowse+cosMedia 两流齐备再渲染**（消除首帧 cachedCosKeys 为空先画错再重画的闪烁；数据固有限制：daily_browse 无 COS 标记字段，COS 文件删除后其历史浏览仍归为常规）
   - `MODE_FAVORITES`：常看文件——窗口内浏览聚合排行，支持「按热度/按时长」排序切换（副标题含停留时长）
-  - `MODE_AUTHORS`：常看作者与标签——按窗口浏览聚合的作者排行（Top 20）+ 标签排行（Top 20），标签条目可点击跳搜索页（**v1.15：`showSearchFragment(initialQuery)` 携带标签名跳转，修复打开空白搜索页**）
+  - `MODE_AUTHORS`：常看作者与标签——**两张独立排行卡**（v1.16 由单卡拆分）：「常看作者」Top 15 + 「常看标签」Top 10，按窗口浏览聚合，作者条目可点击跳作者文件页，标签条目可点击跳搜索页（**v1.15：`showSearchFragment(initialQuery)` 携带标签名跳转，修复打开空白搜索页**）
   - `MODE_DISTRIBUTION`：分布统计详情——类型/来源 ×（库存数量/大小 + 窗口浏览）对比卡片
 
 **数据源**（v1.14 起）：

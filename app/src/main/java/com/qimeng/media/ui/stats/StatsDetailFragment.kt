@@ -40,7 +40,7 @@ import java.util.Locale
  * 支持四种模式：
  * - [MODE_TYPE_TREND]：分类型浏览趋势（图片/视频/动图各自趋势 + 本地 vs COS 来源趋势）
  * - [MODE_FAVORITES]：常看文件详情（热门/沉浸最长/反复回看/新晋热门）
- * - [MODE_AUTHORS]：常看作者与标签详情（作者/标签浏览排行，标签条目可点击跳文件列表）
+ * - [MODE_AUTHORS]：常看作者与标签详情（两张独立排行卡：常看作者 Top 15 + 常看标签 Top 10，作者条目跳作者文件页，标签条目跳搜索页）
  * - [MODE_DISTRIBUTION]：分布统计详情（类型/来源库存 + 窗口浏览对比）
  *
  * 全部模式随时间范围（7天/30天/全部）联动：窗口内统计基于按天浏览聚合。
@@ -53,6 +53,11 @@ class StatsDetailFragment : Fragment() {
     }
 
     private val adapter by lazy {
+        RankListAdapter { item -> item.id?.let { handleItemClick(it) } }
+    }
+
+    /** 标签排行列表 adapter（仅 MODE_AUTHORS 使用，与作者排行同卡片样式、同点击跳转规则） */
+    private val tagAdapter by lazy {
         RankListAdapter { item -> item.id?.let { handleItemClick(it) } }
     }
 
@@ -92,6 +97,11 @@ class StatsDetailFragment : Fragment() {
         binding.rankRecyclerView.apply {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = this@StatsDetailFragment.adapter
+            isNestedScrollingEnabled = false
+        }
+        binding.tagRankRecyclerView.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = this@StatsDetailFragment.tagAdapter
             isNestedScrollingEnabled = false
         }
         observeData()
@@ -151,6 +161,7 @@ class StatsDetailFragment : Fragment() {
         binding.titleText.text = "类型浏览趋势" + rangeTitleSuffix
         binding.listTitleText.text = "类型趋势"
         binding.rankListContainer.visibility = View.VISIBLE
+        binding.tagRankContainer.visibility = View.GONE
         binding.distributionContainer.visibility = View.GONE
         binding.sortToggleText.visibility = View.GONE
         binding.listSubtitleText.text = "选择类型/来源，叠加对比各趋势"
@@ -339,6 +350,7 @@ class StatsDetailFragment : Fragment() {
         binding.titleText.text = "常看文件" + rangeTitleSuffix
         binding.listTitleText.text = "常看排行"
         binding.rankListContainer.visibility = View.VISIBLE
+        binding.tagRankContainer.visibility = View.GONE
         binding.distributionContainer.visibility = View.GONE
         binding.sortToggleText.visibility = View.VISIBLE
         setupFilesSortToggle()
@@ -428,11 +440,15 @@ class StatsDetailFragment : Fragment() {
 
     private fun CoroutineScope.observeAuthorsTagsMode() {
         binding.titleText.text = "常看作者与标签" + rangeTitleSuffix
-        binding.listTitleText.text = "常看排行"
+        // v1.16 拆分：原单卡「常看排行」拆为「常看作者」+「常看标签」两张独立卡
+        binding.listTitleText.text = "常看作者"
         binding.rankListContainer.visibility = View.VISIBLE
+        binding.listSubtitleText.text = "按浏览聚合 · Top 15"
+        binding.tagRankContainer.visibility = View.VISIBLE
+        binding.tagListTitleText.text = "常看标签"
+        binding.tagListSubtitleText.text = "按浏览聚合 · Top 10"
         binding.distributionContainer.visibility = View.GONE
         binding.sortToggleText.visibility = View.GONE
-        binding.listSubtitleText.text = "按浏览聚合的作者与标签"
         launch {
             combine(viewModel.authors, viewModel.allAuthorMedia) { authors, refs ->
                 authors to refs
@@ -454,7 +470,7 @@ class StatsDetailFragment : Fragment() {
     private var cachedAuthorRefs: List<com.qimeng.media.data.db.entity.AuthorMediaCrossRef> = emptyList()
     private var cachedMediaTags: List<com.qimeng.media.data.db.model.MediaTagName> = emptyList()
 
-    /** 渲染作者/标签浏览排行（作者在前，标签在后，标签条目可点击跳文件列表） */
+    /** 渲染作者/标签浏览排行（两张独立卡：常看作者 Top 15 + 常看标签 Top 10，条目可点击跳作者文件页/搜索页） */
     private fun renderAuthorsTags() {
         val window = windowDaily()
         val viewsByKey = window
@@ -496,7 +512,7 @@ class StatsDetailFragment : Fragment() {
 
         val maxAuthor = authorRows.firstOrNull()?.third ?: 0
         val maxTag = tagRows.firstOrNull()?.third ?: 0
-        val authorItems = authorRows.take(20).map { (id, name, views) ->
+        val authorItems = authorRows.take(15).map { (id, name, views) ->
             RankListAdapter.RankItem(
                 id = id,
                 title = name,
@@ -506,7 +522,7 @@ class StatsDetailFragment : Fragment() {
                 maxValue = maxAuthor
             )
         }
-        val tagItems = tagRows.take(20).map { (name, _, views) ->
+        val tagItems = tagRows.take(10).map { (name, _, views) ->
             RankListAdapter.RankItem(
                 id = "tag:$name",
                 title = name,
@@ -516,7 +532,8 @@ class StatsDetailFragment : Fragment() {
                 maxValue = maxTag
             )
         }
-        adapter.submitList(authorItems + tagItems)
+        adapter.submitList(authorItems)
+        tagAdapter.submitList(tagItems)
     }
 
     // ==================== 分布统计模式 ====================
@@ -524,6 +541,7 @@ class StatsDetailFragment : Fragment() {
     private fun CoroutineScope.observeDistributionMode() {
         binding.titleText.text = "分布统计详情"
         binding.rankListContainer.visibility = View.GONE
+        binding.tagRankContainer.visibility = View.GONE
         binding.distributionContainer.visibility = View.VISIBLE
         launch {
             combine(viewModel.allMedia, viewModel.allStats) { media, stats ->
