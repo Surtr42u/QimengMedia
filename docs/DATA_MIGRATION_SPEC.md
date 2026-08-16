@@ -121,7 +121,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| key | String | 设置项键名（恢复时跳过设备本地键 `backup_directory_uri`/`backup_directory_name`） |
+| key | String | 设置项键名（恢复时跳过设备本地键 `backup_directory_uri`/`backup_directory_name`）。注意：TXT 导入的结构化数据采用分片存储（v1.16 起），形如 `imported_txt_blocks_<fileName>#<序号>` 的多行 + `imported_txt_blocks_<fileName>#count` 记录片数，外部工具拼合时按 `#count` 顺序读取各片即可还原完整 JSON 数组；无 `#count` 时该 key 为旧版单行格式直接读取 |
 | value | String | 设置项值 |
 | updatedAtMillis | Long | 更新时间戳 |
 

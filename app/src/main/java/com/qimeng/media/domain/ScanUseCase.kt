@@ -339,7 +339,13 @@ class ScanUseCase(
         }
     }
 
-    /** 自动刷新实际执行逻辑（由 [autoRefreshAllSources] 在防重入保护下调用） */
+    /**
+     * 自动刷新实际执行逻辑（由 [autoRefreshAllSources] 在防重入保护下调用）。
+     * 行数备案（v1.16 审查后 127 行，红色区）：多源顺序刷新编排（常规+COS 各含
+     * 读→upsert→删 stale→源存在性确认→时间戳），v1.16 加 ScanSourceLocks 按源互斥与
+     * CancellationException 透传后超 120 行；扫描编排天然顺序耦合，拆分会割裂单源临界区
+     * 语义，按 GUIDE_CODE_MAINTENANCE §8「扫描编排」合理复杂度显式备案。
+     */
     private suspend fun doAutoRefreshAllSources(): List<MediaFileEntity> {
         val now = System.currentTimeMillis()
         if (now - lastAutoRefreshTime < AUTO_REFRESH_INTERVAL) return emptyList()

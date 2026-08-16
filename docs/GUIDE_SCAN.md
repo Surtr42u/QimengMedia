@@ -66,7 +66,7 @@
 - **空查询 SAF 复核**（v1.15 二次巡检；v1.16 全量审查加固）：MediaStore 查询为空时先走 SAF `scanTreeFast` 复核——`.nomedia`/Android 16 非标准目录 MediaStore 恒查不到，直接按空结果清理会把库中全部文件连带统计/历史/标签整源误删；SAF 复核有文件则以 SAF 结果为准（对齐手动/自动刷新路径的空→SAF 回退语义），SAF 也为空才确认目录真被清空并清理残留。**复核失败（权限撤销等异常）≠ 目录确认为空**：`runCatching.getOrNull()` 为 null 时记警告并跳过该源本轮（不 upsert 也不清理），防止 SAF 授权失效场景整源数据丢失
 - **SAF null 元数据回填**（v1.16）：SAF 回退实体的 width/height/durationMillis 为 null（未探测）时，`hasScanMetadataChanged` 视为"未知不判变更"；即便其他字段变化触发 upsert，也先用库中已有值回填 null 字段再整行写入（Room 整行 upsert 会覆盖，null=未知 ≠ 清空；MediaStore 主路径下次可见真实值可自愈）
 - **子目录不可读区分**（v1.16）：`SafMediaScanner.safeListFiles` 失败返回 null 与"空目录"区分，`scanDirectoryFast` 对 null 抛错使整次扫描失败、上层按失败跳过本轮——宁可整轮跳过不可误删（原异常返回空数组会被判 stale 删除）
-- **按源互斥**（v1.16）：`core/ScanSourceLocks.kt`（ConcurrentHashMap<String, Mutex>）按 sourceUri 串行化六个扫描入口（手动/刷新/COS 扫描/COS 刷新/自动刷新两循环/观察者增量）的"读 existingKeys→upsert→删 stale"库临界区，消除三方并发互删刚 upsert 的行；文件系统扫描在锁外，多源不整体串行
+- **按源互斥**（v1.16）：`core/ScanSourceLocks.kt`（ConcurrentHashMap<String, Mutex>）按 sourceUri 串行化六个扫描入口（手动/刷新/COS 扫描/COS 刷新/自动刷新两循环/观察者增量）的"读 existingKeys→upsert→删 stale"库临界区，消除三方并发互删刚 upsert 的行；文件系统扫描在锁外，多源不整体串行。**写入顺序约束**（v1.16）：手动 scanDirectory 先 upsertScanSource（登记源）再分批 upsertMedia（写文件），消除与启动期孤儿清理并发时新源文件因 sourceUri 未登记被误删的窗口
 - **刷新期不复活已删源**（v1.16）：5 处 `lastScannedAtMillis` upsert 前按 uriString 确认源仍存在（refreshScanSource/refreshCosSource 的 existing 为 null 时直接跳过），循环期间用户删除的源不再被空源行复活
 - **单飞保护**（v1.15）：`isRefreshing` AtomicBoolean 保证同一时刻只有一个自动刷新在跑（防抖 `cancel()` 只能取消挂起点，旧 job 已进 DB 事务时新 job 并发执行 upsert/delete 会产生竞态）；v1.16：刷新中到达的变更通知不再丢弃，刷新结束后 `pendingChangeCount > 0` 补一轮调度
 
