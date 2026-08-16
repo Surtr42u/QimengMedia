@@ -20,7 +20,7 @@
 |---|---|
 | 崩溃日志 | `AppLog.recordCrash`：UncaughtExceptionHandler 先写 `files/crash_log.txt`（与 app_log.txt 分离——后者 2MB 滚动截断会把崩溃记录冲掉），带年份时间/线程/完整堆栈，保最近 20 次，仅崩溃时写零日常开销；读法 `adb shell run-as com.qimeng.media cat files/crash_log.txt` |
 | 真凶定位 | 历史崩溃堆栈：`SpngDecoder.decodePng` 的 `ByteBuffer.allocateDirect(134MB)`（4800×7000 PNG 原始像素）× LargeImageDecoder 并发 2 → 268MB 顶满 256MB Java 堆 → OutOfMemoryError 闪退在 main 线程抛出（协程 Suppressed 显示 Cancelling 状态，即快速滑动触发取消中仍完成分配）。对应场景：详情页过快滑动浏览超大图；与扫描无关 |
-| 已知待修（记录） | 修复方案待用户拍板：a) LargeImageDecoder 并发按图字节加权（大图独占降为 1）；b) 分配前检查可用堆不足时降级 Coil 降采样路径；c) 局部 catch OOM 回退（不优雅但有效） |
+| 修复（用户拍板） | AndroidManifest 开启 `android:largeHeap="true"`：Java 堆上限 256MB→约 512MB（设备相关），2×134MB 大图解码叠加不再顶满；解码并发信号量本已封顶 2，叠加量不随上限增长，无新增 OOM 面。顺带 Coil 内存缓存（35% 堆）随大堆扩容，大图预载命中率提升。**不做项（用户决策）**：解码处 catch OOM 降级（极端 1 亿像素级单张图仍会崩，可接受）；大图字节加权并发（信号量封顶 2 后无必要，避免连续大图串行等待） |
 
 **验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（180 tests，0 failures）通过；`gradlew --stop` 已执行。
 
