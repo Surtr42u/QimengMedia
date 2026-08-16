@@ -115,7 +115,9 @@ class BackupManager(private val context: Context) {
             if (tagNames.isNotEmpty()) count++
 
             // 4. mediaTagRefs：按 tagName 查回本地真实 tagId 建关联（跳过本地不存在的媒体）
-            val mediaMap = database.mediaFileDao().getAll().associateBy { it.recordKey }
+            // 轻量投影：导入只需要 recordKey 存在性 + fileName 回填，不物化全量 18 列实体（对齐 v1.15 投影模式）
+            val mediaMap: Map<String, String> =
+                database.mediaFileDao().getAllKeysAndFileNames().associate { it.recordKey to it.fileName }
             val mediaTagArr = data.optJSONArray("mediaTagRefs")
             val tagRefs = mutableListOf<MediaTagCrossRef>()
             if (mediaTagArr != null) {
@@ -129,7 +131,7 @@ class BackupManager(private val context: Context) {
                         MediaTagCrossRef(
                             recordKey = recordKey,
                             tagId = localTag.tagId,
-                            fileName = mediaMap[recordKey]?.fileName ?: recordKey
+                            fileName = mediaMap[recordKey] ?: recordKey
                         )
                     )
                 }
@@ -216,8 +218,8 @@ class BackupManager(private val context: Context) {
         }
         val appPrefsJson = data.optJSONObject("appPrefs")
         if (appPrefsJson != null) {
-            appPrefsManager.importFromJson(appPrefsJson.toString())
-            count++
+            // 导入失败（JSON 结构异常）不计入成功段数，避免恢复计数虚增
+            if (appPrefsManager.importFromJson(appPrefsJson.toString())) count++
         }
         count
     }
@@ -246,43 +248,51 @@ class BackupManager(private val context: Context) {
     private suspend fun buildBackupJson(database: AppDatabase, appPrefsManager: AppPrefsManager): JSONObject {
         val db = database
         val now = System.currentTimeMillis()
+        // SharedPreferences 读取与数据库无关，放读事务外避免延长事务持有时间
         val detailPrefs = context.getSharedPreferences(PREFS_MEDIA_DETAIL, Context.MODE_PRIVATE)
         val favSet = detailPrefs.getStringSet(KEY_FAVORITES, emptySet()).orEmpty()
         val followPrefs = context.getSharedPreferences(PREFS_AUTHOR_FOLLOW, Context.MODE_PRIVATE)
         val followedIds = followPrefs.getStringSet("followed_authors", emptySet()).orEmpty()
 
-        return JSONObject().apply {
-            put("format", "qimeng_backup")
-            put("schemaVersion", CURRENT_BACKUP_SCHEMA_VERSION)
-            put("appIdentifier", "com.qimeng.media")
-            put("exportedAtMillis", now)
-            put("data", JSONObject().apply {
-                put("mediaFiles", exportArray(db.mediaFileDao().getAll()) { it.toBackupJson() })
-                put("settings", exportArray(db.settingDao().getAll()) { it.toBackupJson() })
-                put("authors", exportArray(db.authorDao().getAllAuthors()) { it.toBackupJson() })
-                put("authorMediaRefs", exportArray(db.authorDao().observeAllAuthorMedia().firstOrNull().orEmpty()) { it.toBackupJson() })
-                put("tags", exportArray(db.tagDao().getAllTags()) { it.toBackupJson() })
-                // mediaTagRefs 带 tagName 冗余：AI 读备份 JSON 无需再查 tags 表即可理解文件-标签关联
-                val tagIdToName = db.tagDao().getAllTags().associateBy { it.tagId }
-                put("mediaTagRefs", exportArray(db.tagDao().getAllCrossRefs()) { xref ->
-                    JSONObject().apply {
-                        put("recordKey", xref.recordKey)
-                        put("tagName", tagIdToName[xref.tagId]?.name ?: "")
-                    }
+        // 多表导出读取段整体包读事务取一致快照：扫描并发期两次读 tags 可能不一致，
+        // 导出的 mediaTagRefs 会带出 tagName=""，恢复时该关联被静默丢弃。
+        // 调用链已在 Dispatchers.IO 上，withTransaction 内无主线程限制冲突。
+        return db.withTransaction {
+            // tags 只查一次：导出列表与 tagId→name 映射复用同一份结果
+            val allTags = db.tagDao().getAllTags()
+            val tagIdToName = allTags.associateBy { it.tagId }
+            JSONObject().apply {
+                put("format", "qimeng_backup")
+                put("schemaVersion", CURRENT_BACKUP_SCHEMA_VERSION)
+                put("appIdentifier", "com.qimeng.media")
+                put("exportedAtMillis", now)
+                put("data", JSONObject().apply {
+                    put("mediaFiles", exportArray(db.mediaFileDao().getAll()) { it.toBackupJson() })
+                    put("settings", exportArray(db.settingDao().getAll()) { it.toBackupJson() })
+                    put("authors", exportArray(db.authorDao().getAllAuthors()) { it.toBackupJson() })
+                    put("authorMediaRefs", exportArray(db.authorDao().observeAllAuthorMedia().firstOrNull().orEmpty()) { it.toBackupJson() })
+                    put("tags", exportArray(allTags) { it.toBackupJson() })
+                    // mediaTagRefs 带 tagName 冗余：AI 读备份 JSON 无需再查 tags 表即可理解文件-标签关联
+                    put("mediaTagRefs", exportArray(db.tagDao().getAllCrossRefs()) { xref ->
+                        JSONObject().apply {
+                            put("recordKey", xref.recordKey)
+                            put("tagName", tagIdToName[xref.tagId]?.name ?: "")
+                        }
+                    })
+                    // albumRules 导出全部规则（含禁用）：禁用规则需随备份迁移，恢复后按 enabled 字段还原
+                    put("albumRules", exportArray(db.albumRuleDao().observeAllRules().firstOrNull().orEmpty()) { it.toBackupJson() })
+                    put("mediaStats", exportArray(db.viewStatsDao().getAllByFileName()) { it.toBackupJson() })
+                    put("dailyBrowse", exportArray(db.dailyBrowseDao().getAll()) { it.toBackupJson() })
+                    put("history", exportArray(db.viewHistoryDao().getLatest(HISTORY_EXPORT_LIMIT)) { it.toBackupJson() })
+                    put("scanSources", exportArray(db.scanSourceDao().getAllSources()) { it.toBackupJson() })
+                    put("timelineTags", exportArray(db.timelineTagDao().getAll()) { it.toBackupJson() })
+                    put("cosWorks", exportArray(db.cosWorkDao().getAll()) { it.toBackupJson() })
+                    put("likes", exportLikesJson(detailPrefs))
+                    put("favorites", JSONArray().apply { favSet.sorted().forEach { put(it) } })
+                    put("followedAuthorIds", JSONArray().apply { followedIds.sorted().forEach { put(it) } })
+                    put("appPrefs", JSONObject(appPrefsManager.exportToJson()))
                 })
-                // albumRules 导出全部规则（含禁用）：禁用规则需随备份迁移，恢复后按 enabled 字段还原
-                put("albumRules", exportArray(db.albumRuleDao().observeAllRules().firstOrNull().orEmpty()) { it.toBackupJson() })
-                put("mediaStats", exportArray(db.viewStatsDao().getAllByFileName()) { it.toBackupJson() })
-                put("dailyBrowse", exportArray(db.dailyBrowseDao().getAll()) { it.toBackupJson() })
-                put("history", exportArray(db.viewHistoryDao().getLatest(HISTORY_EXPORT_LIMIT)) { it.toBackupJson() })
-                put("scanSources", exportArray(db.scanSourceDao().getAllSources()) { it.toBackupJson() })
-                put("timelineTags", exportArray(db.timelineTagDao().getAll()) { it.toBackupJson() })
-                put("cosWorks", exportArray(db.cosWorkDao().getAll()) { it.toBackupJson() })
-                put("likes", exportLikesJson(detailPrefs))
-                put("favorites", JSONArray().apply { favSet.sorted().forEach { put(it) } })
-                put("followedAuthorIds", JSONArray().apply { followedIds.sorted().forEach { put(it) } })
-                put("appPrefs", JSONObject(appPrefsManager.exportToJson()))
-            })
+            }
         }
     }
 
@@ -380,117 +390,149 @@ class BackupManager(private val context: Context) {
         put("fileCount", fileCount); put("indexedAtMillis", indexedAtMillis); put("sourceUri", sourceUri)
     }
 
-    private fun JSONObject.toMediaFileEntity() = MediaFileEntity(
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        displayName = optString("displayName", ""),
-        extension = optString("extension", ""),
-        mediaType = optString("mediaType", "image"),
-        uriString = optString("uriString", ""),
-        folderName = optString("folderName", ""),
-        pathHash = optString("pathHash", ""),
-        sizeBytes = optLong("sizeBytes", 0),
-        modifiedAtMillis = optLong("modifiedAtMillis", 0),
-        width = optNullableLong("width")?.toInt(),
-        height = optNullableLong("height")?.toInt(),
-        durationMillis = optNullableLong("durationMillis"),
-        isDuplicateName = optBoolean("isDuplicateName", false),
-        isCosFile = optBoolean("isCosFile", false),
-        indexedAtMillis = optLong("indexedAtMillis", 0),
-        sourceUri = optNullableString("sourceUri")
-    )
+    // 主键/外键字段（recordKey/key/authorId/uriString 等）空串零校验直接入库会产生无法关联的脏行，
+    // 各导入映射统一约定：关键键字段 isBlank 时返回 null，由 importArray 跳过该条目。
 
-    private fun JSONObject.toSettingEntity() = SettingEntity(
-        key = optString("key", ""),
-        value = optString("value", ""),
-        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
-    )
+    private fun JSONObject.toMediaFileEntity() =
+        if (optString("recordKey", "").isBlank()) null
+        else MediaFileEntity(
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            displayName = optString("displayName", ""),
+            extension = optString("extension", ""),
+            mediaType = optString("mediaType", "image"),
+            uriString = optString("uriString", ""),
+            folderName = optString("folderName", ""),
+            pathHash = optString("pathHash", ""),
+            // 文件大小/时间戳负数无业务语义，统一钳为非负（与 viewCount 等统计字段一致）
+            sizeBytes = optLong("sizeBytes", 0).coerceAtLeast(0L),
+            modifiedAtMillis = optLong("modifiedAtMillis", 0).coerceAtLeast(0L),
+            width = optNullableLong("width")?.toInt(),
+            height = optNullableLong("height")?.toInt(),
+            durationMillis = optNullableLong("durationMillis"),
+            isDuplicateName = optBoolean("isDuplicateName", false),
+            isCosFile = optBoolean("isCosFile", false),
+            indexedAtMillis = optLong("indexedAtMillis", 0).coerceAtLeast(0L),
+            sourceUri = optNullableString("sourceUri")
+        )
 
-    private fun JSONObject.toAuthorEntity() = AuthorEntity(
-        // authorId 列为 TEXT 主键无长度约束，与 toAuthorMediaCrossRef 保持一致不截断，避免超长 authorId 截断后 FK 匹配不上
-        authorId = optString("authorId", ""),
-        displayName = optString("displayName", ""),
-        createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis()),
-        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
-    )
+    private fun JSONObject.toSettingEntity() =
+        if (optString("key", "").isBlank()) null
+        else SettingEntity(
+            key = optString("key", ""),
+            value = optString("value", ""),
+            updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
+        )
 
-    private fun JSONObject.toAuthorMediaCrossRef() = AuthorMediaCrossRef(
-        authorId = optString("authorId", ""),
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        isMatched = optBoolean("isMatched", true)
-    )
+    private fun JSONObject.toAuthorEntity() =
+        if (optString("authorId", "").isBlank()) null
+        else AuthorEntity(
+            // authorId 列为 TEXT 主键无长度约束，与 toAuthorMediaCrossRef 保持一致不截断，避免超长 authorId 截断后 FK 匹配不上
+            authorId = optString("authorId", ""),
+            displayName = optString("displayName", ""),
+            createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis()),
+            updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
+        )
 
-    private fun JSONObject.toTagEntity() = TagEntity(
-        tagId = 0,
-        name = optString("name", ""),
-        createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis())
-    )
+    private fun JSONObject.toAuthorMediaCrossRef() =
+        if (optString("authorId", "").isBlank() || optString("recordKey", "").isBlank()) null
+        else AuthorMediaCrossRef(
+            authorId = optString("authorId", ""),
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            isMatched = optBoolean("isMatched", true)
+        )
 
-    private fun JSONObject.toAlbumRuleEntity() = AlbumRuleEntity(
-        albumRuleId = 0,
-        sourceName = optString("sourceName", ""),
-        enabled = optBoolean("enabled", true),
-        createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis()),
-        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
-    )
+    private fun JSONObject.toTagEntity() =
+        if (optString("name", "").isBlank()) null
+        else TagEntity(
+            tagId = 0,
+            name = optString("name", ""),
+            createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis())
+        )
 
-    private fun JSONObject.toViewStatsEntity() = ViewStatsEntity(
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        viewCount = optInt("viewCount", 0).coerceAtLeast(0),
-        playCount = optInt("playCount", 0).coerceAtLeast(0),
-        totalBrowseSeconds = optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
-        lastOpenedAtMillis = optNullableLong("lastOpenedAtMillis"),
-        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
-    )
+    private fun JSONObject.toAlbumRuleEntity() =
+        if (optString("sourceName", "").isBlank()) null
+        else AlbumRuleEntity(
+            albumRuleId = 0,
+            sourceName = optString("sourceName", ""),
+            enabled = optBoolean("enabled", true),
+            createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis()),
+            updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis())
+        )
 
-    private fun JSONObject.toViewHistoryEntity() = ViewHistoryEntity(
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        mediaType = optString("mediaType", "image"),
-        openedAtMillis = optLong("openedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
-    )
+    private fun JSONObject.toViewStatsEntity() =
+        if (optString("recordKey", "").isBlank()) null
+        else ViewStatsEntity(
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            viewCount = optInt("viewCount", 0).coerceAtLeast(0),
+            playCount = optInt("playCount", 0).coerceAtLeast(0),
+            totalBrowseSeconds = optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
+            lastOpenedAtMillis = optNullableLong("lastOpenedAtMillis"),
+            updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
+        )
 
-    private fun JSONObject.toDailyBrowseEntity() = DailyBrowseEntity(
-        recordKeyDay = optString("recordKey", "") + "@" + optLong("dayStartMillis", 0L),
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        mediaType = optString("mediaType", "image"),
-        dayStartMillis = optLong("dayStartMillis", 0L).coerceAtLeast(0L),
-        viewCount = optInt("viewCount", 0).coerceAtLeast(0),
-        playCount = optInt("playCount", 0).coerceAtLeast(0),
-        totalBrowseSeconds = optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
-        updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
-    )
+    private fun JSONObject.toViewHistoryEntity() =
+        if (optString("recordKey", "").isBlank()) null
+        else ViewHistoryEntity(
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            mediaType = optString("mediaType", "image"),
+            openedAtMillis = optLong("openedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
+        )
 
-    private fun JSONObject.toScanSourceEntity() = ScanSourceEntity(
-        uriString = optString("uriString", ""),
-        displayName = optString("displayName", ""),
-        isBackupDirectory = optBoolean("isBackupDirectory", false),
-        isCosDirectory = optBoolean("isCosDirectory", false),
-        addedAtMillis = optLong("addedAtMillis", System.currentTimeMillis()),
-        lastScannedAtMillis = optNullableLong("lastScannedAtMillis")
-    )
+    private fun JSONObject.toDailyBrowseEntity(): DailyBrowseEntity? {
+        // dayStartMillis 先钳制为局部变量再用于主键与字段两处：负数直拼主键会产生
+        // "key@-5"/dayStart=0 的矛盾行，且不同负值归零后撞同一主键互相覆盖
+        val dayStart = optLong("dayStartMillis", 0L).coerceAtLeast(0L)
+        return if (optString("recordKey", "").isBlank()) null
+        else DailyBrowseEntity(
+            recordKeyDay = optString("recordKey", "") + "@" + dayStart,
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            mediaType = optString("mediaType", "image"),
+            dayStartMillis = dayStart,
+            viewCount = optInt("viewCount", 0).coerceAtLeast(0),
+            playCount = optInt("playCount", 0).coerceAtLeast(0),
+            totalBrowseSeconds = optLong("totalBrowseSeconds", 0).coerceAtLeast(0L),
+            updatedAtMillis = optLong("updatedAtMillis", System.currentTimeMillis()).coerceAtLeast(0L)
+        )
+    }
 
-    private fun JSONObject.toTimelineTagEntity() = TimelineTagEntity(
-        timelineTagId = 0,
-        recordKey = optString("recordKey", ""),
-        fileName = optString("fileName", ""),
-        timeMillis = optLong("timeMillis", 0),
-        name = optString("name", ""),
-        createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis())
-    )
+    private fun JSONObject.toScanSourceEntity() =
+        if (optString("uriString", "").isBlank()) null
+        else ScanSourceEntity(
+            uriString = optString("uriString", ""),
+            displayName = optString("displayName", ""),
+            isBackupDirectory = optBoolean("isBackupDirectory", false),
+            isCosDirectory = optBoolean("isCosDirectory", false),
+            addedAtMillis = optLong("addedAtMillis", System.currentTimeMillis()),
+            lastScannedAtMillis = optNullableLong("lastScannedAtMillis")
+        )
 
-    private fun JSONObject.toCosWorkEntity() = CosWorkEntity(
-        id = 0,
-        authorName = optString("authorName", ""),
-        workName = optString("workName", ""),
-        folderUri = optString("folderUri", ""),
-        fileCount = optInt("fileCount", 0).coerceAtLeast(0),
-        indexedAtMillis = optLong("indexedAtMillis", System.currentTimeMillis()),
-        sourceUri = optString("sourceUri", "")
-    )
+    private fun JSONObject.toTimelineTagEntity() =
+        if (optString("recordKey", "").isBlank()) null
+        else TimelineTagEntity(
+            timelineTagId = 0,
+            recordKey = optString("recordKey", ""),
+            fileName = optString("fileName", ""),
+            timeMillis = optLong("timeMillis", 0),
+            name = optString("name", ""),
+            createdAtMillis = optLong("createdAtMillis", System.currentTimeMillis())
+        )
+
+    private fun JSONObject.toCosWorkEntity() =
+        if (optString("folderUri", "").isBlank()) null
+        else CosWorkEntity(
+            id = 0,
+            authorName = optString("authorName", ""),
+            workName = optString("workName", ""),
+            folderUri = optString("folderUri", ""),
+            fileCount = optInt("fileCount", 0).coerceAtLeast(0),
+            indexedAtMillis = optLong("indexedAtMillis", System.currentTimeMillis()),
+            sourceUri = optString("sourceUri", "")
+        )
 
     // ===== SharedPreferences 导入 =====
 
@@ -596,10 +638,12 @@ class BackupManager(private val context: Context) {
             if (oldFile != null) {
                 oldMovedToBak = oldFile.renameTo(bakName)
                 if (!oldMovedToBak) {
-                    // 部分 SAF provider 不支持重命名已存在文件：退化路径——.tmp 已校验通过，
-                    // 先删旧再 rename 新文件，保证删旧前新文件已就绪
-                    AppLog.w("BackupManager", "writeJsonAtomic 旧备份改名 .bak 失败，退化为校验后先删旧")
-                    oldFile.delete()
+                    // 部分 SAF provider 不支持重命名已存在文件。此处必须放弃本次导出（删 .tmp、
+                    // 保留旧备份完整）：旧版退化路径"先删旧再 rename 新文件"，若 rename 因同类
+                    // provider 缺陷再次失败，主备份文件将彻底消失——宁可本次导出失败不丢旧备份。
+                    AppLog.w("BackupManager", "writeJsonAtomic 旧备份改名 .bak 失败，放弃本次导出以保留旧备份")
+                    tempFile.delete()
+                    return false
                 }
             }
             if (!tempFile.renameTo(name)) {

@@ -145,7 +145,13 @@ class AuthorFilesFragment : Fragment() {
 
         // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
         PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.authorFilesRecycler,
-            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
+            onColumnsChanged = { newCols ->
+                appPrefsManager?.updateGridColumnsAll(newCols)
+                // v1.16：列数变化同步缩略图解码尺寸（屏宽/列数估算），2 列不模糊、5 列不浪费
+                adapter.updateThumbnailSize(newCols)
+            })
+        // v1.16：初始 setup 按当前列数设定缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
     }
 
     private fun setupChips() {
@@ -281,10 +287,9 @@ class AuthorFilesFragment : Fragment() {
                 val sourceGroups = if (isCosAuthor) emptyMap() // COS 作者不需要作品分组（出处=作者）
                 else MediaGroupHelper.groupBySource(filtered)
                 val charGroups = if (viewMode == VIEW_MODE_CHARACTER) {
-                    val baseForChars = if (selectedSources.isNotEmpty() && !isCosAuthor) {
-                        val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                        filtered.filter { it in sourceMediaSet }
-                    } else filtered
+                    // v1.16：删除按 selectedSources 过滤 baseForChars 的死分支——CHARACTER 模式下
+                    // selectedSources 已被 setViewMode/updateAuthorUI 清空，分支永不触发（与 AllFilesFragment 对齐）
+                    val baseForChars = filtered
                     if (isCosAuthor) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
                     else MediaGroupHelper.groupByCharacter(baseForChars)
                 } else emptyMap()
@@ -491,6 +496,8 @@ class AuthorFilesFragment : Fragment() {
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
         // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
         appPrefsManager?.updateGridColumnsAll(columnsRef.value)
+        // v1.16：列数变化同步缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
         val iconRes = when (columnsRef.value) {
             2 -> R.drawable.ic_grid_2
             3 -> R.drawable.ic_grid_3

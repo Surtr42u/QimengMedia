@@ -8,9 +8,11 @@ import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.net.toUri
 import com.qimeng.media.core.AppLog
+import com.qimeng.media.core.ScanSourceLocks
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,7 +55,9 @@ class MediaStoreObserver(
     // 同一时刻只有一个刷新任务在跑（与 ScanUseCase.isAutoRefreshing 思路一致）
     private val isRefreshing = AtomicBoolean(false)
 
-    // 已注册的常规扫描源（非 COS、非备份）
+    // 已注册的常规扫描源（非 COS、非备份）。@Volatile：register 在主线程写、
+    // 刷新协程在 IO 线程读（runCatching 失败时的回退数据源），保证可见性
+    @Volatile
     private var registeredSources: List<ScanSourceEntity> = emptyList()
 
     private val imageObserver = object : ContentObserver(handler) {
@@ -114,10 +118,6 @@ class MediaStoreObserver(
         }
     }
 
-    fun updateSources(sources: List<ScanSourceEntity>) {
-        registeredSources = sources
-    }
-
     /**
      * 防抖合并多次变更通知为一次刷新（v1.7）。
      * 计数器统计防抖期间的通知次数，用于 log 诊断合并效果。
@@ -139,6 +139,8 @@ class MediaStoreObserver(
                 refreshAllSources(count)
             } finally {
                 isRefreshing.set(false)
+                // 刷新进行中到达的变更通知不丢弃：累计计数 >0 时再调度一轮防抖刷新
+                if (pendingChangeCount.get() > 0) scheduleRefresh()
             }
         }
     }
@@ -160,72 +162,105 @@ class MediaStoreObserver(
         AppLog.d("AutoRefresh", "refreshAllSources: mergedChanges=$mergedChangeCount, sources=${sources.size}")
 
         for (source in sources) {
-            try {
-                val filePath = mediaStoreScanner.safUriToFilePath(source.uriString.toUri())
-                if (filePath == null) {
-                    AppLog.w("AutoRefresh", "Cannot convert URI to path: ${source.uriString}")
-                    continue
-                }
+            // 按源互斥：与手动扫描/自动刷新并发写同一源时，防止后完成方把先完成方
+            // 新 upsert 的行当 stale 删除（只包单源临界区，多源循环不整体串行）
+            ScanSourceLocks.withSourceLock(source.uriString) { refreshSingleSource(source) }
+        }
+    }
 
-                val mediaFiles = mediaStoreScanner.queryByFolderPath(filePath, source.uriString)
-
-                // v1.x：MediaStore 查询为空时先走 SAF 复核再决定是否清理残留——
-                // .nomedia / Android 16 非标准目录 MediaStore 恒查不到，空结果会被误判为
-                // "目录清空"整源删除（连带统计/历史/标签）。SAF 复核有文件则以 SAF 结果
-                // 为准（对齐 ScanUseCase 手动/自动刷新路径的空→SAF 回退语义），
-                // SAF 也为空才确认目录真被清空并清理残留（保留 v1.15 的残留清理语义）。
-                val safeMediaFiles = if (mediaFiles.isEmpty()) {
-                    runCatching { safMediaScanner.scanTreeFast(source.uriString.toUri(), source.uriString) }
-                        .getOrDefault(mediaFiles)
-                } else {
-                    mediaFiles
-                }
-
-                // 增量更新（v1.12：按 sourceUri 精确匹配，避免 URI 前缀跨命名空间失效）
-                val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
-
-                // v1.x：只加载"扫描结果中已存在库中的 key"的实体用于元数据比较，
-                // 避免全表加载与无谓全量 upsert（SAF 回退路径尺寸字段为 null 时也不会被覆盖成空）
-                val existingByKey = safeMediaFiles
-                    .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
-                    .distinct()
-                    .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
-                    .toMap()
-
-                // v1.x：不仅 upsert 新 key，同名覆盖/重编码文件元数据有变化时也更新，
-                // 避免 sizeBytes/duration/width/height/modifiedAtMillis 永久陈旧。
-                val newOrUpdated = safeMediaFiles.filter { file ->
-                    file.recordKey !in existingKeys ||
-                        existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
-                }
-                if (newOrUpdated.isNotEmpty()) {
-                    // v1.x：分块 upsert 避免大变更（数千文件）单次调用超过 SQLite 绑定参数上限
-                    //（旧设备 999）抛 SQLiteException 导致整源刷新失败（与 ScanUseCase 分块模式一致）
-                    newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-                    AppLog.d("AutoRefresh", "Auto-refreshed ${source.displayName}: +${newOrUpdated.size} files")
-                    // v1.16：增量新增/更新文件同步触发缩略图预生成，填充本地 WebP 缓存。
-                    // 视频文件无缓存时滚动中只有 Coil 首帧内存缓存（adapter 不再后台双解），
-                    // 本地文件缓存依赖此处 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底。
-                    // 回调内部自行 launch，不阻塞增量刷新；异常已由 ThumbnailUseCase 内部兜底。
-                    runCatching { onFilesChanged?.invoke(newOrUpdated) }
-                }
-
-                // 清理已删除的文件（v1.x：目录被清空导致查询为空时也要执行 staleKeys 清理，
-                // 旧实现空查询直接 continue，跳过下方清理导致 DB 行残留。空查询先经上方
-                // SAF 复核——SAF 仍有文件则走 upsert 分支，走到这里说明 SAF 复核也为空，
-                // 目录确被清空或已不可访问，按 staleKeys 清理残留，对齐 v1.15 语义）
-                val scannedKeys = safeMediaFiles.map { it.recordKey }.toSet()
-                val staleKeys = existingKeys.filter { it !in scannedKeys }
-                if (staleKeys.isNotEmpty()) {
-                    repository.deleteMediaAndRefs(staleKeys)
-                    AppLog.d("AutoRefresh", "Auto-cleaned ${source.displayName}: -${staleKeys.size} files")
-                }
-
-                // 更新扫描时间
-                repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
-            } catch (e: Exception) {
-                AppLog.e("AutoRefresh", "Auto-refresh failed for ${source.displayName}", e)
+    /** 单源增量刷新（在 [ScanSourceLocks.withSourceLock] 临界区内执行） */
+    private suspend fun refreshSingleSource(source: ScanSourceEntity) {
+        try {
+            val filePath = mediaStoreScanner.safUriToFilePath(source.uriString.toUri())
+            if (filePath == null) {
+                AppLog.w("AutoRefresh", "Cannot convert URI to path: ${source.uriString}")
+                return
             }
+
+            val mediaFiles = mediaStoreScanner.queryByFolderPath(filePath, source.uriString)
+
+            // v1.x：MediaStore 查询为空时先走 SAF 复核再决定是否清理残留——
+            // .nomedia / Android 16 非标准目录 MediaStore 恒查不到，空结果会被误判为
+            // "目录清空"整源删除（连带统计/历史/标签）。SAF 复核有文件则以 SAF 结果
+            // 为准（对齐 ScanUseCase 手动/自动刷新路径的空→SAF 回退语义），
+            // SAF 也为空才确认目录真被清空并清理残留（保留 v1.15 的残留清理语义）。
+            // SAF 复核失败 ≠ 目录为空：权限撤销等异常时跳过该源本轮（不 upsert 也不清理），
+            // 仅 SAF 成功返回（含空列表）才继续，防止整源记录被当 stale 误删导致数据永久丢失
+            val safeMediaFiles = if (mediaFiles.isEmpty()) {
+                val rechecked = runCatching {
+                    safMediaScanner.scanTreeFast(source.uriString.toUri(), source.uriString)
+                }.getOrNull()
+                if (rechecked == null) {
+                    AppLog.w("AutoRefresh", "SAF recheck failed for ${source.displayName}, skip this round")
+                    return
+                }
+                rechecked
+            } else {
+                mediaFiles
+            }
+
+            // 增量更新（v1.12：按 sourceUri 精确匹配，避免 URI 前缀跨命名空间失效）
+            val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
+
+            // v1.x：只加载"扫描结果中已存在库中的 key"的实体用于元数据比较，
+            // 避免全表加载与无谓全量 upsert（SAF 回退路径尺寸字段为 null 时也不会被覆盖成空）
+            val existingByKey = safeMediaFiles
+                .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
+                .distinct()
+                .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
+                .toMap()
+
+            // v1.x：不仅 upsert 新 key，同名覆盖/重编码文件元数据有变化时也更新，
+            // 避免 sizeBytes/duration/width/height/modifiedAtMillis 永久陈旧。
+            // SAF 回退实体的 width/height/durationMillis 可能为 null（未探测）：Room 整行 upsert
+            // 会把库中真实值覆盖为 null，upsert 前用库中已有值回填（null=未知 ≠ 清空）
+            val newOrUpdated = safeMediaFiles.map { file ->
+                val existing = existingByKey[file.recordKey]
+                if (existing != null && (file.width == null || file.height == null || file.durationMillis == null)) {
+                    file.copy(
+                        width = file.width ?: existing.width,
+                        height = file.height ?: existing.height,
+                        durationMillis = file.durationMillis ?: existing.durationMillis
+                    )
+                } else {
+                    file
+                }
+            }.filter { file ->
+                file.recordKey !in existingKeys ||
+                    existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+            }
+            if (newOrUpdated.isNotEmpty()) {
+                // v1.x：分块 upsert 避免大变更（数千文件）单次调用超过 SQLite 绑定参数上限
+                //（旧设备 999）抛 SQLiteException 导致整源刷新失败（与 ScanUseCase 分块模式一致）
+                newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                AppLog.d("AutoRefresh", "Auto-refreshed ${source.displayName}: +${newOrUpdated.size} files")
+                // v1.16：增量新增/更新文件同步触发缩略图预生成，填充本地 WebP 缓存。
+                // 视频文件无缓存时滚动中只有 Coil 首帧内存缓存（adapter 不再后台双解），
+                // 本地文件缓存依赖此处 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底。
+                // 回调内部自行 launch，不阻塞增量刷新；异常已由 ThumbnailUseCase 内部兜底。
+                runCatching { onFilesChanged?.invoke(newOrUpdated) }
+            }
+
+            // 清理已删除的文件（v1.x：目录被清空导致查询为空时也要执行 staleKeys 清理，
+            // 旧实现空查询直接跳过清理导致 DB 行残留。空查询先经上方 SAF 复核——
+            // SAF 仍有文件则走 upsert 分支，走到这里说明 SAF 复核成功且为空，
+            // 目录确被清空，按 staleKeys 清理残留，对齐 v1.15 语义）
+            val scannedKeys = safeMediaFiles.map { it.recordKey }.toSet()
+            val staleKeys = existingKeys.filter { it !in scannedKeys }
+            if (staleKeys.isNotEmpty()) {
+                repository.deleteMediaAndRefs(staleKeys)
+                AppLog.d("AutoRefresh", "Auto-cleaned ${source.displayName}: -${staleKeys.size} files")
+            }
+
+            // 更新扫描时间。循环期间源可能已被用户删除：确认仍存在才写，
+            // 防止 source.copy(lastScannedAtMillis) 复活已删源
+            if (repository.getScanSources().any { it.uriString == source.uriString }) {
+                repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
+            }
+        } catch (e: Exception) {
+            // 取消必须向上透传：吞掉会破坏外层协程取消语义
+            if (e is CancellationException) throw e
+            AppLog.e("AutoRefresh", "Auto-refresh failed for ${source.displayName}", e)
         }
     }
 

@@ -423,10 +423,13 @@ class BiliPlayerView @JvmOverloads constructor(
     private val updateProgressRunnable = object : Runnable {
         override fun run() {
             val player = playerView.player
+            // v1.16 修复：player 未挂载时不再排下一轮，避免永久空轮询；
+            // setPlayer() 与 onAttachedToWindow() 均会重新 post 恢复轮询
+            if (player == null) return
             // v1.15：手势拖拽期间也跳过轮询更新（原只跳过 seekbar 拖动，横滑手势拖进度时
             // isSeekbarDragging 为 false，200ms 轮询用 player.currentPosition 覆盖手势预览，
             // 导致进度条抖动、seek 落点被回写）
-            if (player != null && !isSeekbarDragging && !isGestureDragging) {
+            if (!isSeekbarDragging && !isGestureDragging) {
                 val pos = player.currentPosition
                 val d = duration
                 if (d > 0) {

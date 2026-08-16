@@ -258,7 +258,7 @@ class ZoomImageView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
-        val handled = gestureDetector.onTouchEvent(event)
+        gestureDetector.onTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
             clampScaleEnd()
             isGestureActive = false
@@ -266,7 +266,10 @@ class ZoomImageView @JvmOverloads constructor(
             parent?.requestDisallowInterceptTouchEvent(false)
             postDelayed(resetLayerRunnable, 100)
         }
-        return handled || scaleDetector.isInProgress || true
+        // v1.16 清理：原返回表达式 handled || scaleDetector.isInProgress || true 恒为 true
+        // （死条件）。手势识别在上方 detector 回调中同步完成，返回值无人消费，
+        // 必须消费事件以持续接收完整手势流，直接返回 true（行为与原恒 true 完全一致）
+        return true
     }
 
     override fun performClick(): Boolean = super.performClick()

@@ -53,10 +53,13 @@ interface MediaFileDao {
     @Query("DELETE FROM media_files WHERE isCosFile = 0")
     suspend fun clearNonCosIndex()
 
-    @Query("SELECT recordKey FROM media_files WHERE uriString LIKE :prefix || '%' AND isCosFile = 0")
+    // LIKE 前缀查询必须带 ESCAPE '\'：tree URI 含 %3A 等百分号编码时，未转义的 % 会退化成
+    // 通配符导致跨前缀误匹配（调用方透传前须先 escapeLikePattern 转义 % _ \）
+
+    @Query("SELECT recordKey FROM media_files WHERE uriString LIKE :prefix || '%' ESCAPE '\\' AND isCosFile = 0")
     suspend fun getRecordKeysByUriPrefix(prefix: String): List<String>
 
-    @Query("SELECT recordKey FROM media_files WHERE uriString LIKE :prefix || '%' AND isCosFile = 1")
+    @Query("SELECT recordKey FROM media_files WHERE uriString LIKE :prefix || '%' ESCAPE '\\' AND isCosFile = 1")
     suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String>
 
     @Query("SELECT recordKey, uriString, sourceUri FROM media_files WHERE isCosFile = 0")
@@ -72,7 +75,11 @@ interface MediaFileDao {
     @Query("SELECT recordKey, fileName FROM media_files WHERE isCosFile = 0")
     suspend fun getNonCosKeysAndFileNames(): List<NonCosKeyFileName>
 
-    @Query("SELECT recordKey FROM media_files WHERE isCosFile = 1 AND uriString LIKE :prefix || '%'")
+    /** 备份导入用全表轻量投影（recordKey+fileName，不分 COS）：仅用键存在性与文件名回填，不物化 18 列全实体 */
+    @Query("SELECT recordKey, fileName FROM media_files")
+    suspend fun getAllKeysAndFileNames(): List<NonCosKeyFileName>
+
+    @Query("SELECT recordKey FROM media_files WHERE isCosFile = 1 AND uriString LIKE :prefix || '%' ESCAPE '\\'")
     suspend fun getCosRecordKeysByUriPrefixLight(prefix: String): List<String>
 
     @Query("SELECT recordKey FROM media_files WHERE isCosFile = 1")

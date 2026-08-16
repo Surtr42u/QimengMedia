@@ -202,9 +202,14 @@ class AuthorListFragment : Fragment() {
                 adapter.cachedAuthorViewCounts = viewCounts
                 adapter.cachedAuthorRecentViewCounts = recentViewCounts
                 adapter.sortMode = sortMode
-                adapter.submitList(sorted)
-                // v1.12：列表项内容相等时 AsyncListDiffer 不会 re-bind，手动刷新副标题等渲染数据
-                adapter.refreshBindings()
+                // v1.16 修复：refreshBindings 内部是 notifyDataSetChanged，必须在 AsyncListDiffer
+                // 后台 diff 完成提交后再执行——原实现 submitList 后立即全量 notify，diff 进行中
+                // 触发 "Inconsistency detected" IndexOutOfBoundsException 崩溃。
+                // commitCallback 由 differ 保证在主线程 diff 提交后执行（新旧列表相同时也执行）
+                adapter.submitList(sorted) {
+                    // v1.12：列表项内容相等时 AsyncListDiffer 不会 re-bind，手动刷新副标题等渲染数据
+                    adapter.refreshBindings()
+                }
             }
         }
     }
@@ -434,8 +439,10 @@ class AuthorListAdapter(
     var cachedAuthorRecentViewCounts: Map<String, Int> = emptyMap()
     var sortMode: String = AuthorListFragment.SORT_DEFAULT
 
-    fun submitList(list: List<AuthorEntity>) {
-        items = list
+    fun submitList(list: List<AuthorEntity>, commitCallback: (() -> Unit)? = null) {
+        // v1.16：透传 commitCallback 给 AsyncListDiffer，保证全量刷新（refreshBindings）
+        // 在 diff 提交完成后的主线程执行，避免 diff 进行中 notifyDataSetChanged 崩溃
+        differ.submitList(list) { commitCallback?.invoke() }
     }
 
     /** 强制刷新全部可见项：文件数/浏览数等渲染数据变化但列表项相同时，AsyncListDiffer 不会 re-bind，需手动触发 */

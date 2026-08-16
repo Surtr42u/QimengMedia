@@ -120,9 +120,13 @@ class AlbumDetailFragment : Fragment() {
             setMaxRecycledViews(0, 20)
         })
 
-        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
+        // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）；
+        // 缩略图解码尺寸同步跟随列数
         PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.albumDetailRecycler,
-            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAlbum(newCols) })
+            onColumnsChanged = { newCols ->
+                appPrefsManager?.updateGridColumnsAlbum(newCols)
+                adapter.updateThumbnailSize(newCols)
+            })
     }
 
     private fun setupChips() {
@@ -398,6 +402,8 @@ class AlbumDetailFragment : Fragment() {
         columnsRef.value = next.coerceIn(PinchZoomHelper.MIN_COLUMNS, PinchZoomHelper.MAX_COLUMNS)
         gridLayoutManager.spanCount = columnsRef.value
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
+        // 缩略图解码尺寸跟随列数（列少更大更清晰，列多更小省内存）
+        adapter.updateThumbnailSize(columnsRef.value)
         // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
         appPrefsManager?.updateGridColumnsAlbum(columnsRef.value)
         val iconRes = when (columnsRef.value) {

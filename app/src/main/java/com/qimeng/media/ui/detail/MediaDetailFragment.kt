@@ -36,6 +36,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil3.SingletonImageLoader
 import coil3.asImage
@@ -262,7 +263,16 @@ class MediaDetailFragment : Fragment() {
     private fun loadDetailSource() {
         val key = startRecordKey ?: run { parentFragmentManager.popBackStack(); return }
         viewLifecycleOwner.lifecycleScope.launch {
-            val allMedia = viewModel.allMedia.firstOrNull().orEmpty()
+            // v1.16 修复：allMedia.firstOrNull() 是一次性快照，冷启动扫描未完成时库为空，
+            // 原实现直接走到下方 popBackStack 闪退回上一页；此处有限重试（最多 5 次 × 300ms）
+            // 等待扫描写入，仍为空才走原有弹栈退出逻辑。delay 可取消，随视图销毁安全终止
+            var allMedia = viewModel.allMedia.firstOrNull().orEmpty()
+            var retries = 0
+            while (allMedia.isEmpty() && retries < DETAIL_SOURCE_MAX_RETRY) {
+                delay(DETAIL_SOURCE_RETRY_INTERVAL_MS)
+                allMedia = viewModel.allMedia.firstOrNull().orEmpty()
+                retries++
+            }
             val srcKeys = (requireActivity() as? MainActivity).orEmptySourceKeys()
             val byKey = allMedia.associateBy { it.recordKey }
 
@@ -604,7 +614,14 @@ class MediaDetailFragment : Fragment() {
         binding.videoTouchOverlay.isVisible = false
         binding.videoPlayButton.isVisible = false
         setChromeVisible(false)
-        player.setVideoUri(media.uriString)
+        // v1.16 修复：播放中关闭退到预览（closeDetail→showVideoPreview）时 player 只 pause 未清源，
+        // 同一 uri 再点播放若仍走 setMediaItem+prepare 会进度归零。此处同源且非 IDLE（stop 后为
+        // IDLE，须重 prepare）时跳过重建，直接续播保留进度；否则按原逻辑准备新源
+        val sameSource = exoPlayer?.currentMediaItem?.localConfiguration?.uri == media.uriString.toUri() &&
+            exoPlayer?.playbackState != Player.STATE_IDLE
+        if (!sameSource) {
+            player.setVideoUri(media.uriString)
+        }
         player.startPlayback()
         // v1.14：视频真正开始播放时记一次播放（修复 playCount 从无写入点，恒为 0 的问题）
         // v1.15：同一次详情打开每视频只计一次（会话级集合，滑走滑回不重复计数）
@@ -1394,6 +1411,10 @@ class MediaDetailFragment : Fragment() {
         private const val HUGE_IMAGE_THRESHOLD = 4096
         /** 预加载窗口内最多预载的超级大图张数（8192 原图 ≈150MB/张，超过 1 张易 OOM，v1.12 新增） */
         private const val MAX_PRELOAD_HUGE = 1
+        /** v1.16：冷启动库为空时 loadDetailSource 的最大重试次数（5 × 300ms = 1.5s） */
+        private const val DETAIL_SOURCE_MAX_RETRY = 5
+        /** v1.16：每次重试的间隔毫秒数 */
+        private const val DETAIL_SOURCE_RETRY_INTERVAL_MS = 300L
 
         fun newInstance(recordKey: String) = MediaDetailFragment().apply {
             arguments = Bundle().apply { putString(ARG_RECORD_KEY, recordKey) }

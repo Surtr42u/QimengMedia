@@ -121,6 +121,7 @@ QimengMedia/
 │           ├── core/
 │           │   ├── AppContainer.kt
 │           │   ├── RecordKeyFactory.kt
+│           │   ├── ScanSourceLocks.kt
 │           │   ├── ThumbnailLoader.kt
 │           │   ├── ThumbnailCache.kt
 │           │   ├── LargeImageDecoder.kt

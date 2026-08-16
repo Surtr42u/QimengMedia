@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.qimeng.media.core.AppLog
+import com.qimeng.media.core.ScanSourceLocks
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
@@ -14,6 +15,7 @@ import com.qimeng.media.data.repository.LocalMediaRepository
 import com.qimeng.media.scan.MediaStoreScanner
 import com.qimeng.media.scan.SafMediaScanner
 import com.qimeng.media.scan.ScanUtils
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -53,27 +55,35 @@ class ScanUseCase(
                 ?: DocumentFile.fromTreeUri(application, uri)?.name
                 ?: "授权目录"
 
-            mediaFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+            // 按源互斥：与增量刷新/自动刷新/MediaStoreObserver 并发写同一源时，
+            // 防止后完成方把先完成方新 upsert 的行当 stale 删除
+            ScanSourceLocks.withSourceLock(uriString) {
+                // 先登记源再写文件：防与启动期 cleanupOrphanFiles 并发时，
+                // 新源文件先入库而被按"源不存在"误判孤儿删除
+                repository.upsertScanSource(ScanSourceEntity(
+                    uriString = uriString,
+                    displayName = sourceName,
+                    isBackupDirectory = false,
+                    addedAtMillis = startedAtMillis,
+                    lastScannedAtMillis = System.currentTimeMillis()
+                ))
 
-            val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
-            val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
-            val staleKeys = existingKeys.filter { it !in scannedKeys }
-            if (staleKeys.isNotEmpty()) {
-                repository.deleteMediaAndRefs(staleKeys)
-                repository.deleteOrphanCosAuthors()
+                mediaFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+
+                val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
+                val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
+                val staleKeys = existingKeys.filter { it !in scannedKeys }
+                if (staleKeys.isNotEmpty()) {
+                    repository.deleteMediaAndRefs(staleKeys)
+                    repository.deleteOrphanCosAuthors()
+                }
             }
-
-            repository.upsertScanSource(ScanSourceEntity(
-                uriString = uriString,
-                displayName = sourceName,
-                isBackupDirectory = false,
-                addedAtMillis = startedAtMillis,
-                lastScannedAtMillis = System.currentTimeMillis()
-            ))
 
             // 扫描完成后重新匹配已有TXT导入，确保新文件也能被关联到作者
             try {
                 authorImportUseCase.rematchAllTxtImports(this)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLog.d("Scan", "rematchAllTxtImports failed: ${e.message}")
             }
@@ -81,6 +91,8 @@ class ScanUseCase(
             // v1.7：检测大文件/大总量警告
             val warning = ScanResult.buildScanWarning(scannedMedia)
             return ScanResult.Success(mediaFiles.size, 1, scannedMedia, warning)
+        } catch (e: CancellationException) {
+            throw e
         } catch (exception: Exception) {
             AppLog.e("Scan", "scanDirectory failed: ${exception.message}", exception)
             return ScanResult.Error(exception.message ?: "扫描失败", scannedMedia)
@@ -98,47 +110,58 @@ class ScanUseCase(
             )
             refreshMedia = mediaFiles
 
-            val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
+            // 按源互斥：与手动扫描/自动刷新/MediaStoreObserver 并发写同一源时防止 stale 误删
+            val updatedCount = ScanSourceLocks.withSourceLock(uriString) {
+                val existingKeys = repository.getRecordKeysBySourceUri(uriString).toSet()
 
-            // v1.x：不仅 upsert 新 key，同名覆盖/重编码文件元数据有变化时也更新，
-            // 避免 sizeBytes/duration/width/height/modifiedAtMillis 永久陈旧
-            val existingByKey = mediaFiles
-                .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
-                .distinct()
-                .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
-                .toMap()
-            val newOrUpdated = mediaFiles.filter { file ->
-                file.recordKey !in existingKeys ||
-                    existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
-            }
-            if (newOrUpdated.isNotEmpty()) {
-                newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-            }
+                // v1.x：不仅 upsert 新 key，同名覆盖/重编码文件元数据有变化时也更新，
+                // 避免 sizeBytes/duration/width/height/modifiedAtMillis 永久陈旧
+                val existingByKey = mediaFiles
+                    .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
+                    .distinct()
+                    .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
+                    .toMap()
+                val newOrUpdated = mediaFiles.filter { file ->
+                    file.recordKey !in existingKeys ||
+                        existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+                }
+                if (newOrUpdated.isNotEmpty()) {
+                    newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                }
 
-            val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
-            val staleKeys = existingKeys.filter { it !in scannedKeys }
-            if (staleKeys.isNotEmpty()) {
-                repository.deleteMediaAndRefs(staleKeys)
-                repository.deleteOrphanCosAuthors()
-            }
+                val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
+                val staleKeys = existingKeys.filter { it !in scannedKeys }
+                if (staleKeys.isNotEmpty()) {
+                    repository.deleteMediaAndRefs(staleKeys)
+                    repository.deleteOrphanCosAuthors()
+                }
 
-            val existing = repository.getScanSources().find { it.uriString == uriString }
-            repository.upsertScanSource(ScanSourceEntity(
-                uriString = uriString,
-                displayName = existing?.displayName ?: "",
-                isBackupDirectory = false,
-                addedAtMillis = existing?.addedAtMillis ?: System.currentTimeMillis(),
-                lastScannedAtMillis = System.currentTimeMillis()
-            ))
+                // 刷新进行中源被用户删除时不复活 scan_sources 行（existing 为 null 说明源已不在库中）
+                val existing = repository.getScanSources().find { it.uriString == uriString }
+                if (existing != null) {
+                    repository.upsertScanSource(ScanSourceEntity(
+                        uriString = uriString,
+                        displayName = existing.displayName,
+                        isBackupDirectory = false,
+                        addedAtMillis = existing.addedAtMillis,
+                        lastScannedAtMillis = System.currentTimeMillis()
+                    ))
+                }
+                newOrUpdated.size
+            }
 
             // 刷新完成后重新匹配已有TXT导入，确保新文件也能被关联到作者
             try {
                 authorImportUseCase.rematchAllTxtImports(this)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLog.d("Scan", "rematchAllTxtImports failed: ${e.message}")
             }
 
-            return ScanResult.Success(newOrUpdated.size, 1, refreshMedia)
+            return ScanResult.Success(updatedCount, 1, refreshMedia)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             return ScanResult.Error(e.message ?: "刷新失败", refreshMedia)
         }
@@ -160,45 +183,50 @@ class ScanUseCase(
                 ?: filePath?.substringAfterLast('/')
                 ?: "COS目录"
 
-            newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-            repository.upsertCosWorks(newCosWorks)
+            // 按源互斥：与 COS 增量刷新/自动刷新并发写同一源时防止 stale 误删
+            ScanSourceLocks.withSourceLock(uriString) {
+                newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                repository.upsertCosWorks(newCosWorks)
 
-            val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
-            val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
-            val staleKeys = existingCosKeys.filter { it !in scannedKeys }
-            if (staleKeys.isNotEmpty()) {
-                repository.deleteMediaAndRefs(staleKeys)
-                repository.deleteOrphanCosAuthors()
-            }
-
-            repository.upsertScanSource(ScanSourceEntity(
-                uriString = uriString,
-                displayName = sourceName,
-                isCosDirectory = true,
-                addedAtMillis = System.currentTimeMillis(),
-                lastScannedAtMillis = System.currentTimeMillis()
-            ))
-
-            val authorNames = newCosWorks.map { it.authorName }.distinct()
-            val authorEntities = authorNames.map { authorName ->
-                val authorId = "cos_" + generateAuthorId(authorName)
-                AuthorEntity(authorId = authorId, displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
-            }
-            repository.upsertAllAuthors(authorEntities)
-
-            val crossRefs = mutableListOf<AuthorMediaCrossRef>()
-            for ((authorName, files) in cosMediaAuthorMap) {
-                val authorId = "cos_" + generateAuthorId(authorName)
-                for (file in files) {
-                    crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+                val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
+                val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
+                val staleKeys = existingCosKeys.filter { it !in scannedKeys }
+                if (staleKeys.isNotEmpty()) {
+                    repository.deleteMediaAndRefs(staleKeys)
+                    repository.deleteOrphanCosAuthors()
                 }
+
+                repository.upsertScanSource(ScanSourceEntity(
+                    uriString = uriString,
+                    displayName = sourceName,
+                    isCosDirectory = true,
+                    addedAtMillis = System.currentTimeMillis(),
+                    lastScannedAtMillis = System.currentTimeMillis()
+                ))
+
+                val authorNames = newCosWorks.map { it.authorName }.distinct()
+                val authorEntities = authorNames.map { authorName ->
+                    val authorId = "cos_" + generateAuthorId(authorName)
+                    AuthorEntity(authorId = authorId, displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
+                }
+                repository.upsertAllAuthors(authorEntities)
+
+                val crossRefs = mutableListOf<AuthorMediaCrossRef>()
+                for ((authorName, files) in cosMediaAuthorMap) {
+                    val authorId = "cos_" + generateAuthorId(authorName)
+                    for (file in files) {
+                        crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+                    }
+                }
+                crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
             }
-            crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
 
             AppLog.d("CosScan", "scanCosDirectory: success, files=${newCosMedia.size}, authors=${newCosWorks.map { it.authorName }.distinct().size}, works=${newCosWorks.size}")
             // v1.7：检测大文件/大总量警告
             val warning = ScanResult.buildScanWarning(newCosMedia)
             return ScanResult.Success(newCosMedia.size, 1, cosScanMedia, warning)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLog.e("CosScan", "scanCosDirectory failed: ${e.message}", e)
             return ScanResult.Error(e.message ?: "COS扫描失败", cosScanMedia)
@@ -217,67 +245,76 @@ class ScanUseCase(
 
             val existingCosKeys = repository.getCosRecordKeysBySourceUri(uriString).toSet()
 
-            // v1.x：对齐 refreshScanSource 模式——只加载"扫描结果中已存在库中的 key"的实体用于
-            // 元数据比较，同名覆盖/重编码文件元数据（sizeBytes/duration/width/height/modifiedAtMillis）
-            // 有变化时也更新，避免永久陈旧（旧实现只 upsert 新 key，覆盖文件元数据永远不更新）
-            val existingCosByKey = newCosMedia
-                .mapNotNull { it.recordKey.takeIf { k -> k in existingCosKeys } }
-                .distinct()
-                .mapNotNull { k -> repository.getMediaByKey(k)?.let { k to it } }
-                .toMap()
-            val newOrUpdated = newCosMedia.filter { file ->
-                file.recordKey !in existingCosKeys ||
-                    existingCosByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
-            }
-            if (newOrUpdated.isNotEmpty()) {
-                newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-            }
-
-            repository.upsertCosWorks(newCosWorks)
-
-            // v1.x：刷新后清理该源已消失/改名的作品行（按当前扫描到的 workKey 集合判断，
-            // 磁盘上已删除/改名的作品不再保留，避免 cos_works 行残留）
-            val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
-            val disappearedWorkIds = repository.getCosWorksBySourceUri(uriString)
-                .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
-                .map { it.id }
-            if (disappearedWorkIds.isNotEmpty()) {
-                repository.deleteCosWorksByIds(disappearedWorkIds)
-                AppLog.d("CosScan", "refreshCosSource: cleaned ${disappearedWorkIds.size} disappeared works")
-            }
-
-            val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
-            val staleKeys = existingCosKeys.filter { it !in scannedKeys }
-            if (staleKeys.isNotEmpty()) {
-                repository.deleteMediaAndRefs(staleKeys)
-                repository.deleteOrphanCosAuthors()
-            }
-
-            val existingCos = repository.getScanSources().find { it.uriString == uriString }
-            repository.upsertScanSource(ScanSourceEntity(
-                uriString = uriString,
-                displayName = existingCos?.displayName ?: "",
-                isCosDirectory = true,
-                addedAtMillis = existingCos?.addedAtMillis ?: System.currentTimeMillis(),
-                lastScannedAtMillis = System.currentTimeMillis()
-            ))
-
-            val authorNames = newCosWorks.map { it.authorName }.distinct()
-            val authorEntities = authorNames.map { authorName ->
-                AuthorEntity(authorId = "cos_" + generateAuthorId(authorName), displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
-            }
-            repository.upsertAllAuthors(authorEntities)
-
-            val crossRefs = mutableListOf<AuthorMediaCrossRef>()
-            for ((authorName, files) in cosMediaAuthorMap) {
-                val authorId = "cos_" + generateAuthorId(authorName)
-                for (file in files) {
-                    crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+            // 按源互斥：与 COS 扫描/自动刷新并发写同一源时防止 stale 误删
+            val updatedCount = ScanSourceLocks.withSourceLock(uriString) {
+                // v1.x：对齐 refreshScanSource 模式——只加载"扫描结果中已存在库中的 key"的实体用于
+                // 元数据比较，同名覆盖/重编码文件元数据（sizeBytes/duration/width/height/modifiedAtMillis）
+                // 有变化时也更新，避免永久陈旧（旧实现只 upsert 新 key，覆盖文件元数据永远不更新）
+                val existingCosByKey = newCosMedia
+                    .mapNotNull { it.recordKey.takeIf { k -> k in existingCosKeys } }
+                    .distinct()
+                    .mapNotNull { k -> repository.getMediaByKey(k)?.let { k to it } }
+                    .toMap()
+                val newOrUpdated = newCosMedia.filter { file ->
+                    file.recordKey !in existingCosKeys ||
+                        existingCosByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
                 }
-            }
-            crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
+                if (newOrUpdated.isNotEmpty()) {
+                    newOrUpdated.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                }
 
-            return ScanResult.Success(newOrUpdated.size, 1, cosRefreshMedia)
+                repository.upsertCosWorks(newCosWorks)
+
+                // v1.x：刷新后清理该源已消失/改名的作品行（按当前扫描到的 workKey 集合判断，
+                // 磁盘上已删除/改名的作品不再保留，避免 cos_works 行残留）
+                val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
+                val disappearedWorkIds = repository.getCosWorksBySourceUri(uriString)
+                    .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
+                    .map { it.id }
+                if (disappearedWorkIds.isNotEmpty()) {
+                    repository.deleteCosWorksByIds(disappearedWorkIds)
+                    AppLog.d("CosScan", "refreshCosSource: cleaned ${disappearedWorkIds.size} disappeared works")
+                }
+
+                val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
+                val staleKeys = existingCosKeys.filter { it !in scannedKeys }
+                if (staleKeys.isNotEmpty()) {
+                    repository.deleteMediaAndRefs(staleKeys)
+                    repository.deleteOrphanCosAuthors()
+                }
+
+                // 刷新进行中源被用户删除时不复活 scan_sources 行（existingCos 为 null 说明源已不在库中）
+                val existingCos = repository.getScanSources().find { it.uriString == uriString }
+                if (existingCos != null) {
+                    repository.upsertScanSource(ScanSourceEntity(
+                        uriString = uriString,
+                        displayName = existingCos.displayName,
+                        isCosDirectory = true,
+                        addedAtMillis = existingCos.addedAtMillis,
+                        lastScannedAtMillis = System.currentTimeMillis()
+                    ))
+                }
+
+                val authorNames = newCosWorks.map { it.authorName }.distinct()
+                val authorEntities = authorNames.map { authorName ->
+                    AuthorEntity(authorId = "cos_" + generateAuthorId(authorName), displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
+                }
+                repository.upsertAllAuthors(authorEntities)
+
+                val crossRefs = mutableListOf<AuthorMediaCrossRef>()
+                for ((authorName, files) in cosMediaAuthorMap) {
+                    val authorId = "cos_" + generateAuthorId(authorName)
+                    for (file in files) {
+                        crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+                    }
+                }
+                crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
+                newOrUpdated.size
+            }
+
+            return ScanResult.Success(updatedCount, 1, cosRefreshMedia)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             return ScanResult.Error(e.message ?: "COS刷新失败", cosRefreshMedia)
         }
@@ -327,27 +364,37 @@ class ScanUseCase(
                         source.uriString
                     )
                     autoRefreshMedia.addAll(mediaFiles)
-                    val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
-                    // v1.x：同名覆盖/重编码文件元数据有变化时也更新（与 refreshScanSource 一致）
-                    val existingByKey = mediaFiles
-                        .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
-                        .distinct()
-                        .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
-                        .toMap()
-                    val newFiles = mediaFiles.filter { file ->
-                        file.recordKey !in existingKeys ||
-                            existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+                    // 按源互斥：与手动扫描/MediaStoreObserver 增量并发写同一源时防止 stale 误删
+                    ScanSourceLocks.withSourceLock(source.uriString) {
+                        val existingKeys = repository.getRecordKeysBySourceUri(source.uriString).toSet()
+                        // v1.x：同名覆盖/重编码文件元数据有变化时也更新（与 refreshScanSource 一致）
+                        val existingByKey = mediaFiles
+                            .mapNotNull { it.recordKey.takeIf { key -> key in existingKeys } }
+                            .distinct()
+                            .mapNotNull { key -> repository.getMediaByKey(key)?.let { key to it } }
+                            .toMap()
+                        val newFiles = mediaFiles.filter { file ->
+                            file.recordKey !in existingKeys ||
+                                existingByKey[file.recordKey]?.let { ScanUtils.hasScanMetadataChanged(file, it) } == true
+                        }
+                        if (newFiles.isNotEmpty()) {
+                            newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                        }
+                        val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
+                        val staleKeys = existingKeys.filter { it !in scannedKeys }
+                        if (staleKeys.isNotEmpty()) {
+                            repository.deleteMediaAndRefs(staleKeys)
+                        }
+                        // 循环期间源可能已被用户删除：确认仍存在才写，防止 copy 复活已删源
+                        if (repository.getScanSources().any { it.uriString == source.uriString }) {
+                            repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
+                        }
                     }
-                    if (newFiles.isNotEmpty()) {
-                        newFiles.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-                    }
-                    val scannedKeys = mediaFiles.map { it.recordKey }.toSet()
-                    val staleKeys = existingKeys.filter { it !in scannedKeys }
-                    if (staleKeys.isNotEmpty()) {
-                        repository.deleteMediaAndRefs(staleKeys)
-                    }
-                    repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
-                } catch (e: Exception) { com.qimeng.media.core.AppLog.d("Scan", "autoRefresh single dir failed: ${e.message}") }
+                } catch (e: Exception) {
+                    // 取消必须向上透传，不能当普通失败吞掉
+                    if (e is CancellationException) throw e
+                    com.qimeng.media.core.AppLog.d("Scan", "autoRefresh single dir failed: ${e.message}")
+                }
             }
             for (source in cosSources) {
                 try {
@@ -356,42 +403,54 @@ class ScanUseCase(
                     val (newCosMedia, cosMediaAuthorMap, newCosWorks) = scanCosMedia(uri, source.uriString, indexedAtMillis)
                     autoRefreshMedia.addAll(newCosMedia)
 
-                    // 全量 upsert 所有扫描到的媒体（不只是新增），以同步 folderName 变化（结构3修复等）
-                    newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
-                    repository.upsertCosWorks(newCosWorks)
-                    // v1.x：清理该源已消失/改名的作品行（与 refreshCosSource 一致，避免 cos_works 行残留）
-                    val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
-                    val disappearedWorkIds = repository.getCosWorksBySourceUri(source.uriString)
-                        .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
-                        .map { it.id }
-                    if (disappearedWorkIds.isNotEmpty()) {
-                        repository.deleteCosWorksByIds(disappearedWorkIds)
-                        com.qimeng.media.core.AppLog.d("CosScan", "autoRefresh: cleaned ${disappearedWorkIds.size} disappeared works")
-                    }
-                    val authorNames = newCosWorks.map { it.authorName }.distinct()
-                    val authorEntities = authorNames.map { authorName ->
-                        AuthorEntity(authorId = "cos_" + generateAuthorId(authorName), displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
-                    }
-                    repository.upsertAllAuthors(authorEntities)
-                    val crossRefs = mutableListOf<AuthorMediaCrossRef>()
-                    for ((authorName, files) in cosMediaAuthorMap) {
-                        val authorId = "cos_" + generateAuthorId(authorName)
-                        for (file in files) {
-                            crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+                    // 按源互斥：与手动 COS 扫描/增量刷新并发写同一源时防止 stale 误删
+                    ScanSourceLocks.withSourceLock(source.uriString) {
+                        // 全量 upsert 所有扫描到的媒体（不只是新增），以同步 folderName 变化（结构3修复等）
+                        newCosMedia.chunked(500).forEach { batch -> repository.upsertMedia(batch) }
+                        repository.upsertCosWorks(newCosWorks)
+                        // v1.x：清理该源已消失/改名的作品行（与 refreshCosSource 一致，避免 cos_works 行残留）
+                        val currentWorkKeys = newCosWorks.map { "${it.authorName}/${it.workName}" }.toSet()
+                        val disappearedWorkIds = repository.getCosWorksBySourceUri(source.uriString)
+                            .filter { "${it.authorName}/${it.workName}" !in currentWorkKeys }
+                            .map { it.id }
+                        if (disappearedWorkIds.isNotEmpty()) {
+                            repository.deleteCosWorksByIds(disappearedWorkIds)
+                            com.qimeng.media.core.AppLog.d("CosScan", "autoRefresh: cleaned ${disappearedWorkIds.size} disappeared works")
+                        }
+                        val authorNames = newCosWorks.map { it.authorName }.distinct()
+                        val authorEntities = authorNames.map { authorName ->
+                            AuthorEntity(authorId = "cos_" + generateAuthorId(authorName), displayName = authorName, createdAtMillis = indexedAtMillis, updatedAtMillis = indexedAtMillis)
+                        }
+                        repository.upsertAllAuthors(authorEntities)
+                        val crossRefs = mutableListOf<AuthorMediaCrossRef>()
+                        for ((authorName, files) in cosMediaAuthorMap) {
+                            val authorId = "cos_" + generateAuthorId(authorName)
+                            for (file in files) {
+                                crossRefs.add(AuthorMediaCrossRef(authorId = authorId, recordKey = file.recordKey, fileName = file.fileName, isMatched = true))
+                            }
+                        }
+                        crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
+                        val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
+                        val existingCosKeys = repository.getCosRecordKeysBySourceUri(source.uriString).toSet()
+                        val staleKeys = existingCosKeys.filter { it !in scannedKeys }
+                        if (staleKeys.isNotEmpty()) {
+                            repository.deleteMediaAndRefs(staleKeys)
+                            repository.deleteOrphanCosAuthors()
+                        }
+                        // 循环期间源可能已被用户删除：确认仍存在才写，防止 copy 复活已删源
+                        if (repository.getScanSources().any { it.uriString == source.uriString }) {
+                            repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
                         }
                     }
-                    crossRefs.chunked(500).forEach { batch -> repository.upsertAllAuthorMedia(batch) }
-                    val scannedKeys = newCosMedia.map { it.recordKey }.toSet()
-                    val existingCosKeys = repository.getCosRecordKeysBySourceUri(source.uriString).toSet()
-                    val staleKeys = existingCosKeys.filter { it !in scannedKeys }
-                    if (staleKeys.isNotEmpty()) {
-                        repository.deleteMediaAndRefs(staleKeys)
-                        repository.deleteOrphanCosAuthors()
-                    }
-                    repository.upsertScanSource(source.copy(lastScannedAtMillis = System.currentTimeMillis()))
-                } catch (e: Exception) { com.qimeng.media.core.AppLog.d("Scan", "autoRefresh single COS dir failed: ${e.message}") }
+                } catch (e: Exception) {
+                    // 取消必须向上透传，不能当普通失败吞掉
+                    if (e is CancellationException) throw e
+                    com.qimeng.media.core.AppLog.d("Scan", "autoRefresh single COS dir failed: ${e.message}")
+                }
             }
         } catch (e: Exception) {
+            // 取消必须向上透传，不能当普通失败吞掉
+            if (e is CancellationException) throw e
             // 自动刷新失败静默处理
             com.qimeng.media.core.AppLog.d("Scan", "autoRefreshAllSources failed: ${e.message}")
         }
@@ -401,6 +460,8 @@ class ScanUseCase(
         try {
             authorImportUseCase.rematchAllTxtImports(this)
         } catch (e: Exception) {
+            // 取消必须向上透传，不能当普通失败吞掉
+            if (e is CancellationException) throw e
             AppLog.d("Scan", "autoRefresh rematchAllTxtImports failed: ${e.message}")
         }
 
@@ -599,8 +660,10 @@ class ScanUseCase(
             return Triple(resolvedMedia, resolvedMap, works)
         }
 
+        // SAF 根目录打开失败（权限撤销等）必须按错误处理：返回空结果会被上层
+        // 当"成功 0 文件"整源删除，抛错由外层 catch 走 Error 分支
         val root = DocumentFile.fromTreeUri(application, uri)
-            ?: return Triple(emptyList(), emptyMap(), emptyList())
+            ?: error("无法访问 COS 目录: $uriString")
         AppLog.d("CosScan", "SAF fallback: scanning entire tree, rootUri=$uriString")
         val allSafMedia = mediaScanner.scanTreeFast(root.uri, uriString).map { it.copy(isCosFile = true) }
         AppLog.d("CosScan", "SAF fallback: found ${allSafMedia.size} files")
@@ -616,6 +679,9 @@ class ScanUseCase(
         val safWorkFileCounts = mutableMapOf<String, Int>()
         // 收集 uriString → workName，用于将结构3子文件夹文件的 folderName 覆写为 workName
         val safWorkNameByUri = mutableMapOf<String, String>()
+        // 根目录直接文件（无作者/作品层级）：跳过作者归属且不入库，
+        // 防止随 resolvedMedia 入库成无作者归属的不可见记录
+        val rootLevelUris = mutableSetOf<String>()
 
         val rootDocumentId = try {
             android.provider.DocumentsContract.getTreeDocumentId(uri)
@@ -639,7 +705,10 @@ class ScanUseCase(
             }
 
             val pathWithoutFile = afterRoot.substringBeforeLast("/")
-            if (pathWithoutFile.isBlank()) continue
+            if (pathWithoutFile.isBlank()) {
+                rootLevelUris.add(fileUri)
+                continue
+            }
 
             val segments = pathWithoutFile.split("/")
             val authorName = segments.getOrNull(0)?.trim().orEmpty()
@@ -667,11 +736,14 @@ class ScanUseCase(
                 ))
             }
         }
-        // 覆写 folderName 为 workName：修复结构3（作者/作品/p1/文件）中 folderName="p1/GIF" 匹配不上 workName 的问题
-        val updatedAllSafMedia = allSafMedia.map { file ->
-            val wm = safWorkNameByUri[file.uriString]
-            if (wm != null) file.copy(folderName = wm) else file
-        }
+        // 覆写 folderName 为 workName：修复结构3（作者/作品/p1/文件）中 folderName="p1/GIF" 匹配不上 workName 的问题。
+        // 根级文件（rootLevelUris）整行剔除，不入库
+        val updatedAllSafMedia = allSafMedia
+            .filter { it.uriString !in rootLevelUris }
+            .map { file ->
+                val wm = safWorkNameByUri[file.uriString]
+                if (wm != null) file.copy(folderName = wm) else file
+            }
         val updatedWorks = safWorks.map { work ->
             // v1.x 修复：fileCount 取该作品文件数（原先取作者全部作品文件数，一作者多作品会超计）
             work.copy(fileCount = safWorkFileCounts["${work.authorName}/${work.workName}"] ?: 0)

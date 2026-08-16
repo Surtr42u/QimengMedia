@@ -140,7 +140,13 @@ class FavoriteFragment : Fragment() {
 
         // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
         PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.favoriteRecycler,
-            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
+            onColumnsChanged = { newCols ->
+                appPrefsManager?.updateGridColumnsAll(newCols)
+                // v1.16：列数变化同步缩略图解码尺寸（屏宽/列数估算），2 列不模糊、5 列不浪费
+                adapter.updateThumbnailSize(newCols)
+            })
+        // v1.16：初始 setup 按当前列数设定缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
     }
 
     private fun setupChips() {
@@ -150,7 +156,9 @@ class FavoriteFragment : Fragment() {
         binding.favoriteChipType.setOnClickListener { setViewMode(VIEW_MODE_TYPE) }
     }
 
-    /** v1.12：下拉刷新——重读收藏键、重新过滤收藏列表并渲染，修复刷新 no-op */
+    /** v1.12：下拉刷新——重读收藏键、重新过滤收藏列表并渲染，修复刷新 no-op
+     * v1.16：过滤移入 Default 线程（仿 observeData 已有 withContext 模式），
+     * 全库收藏过滤不再在主线程执行；过滤结果回主线程再赋值渲染 */
     private fun refreshFavoriteData() {
         val favPrefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val favKeys = favPrefs?.getStringSet(KEY_FAVORITES, emptySet()) ?: emptySet()
@@ -161,9 +169,15 @@ class FavoriteFragment : Fragment() {
             isAllPartition -> cachedMedia + cachedCosMedia
             else -> cachedMedia
         }
-        cachedFavoriteMedia = workingMedia.filter { it.recordKey in favKeys }
-        lastRenderHash = ""
-        computeSourceGroups()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val favoriteMedia = withContext(Dispatchers.Default) {
+                workingMedia.filter { it.recordKey in favKeys }
+            }
+            if (_binding == null) return@launch
+            cachedFavoriteMedia = favoriteMedia
+            lastRenderHash = ""
+            computeSourceGroups()
+        }
     }
 
     private fun observeData() {
@@ -275,10 +289,9 @@ class FavoriteFragment : Fragment() {
         }
         val charGroups = if (viewMode == VIEW_MODE_CHARACTER) {
             withContext(Dispatchers.Default) {
-                val baseForChars = if (selectedSources.isNotEmpty()) {
-                    val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                    typed.filter { it in sourceMediaSet }
-                } else typed
+                // v1.16：删除按 selectedSources 过滤 baseForChars 的死分支——CHARACTER 模式下
+                // selectedSources 已被 setViewMode/updateFavoriteUI 清空，分支永不触发（与 AllFilesFragment 对齐）
+                val baseForChars = typed
                 if (isCosPartition) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
                 else if (isAllPartition) {
                     val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })

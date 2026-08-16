@@ -42,7 +42,9 @@ interface LocalMediaRepository {
     suspend fun getAllMedia(): List<MediaFileEntity>
     suspend fun getMediaByType(mediaType: String): List<MediaFileEntity>
     suspend fun getAllUriStrings(): List<String>
+    /** 按 URI 前缀查 recordKey；实现层会对 prefix 做 LIKE 转义（% _ \），调用方传原始前缀即可 */
     suspend fun getRecordKeysByUriPrefix(prefix: String): List<String>
+    /** COS 文件版 URI 前缀查询；实现层同样做 LIKE 转义 */
     suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String>
     /** v1.12：按扫描源 tree URI 精确查询常规文件归属（删除源/启动清理用） */
     suspend fun getRecordKeysBySourceUri(sourceUri: String): List<String>

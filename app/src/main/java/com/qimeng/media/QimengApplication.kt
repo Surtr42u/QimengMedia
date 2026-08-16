@@ -75,7 +75,7 @@ class QimengApplication : Application() {
                 } catch (e: Exception) {
                     AppLog.d("AutoRefresh", "onFilesChanged rematchAllTxtImports failed: ${e.message}")
                 }
-                appContainer.thumbnailUseCase.pregenerateThumbnails(changedFiles, applicationScope)
+                appContainer.thumbnailUseCase.pregenerateThumbnails(changedFiles)
             }
         )
 

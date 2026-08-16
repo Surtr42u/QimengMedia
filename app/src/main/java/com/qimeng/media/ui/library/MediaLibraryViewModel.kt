@@ -123,10 +123,10 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 // 按常规/COS分组，分别通过 ThumbnailUseCase 调用，确保进度 Flow 更新
                 val (cosFiles, generalFiles) = existingMedia.partition { it.isCosFile }
                 if (generalFiles.isNotEmpty()) {
-                    thumbnailUseCase.pregenerateThumbnails(generalFiles, viewModelScope, ThumbnailSource.GENERAL)
+                    thumbnailUseCase.pregenerateThumbnails(generalFiles, ThumbnailSource.GENERAL)
                 }
                 if (cosFiles.isNotEmpty()) {
-                    thumbnailUseCase.pregenerateThumbnails(cosFiles, viewModelScope, ThumbnailSource.COS)
+                    thumbnailUseCase.pregenerateThumbnails(cosFiles, ThumbnailSource.COS)
                 }
             }
         }
@@ -152,7 +152,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 }
                 autoSyncUseCase.triggerAutoSyncIfNeeded()
                 // 扫描完成后后台预生成缩略图到本地缓存
-                thumbnailUseCase.pregenerateThumbnails(scannedMedia, viewModelScope)
+                thumbnailUseCase.pregenerateThumbnails(scannedMedia)
             }
         }
     }
@@ -175,7 +175,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 }
                 autoSyncUseCase.triggerAutoSyncIfNeeded()
                 // 刷新完成后后台预生成缩略图到本地缓存
-                thumbnailUseCase.pregenerateThumbnails(refreshMedia, viewModelScope)
+                thumbnailUseCase.pregenerateThumbnails(refreshMedia)
             }
         }
     }
@@ -198,7 +198,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 }
                 autoSyncUseCase.triggerAutoSyncIfNeeded()
                 // COS扫描完成后后台预生成缩略图到本地缓存
-                thumbnailUseCase.pregenerateThumbnails(cosScanMedia, viewModelScope, ThumbnailSource.COS)
+                thumbnailUseCase.pregenerateThumbnails(cosScanMedia, ThumbnailSource.COS)
             }
         }
     }
@@ -221,7 +221,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 }
                 autoSyncUseCase.triggerAutoSyncIfNeeded()
                 // COS刷新完成后后台预生成缩略图到本地缓存
-                thumbnailUseCase.pregenerateThumbnails(cosRefreshMedia, viewModelScope, ThumbnailSource.COS)
+                thumbnailUseCase.pregenerateThumbnails(cosRefreshMedia, ThumbnailSource.COS)
             }
         }
     }
@@ -244,7 +244,7 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 
                 // 自动刷新完成后预生成缩略图到本地缓存
                 if (autoRefreshMedia.isNotEmpty()) {
-                    thumbnailUseCase.pregenerateThumbnails(autoRefreshMedia, viewModelScope)
+                    thumbnailUseCase.pregenerateThumbnails(autoRefreshMedia)
                 }
 
                 // 自动刷新可能有新增/删除文件或作者关联变化，触发备份自动同步

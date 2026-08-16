@@ -24,8 +24,10 @@ import com.qimeng.media.resolveThemeColor
 import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.widget.LineChartView
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -367,68 +369,88 @@ class StatsDetailFragment : Fragment() {
         }
     }
 
-    /** 渲染常看文件：摘要 + 洞察 + 排行（按热度/时长） */
+    /** 渲染常看文件：摘要 + 洞察 + 排行（按热度/时长）
+     * v1.16：全量聚合移 Default 线程 + 序号防重——"全部"时间范围长年数据不再在主线程 collect 内聚合卡顿，
+     * 快速连发渲染请求时只采纳最后一次结果（同 DataStatsFragment.renderOverviewExtra 模式） */
     private fun renderFavorites() {
+        val seq = ++favoritesRenderSeq
         val window = windowDaily()
-        val byKey = window
-            .filter { it.viewCount + it.playCount > 0 || it.totalBrowseSeconds > 0 }
-            .groupBy { it.recordKey }
-        val totalViews = window.sumOf { it.viewCount + it.playCount }
-        val totalSeconds = window.sumOf { it.totalBrowseSeconds }
+        val sortByHeat = filesSortByHeat
+        viewLifecycleOwner.lifecycleScope.launch {
+            val computed = withContext(Dispatchers.Default) {
+                val byKey = window
+                    .filter { it.viewCount + it.playCount > 0 || it.totalBrowseSeconds > 0 }
+                    .groupBy { it.recordKey }
+                val totalViews = window.sumOf { it.viewCount + it.playCount }
+                val totalSeconds = window.sumOf { it.totalBrowseSeconds }
 
-        // 排行数据（key → (文件名, 次数, 时长)）
-        val rankEntries = byKey.map { (key, list) ->
-            Triple(
-                key,
-                list.first().fileName,
-                list.sumOf { it.viewCount + it.playCount } to list.sumOf { it.totalBrowseSeconds }
-            )
-        }
-        val sorted = if (filesSortByHeat) {
-            rankEntries.sortedByDescending { it.third.first }
-        } else {
-            rankEntries.filter { it.third.second > 0 }.sortedByDescending { it.third.second }
-        }
-        val filesWithViews = byKey.size
-        val avgViews = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
-
-        renderSummary(
-            listOf(
-                SummaryItem("总浏览", StatsFormatHelper.formatNumber(totalViews)),
-                SummaryItem("浏览时长", formatDuration(totalSeconds)),
-                SummaryItem("常看文件", StatsFormatHelper.formatNumber(filesWithViews)),
-                SummaryItem("平均浏览次数", String.format(Locale.US, "%.1f", avgViews))
-            )
-        )
-        renderInsights(
-            listOf("近${rangeLabel()}共浏览 $totalViews 次，停留 ${formatDuration(totalSeconds)}")
-        )
-
-        val maxValue = sorted.firstOrNull()?.let { if (filesSortByHeat) it.third.first else it.third.second.toInt() } ?: 0
-        binding.listSubtitleText.text = "共 $filesWithViews 个有浏览记录的文件"
-        val items = sorted.take(20).map { (key, name, counts) ->
-            if (filesSortByHeat) {
-                RankListAdapter.RankItem(
-                    id = key,
-                    title = name,
-                    subtitle = "浏览 ${counts.first} 次 · 停留 ${formatDuration(counts.second)}",
-                    value = counts.first,
-                    valueLabel = "${counts.first} 次",
-                    maxValue = maxValue
-                )
-            } else {
-                RankListAdapter.RankItem(
-                    id = key,
-                    title = name,
-                    subtitle = "浏览 ${counts.first} 次",
-                    value = counts.second.toInt(),
-                    valueLabel = formatDuration(counts.second),
-                    maxValue = maxValue
-                )
+                // 排行数据（key → (文件名, 次数, 时长)）
+                val rankEntries = byKey.map { (key, list) ->
+                    Triple(
+                        key,
+                        list.first().fileName,
+                        list.sumOf { it.viewCount + it.playCount } to list.sumOf { it.totalBrowseSeconds }
+                    )
+                }
+                val sorted = if (sortByHeat) {
+                    rankEntries.sortedByDescending { it.third.first }
+                } else {
+                    rankEntries.filter { it.third.second > 0 }.sortedByDescending { it.third.second }
+                }
+                val filesWithViews = byKey.size
+                val avgViews = if (filesWithViews > 0) totalViews.toFloat() / filesWithViews else 0f
+                val maxValue = sorted.firstOrNull()?.let { if (sortByHeat) it.third.first else it.third.second.toInt() } ?: 0
+                val items = sorted.take(20).map { (key, name, counts) ->
+                    if (sortByHeat) {
+                        RankListAdapter.RankItem(
+                            id = key,
+                            title = name,
+                            subtitle = "浏览 ${counts.first} 次 · 停留 ${formatDuration(counts.second)}",
+                            value = counts.first,
+                            valueLabel = "${counts.first} 次",
+                            maxValue = maxValue
+                        )
+                    } else {
+                        RankListAdapter.RankItem(
+                            id = key,
+                            title = name,
+                            subtitle = "浏览 ${counts.first} 次",
+                            value = counts.second.toInt(),
+                            valueLabel = formatDuration(counts.second),
+                            maxValue = maxValue
+                        )
+                    }
+                }
+                FavoritesCompute(totalViews, totalSeconds, filesWithViews, avgViews, items)
             }
+            if (seq != favoritesRenderSeq) return@launch
+            renderSummary(
+                listOf(
+                    SummaryItem("总浏览", StatsFormatHelper.formatNumber(computed.totalViews)),
+                    SummaryItem("浏览时长", formatDuration(computed.totalSeconds)),
+                    SummaryItem("常看文件", StatsFormatHelper.formatNumber(computed.filesWithViews)),
+                    SummaryItem("平均浏览次数", String.format(Locale.US, "%.1f", computed.avgViews))
+                )
+            )
+            renderInsights(
+                listOf("近${rangeLabel()}共浏览 ${computed.totalViews} 次，停留 ${formatDuration(computed.totalSeconds)}")
+            )
+            binding.listSubtitleText.text = "共 ${computed.filesWithViews} 个有浏览记录的文件"
+            adapter.submitList(computed.items)
         }
-        adapter.submitList(items)
     }
+
+    /** renderFavorites 的 Default 线程聚合结果（主线程只做 UI 提交） */
+    private data class FavoritesCompute(
+        val totalViews: Int,
+        val totalSeconds: Long,
+        val filesWithViews: Int,
+        val avgViews: Float,
+        val items: List<RankListAdapter.RankItem>
+    )
+
+    /** 渲染常看文件序号：只采纳最后一次请求结果（防旧协程晚完成覆盖新结果） */
+    private var favoritesRenderSeq = 0
 
     private fun rangeLabel(): String = when (timeRangeName) {
         "DAYS_7" -> "7天"
@@ -470,71 +492,94 @@ class StatsDetailFragment : Fragment() {
     private var cachedAuthorRefs: List<com.qimeng.media.data.db.entity.AuthorMediaCrossRef> = emptyList()
     private var cachedMediaTags: List<com.qimeng.media.data.db.model.MediaTagName> = emptyList()
 
-    /** 渲染作者/标签浏览排行（两张独立卡：常看作者 Top 15 + 常看标签 Top 10，条目可点击跳作者文件页/搜索页） */
+    /** 渲染作者/标签浏览排行（两张独立卡：常看作者 Top 15 + 常看标签 Top 10，条目可点击跳作者文件页/搜索页）
+     * v1.16：聚合计算移 Default 线程 + 序号防重——"全部"时间范围长年数据不再在主线程 collect 内聚合卡顿；
+     * 输入在主线程快照，Default 块内只读快照计算 */
     private fun renderAuthorsTags() {
+        val seq = ++authorsTagsRenderSeq
         val window = windowDaily()
-        val viewsByKey = window
-            .filter { it.viewCount + it.playCount > 0 }
-            .associate { it.recordKey to (it.viewCount + it.playCount) }
+        val authors = cachedAuthors
+        val authorRefs = cachedAuthorRefs
+        val mediaTags = cachedMediaTags
+        viewLifecycleOwner.lifecycleScope.launch {
+            val computed = withContext(Dispatchers.Default) {
+                val viewsByKey = window
+                    .filter { it.viewCount + it.playCount > 0 }
+                    .associate { it.recordKey to (it.viewCount + it.playCount) }
 
-        // 作者浏览聚合
-        val authorRows = cachedAuthors.mapNotNull { author ->
-            val views = cachedAuthorRefs
-                .filter { it.authorId == author.authorId && it.recordKey in viewsByKey }
-                .sumOf { viewsByKey[it.recordKey] ?: 0 }
-            if (views > 0) Triple(author.authorId, author.displayName, views) else null
-        }.sortedByDescending { it.third }
+                // 作者浏览聚合
+                val authorRows = authors.mapNotNull { author ->
+                    val views = authorRefs
+                        .filter { it.authorId == author.authorId && it.recordKey in viewsByKey }
+                        .sumOf { viewsByKey[it.recordKey] ?: 0 }
+                    if (views > 0) Triple(author.authorId, author.displayName, views) else null
+                }.sortedByDescending { it.third }
 
-        // 标签浏览聚合
-        val tagRows = cachedMediaTags
-            .filter { it.recordKey in viewsByKey }
-            .groupBy { it.name }
-            .map { (name, list) -> Triple(name, name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }) }
-            .sortedByDescending { it.third }
+                // 标签浏览聚合
+                val tagRows = mediaTags
+                    .filter { it.recordKey in viewsByKey }
+                    .groupBy { it.name }
+                    .map { (name, list) -> Triple(name, name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }) }
+                    .sortedByDescending { it.third }
 
-        val totalViews = window.sumOf { it.viewCount + it.playCount }
-        renderSummary(
-            listOf(
-                SummaryItem("作者", StatsFormatHelper.formatNumber(authorRows.size)),
-                SummaryItem("标签", StatsFormatHelper.formatNumber(tagRows.size)),
-                SummaryItem("浏览总次数", StatsFormatHelper.formatNumber(totalViews)),
-                SummaryItem("Top 作者", authorRows.firstOrNull()?.second ?: "—")
+                val totalViews = window.sumOf { it.viewCount + it.playCount }
+                val maxAuthor = authorRows.firstOrNull()?.third ?: 0
+                val maxTag = tagRows.firstOrNull()?.third ?: 0
+                val authorItems = authorRows.take(15).map { (id, name, views) ->
+                    RankListAdapter.RankItem(
+                        id = id,
+                        title = name,
+                        subtitle = "作者",
+                        value = views,
+                        valueLabel = "$views 次",
+                        maxValue = maxAuthor
+                    )
+                }
+                val tagItems = tagRows.take(10).map { (name, _, views) ->
+                    RankListAdapter.RankItem(
+                        id = "tag:$name",
+                        title = name,
+                        subtitle = "标签",
+                        value = views,
+                        valueLabel = "$views 次",
+                        maxValue = maxTag
+                    )
+                }
+                AuthorsTagsCompute(authorItems, tagItems, authorRows.size, tagRows.size, totalViews)
+            }
+            if (seq != authorsTagsRenderSeq) return@launch
+            renderSummary(
+                listOf(
+                    SummaryItem("作者", StatsFormatHelper.formatNumber(computed.authorCount)),
+                    SummaryItem("标签", StatsFormatHelper.formatNumber(computed.tagCount)),
+                    SummaryItem("浏览总次数", StatsFormatHelper.formatNumber(computed.totalViews)),
+                    SummaryItem("Top 作者", computed.authorItems.firstOrNull()?.title ?: "—")
+                )
             )
-        )
-        val insights = mutableListOf<String>()
-        if (authorRows.isNotEmpty()) {
-            insights.add("最常看作者「${authorRows.first().second}」，浏览 ${authorRows.first().third} 次")
+            val insights = mutableListOf<String>()
+            computed.authorItems.firstOrNull()?.let {
+                insights.add("最常看作者「${it.title}」，浏览 ${it.value} 次")
+            }
+            computed.tagItems.firstOrNull()?.let {
+                insights.add("最常看标签「${it.title}」，浏览 ${it.value} 次")
+            }
+            renderInsights(insights)
+            adapter.submitList(computed.authorItems)
+            tagAdapter.submitList(computed.tagItems)
         }
-        if (tagRows.isNotEmpty()) {
-            insights.add("最常看标签「${tagRows.first().first}」，浏览 ${tagRows.first().third} 次")
-        }
-        renderInsights(insights)
-
-        val maxAuthor = authorRows.firstOrNull()?.third ?: 0
-        val maxTag = tagRows.firstOrNull()?.third ?: 0
-        val authorItems = authorRows.take(15).map { (id, name, views) ->
-            RankListAdapter.RankItem(
-                id = id,
-                title = name,
-                subtitle = "作者",
-                value = views,
-                valueLabel = "$views 次",
-                maxValue = maxAuthor
-            )
-        }
-        val tagItems = tagRows.take(10).map { (name, _, views) ->
-            RankListAdapter.RankItem(
-                id = "tag:$name",
-                title = name,
-                subtitle = "标签",
-                value = views,
-                valueLabel = "$views 次",
-                maxValue = maxTag
-            )
-        }
-        adapter.submitList(authorItems)
-        tagAdapter.submitList(tagItems)
     }
+
+    /** renderAuthorsTags 的 Default 线程聚合结果（主线程只做 UI 提交） */
+    private data class AuthorsTagsCompute(
+        val authorItems: List<RankListAdapter.RankItem>,
+        val tagItems: List<RankListAdapter.RankItem>,
+        val authorCount: Int,
+        val tagCount: Int,
+        val totalViews: Int
+    )
+
+    /** 渲染作者/标签序号：只采纳最后一次请求结果（防旧协程晚完成覆盖新结果） */
+    private var authorsTagsRenderSeq = 0
 
     // ==================== 分布统计模式 ====================
 

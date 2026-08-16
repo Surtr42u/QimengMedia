@@ -94,11 +94,13 @@ class DefaultLocalMediaRepository(
     override suspend fun getAllUriStrings(): List<String> =
         mediaFileDao.getAllUriStrings()
 
+    // 透传 LIKE 前缀查询前先转义：DAO 侧已加 ESCAPE '\'，tree URI 含 %3A 等百分号编码时
+    // 未转义的 %/_ 会退化成通配符造成跨前缀误匹配
     override suspend fun getRecordKeysByUriPrefix(prefix: String): List<String> =
-        mediaFileDao.getRecordKeysByUriPrefix(prefix)
+        mediaFileDao.getRecordKeysByUriPrefix(escapeLikePattern(prefix))
 
     override suspend fun getCosRecordKeysByUriPrefix(prefix: String): List<String> =
-        mediaFileDao.getCosRecordKeysByUriPrefix(prefix)
+        mediaFileDao.getCosRecordKeysByUriPrefix(escapeLikePattern(prefix))
 
     override suspend fun getRecordKeysBySourceUri(sourceUri: String): List<String> =
         mediaFileDao.getRecordKeysBySourceUri(sourceUri)
@@ -330,6 +332,13 @@ class DefaultLocalMediaRepository(
         }
     }
 
+    /**
+     * LIKE 模式转义（配合 DAO 的 ESCAPE '\'）：先转义反斜杠自身，再转义 % 与 _，
+     * 保证前缀按字面匹配（tree URI 含 %3A 等百分号编码时防通配符退化）。
+     */
+    private fun escapeLikePattern(raw: String): String =
+        raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     override suspend fun deleteOrphanAuthors() {
         authorDao.deleteOrphanAuthors()
     }
@@ -414,14 +423,13 @@ class DefaultLocalMediaRepository(
     }
 
     override suspend fun rebuildCosIndex(mediaFiles: List<MediaFileEntity>, cosWorks: List<CosWorkEntity>) {
-        // 轻量查询：只获取 recordKey，避免加载全量 MediaFileEntity
-        val existingCosKeys = mediaFileDao.getAllCosRecordKeys()
         database.withTransaction {
+            // 读取须与清理同事务：事务外读的 key 快照可能已被并发扫描增删，按旧快照清理会漏删引用
+            val existingCosKeys = mediaFileDao.getAllCosRecordKeys()
             if (existingCosKeys.isNotEmpty()) {
-                // v1.12：分块删除避免 SQLite 绑定参数超限
-                existingCosKeys.chunked(500).forEach { chunk ->
-                    authorDao.deleteCrossRefsByRecordKeys(chunk)
-                }
+                // 级联清理全部引用表（stats/history/tags/按天聚合/时间轴标签），复用分块删除
+                // 模式，避免旧实现只删 author refs 导致其他引用表残留孤儿行
+                deleteAllRefsChunked(existingCosKeys)
                 authorDao.deleteOrphanCosAuthors()
             }
             mediaFileDao.deleteCosMedia()

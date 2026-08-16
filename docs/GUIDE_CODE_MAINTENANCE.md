@@ -216,7 +216,7 @@
 | 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法为 `BackupManager.importFromDirectory`（单事务导入 13 个数据段，事务编排合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
-| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 7 个核心测试类（140+ 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest 9 个） | ./gradlew test |
+| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 10 个核心测试类（180 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest，v1.16 审查新增 ScanUtilsMetadataTest 8 个 + AppPrefsImportSanitizeTest 12 个 + AuthorImportUseCaseTest 分片分节 7 个） | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
@@ -225,17 +225,18 @@
 | 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
-| `MediaDetailFragment` | 1402 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，二次巡检新增 viewCount 会话级去重/播放幂等/同步触发后 1371→1402，未跨档） |
+| `MediaDetailFragment` | 1402 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，二次巡检新增 viewCount 会话级去重/播放幂等/同步触发后 1371→1402，未跨档；v1.16 审查新增空库重试/同源续播后 1402→1423，未跨档） |
 | `ProfileFragment` | 259 行 | 绿色 | v1.13 数据管理/数据备份迁移至独立页面（DataManagementFragment/DataBackupFragment）后大幅瘦身；保留推荐偏好/兼容性检查弹层编排 |
-| `StatsDetailFragment` | 931 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染（备案行数 823 滞后于实际 931，2026-08-14 巡检同步） |
+| `StatsDetailFragment` | 931 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染（2026-08-14 巡检同步至 931；v1.16 审查聚合移 Default+序号防重后 931→994，未跨档） |
 | `BiliPlayerView` | 834 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度（v1.15 修复手势轮询竞争/倍速恢复/listener 对称后 819→834） |
 | `MediaLibraryViewModel` | 37 方法 | 黄色（方法数） | 多为单行委托 + UI 回调（like/favorite），下沉会变乱 |
 | `ScanUseCase.autoRefreshAllSources` | 24 | 黄色（合理复杂度） | 扫描编排：多源顺序刷新（常规+COS），每源有新增/删除/更新，拆分破坏流程可读性 |
+| `ScanUseCase` | 815 行 | 黄色（类总行数） | 扫描编排中枢：六入口（手动/刷新/COS/COS 刷新/自动×2）各含 读→upsert→删 stale→upsertSource 编排 + v1.16 按源互斥加锁 + 取消透传，拆分会割裂入口间共享的临界区语义（v1.16 审查加锁/加固后进入黄色区，2026-08-16 备案） |
 | `ScanUseCase.scanCosMedia` | 22 | 黄色（合理复杂度） | COS 扫描编排，同上 |
 | `SourceMatcher.matchCharacters` | 21 | 黄色（合理复杂度） | 角色匹配算法：两层匹配（变体表+别名表）+ 区域重叠检测，拆分破坏匹配完整性 |
 | `AuthorImportUseCase.parseAuthorBlocks` | 20 | 黄色（合理复杂度） | TXT 解析：块识别+作者提取+文件关联，解析逻辑天然多分支 |
 | `MainActivity.onCreate` | 20 | 黄色（合理复杂度） | 生命周期初始化：底部导航+Fragment+权限+主题，初始化顺序敏感 |
-| `BackupManager` | 689 行 | 黄色（类总行数） | 备份管理天然多方法：17 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 13 个数据段保持单方法（拆分会破坏事务原子性）（v1.15 备份加固 .bak 暂存/写侧上限/schemaVersion 校验后 627→684；二次巡检导入分块/历史裁剪后 684→689） |
+| `BackupManager` | 689 行 | 黄色（类总行数） | 备份管理天然多方法：17 个实体↔JSON 映射 + 单文件原子写/读 + 单事务导入编排。v2.0 单文件重构后从 1567 行降至 627 行（删除 10 套 export/import 重复模板 + 个人偏好报告器），已脱离红色区。导入方法因单事务顺序导入 13 个数据段保持单方法（拆分会破坏事务原子性）（v1.15 备份加固后 627→684；二次巡检 684→689；v1.16 审查导入校验/事务快照/退化路径后 689→733） |
 | `SourceGroupsData` | 1674 行 | 红色（类总行数，纯数据声明备案） | 圈复杂度=0，BUILTIN_GROUPS 出处+角色检索表，无逻辑，无可拆分语义单元，按 §8「纯数据声明」认可 |
 
 ### 历史审查与重构记录
@@ -260,8 +261,10 @@
 | `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处（23 个测试） |
 | `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
 | `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
-| `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（9 个测试，v1.13 新增） |
+| `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（v1.13 新增 9 个；v1.16 审查追加 blocks 分片分节 7 个：往返还原/单片上限/旧格式兼容/片丢失回退/转义边界，现共 16 个） |
 | `ThumbnailCacheKeysTest` | 缩略图缓存键 hash 生成/提取（UTF-8 编码/负字节格式化/16 位 hex 长度/`_frame` 兼容/确定性，v1.16 新增，期望值外部预计算防自证自）（12 个测试） |
+| `ScanUtilsMetadataTest` | hasScanMetadataChanged 元数据变更判定（null 不判变更/真实变更判定/相同值/边界，v1.16 审查新增）（8 个测试） |
+| `AppPrefsImportSanitizeTest` | 偏好导入钳制纯函数（列数 0/负/超大/边界、themeMode 白名单、权重 NaN/无穷/越界，v1.16 审查新增）（12 个测试） |
 
 ### detekt CI 集成
 
@@ -301,6 +304,7 @@
 | `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
 | `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置，放开超大图解码原图）, ZoomImageView（仅诊断日志显示 gpuMax；渲染层判断改用 `HARDWARE_RENDER_SAFE_SIZE=4096` 常量，不再用 maxTextureSize——见 GUIDE_UI.md「智能分层渲染」阈值根因） |
 | `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶 + v1.14 按天浏览聚合计算 cutoffForRange/groupDailyByDay/Week/ByType/aggregateDailyByType/BySource，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
+| `ScanSourceLocks` | `core/ScanSourceLocks.kt` | 按 sourceUri 的共享扫描互斥（ConcurrentHashMap<String, Mutex>，withSourceLock 包裹"读 existingKeys→upsert→删 stale"库临界区；v1.16 审查新增，消除手动/刷新/观察者/自动刷新四方并发互删） | ScanUseCase（六入口）, MediaStoreObserver |
 
 ### 共享胶囊筛选体系
 

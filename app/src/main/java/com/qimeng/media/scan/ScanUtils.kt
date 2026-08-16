@@ -43,13 +43,19 @@ object ScanUtils {
      * 判断同名文件在增量刷新时元数据是否发生变化。
      * 同名覆盖/重编码文件的 sizeBytes/modifiedAtMillis/durationMillis/width/height 任一变化
      * 即视为需要 upsert，避免增量刷新只写新 key 导致库中元数据永久陈旧。
+     *
+     * scanned 中为 null 的字段（如 SAF 回退路径不解码的 width/height/durationMillis）
+     * 与库中真实值比较时视为"未知，不判变更"：null 判为变更会触发整行 upsert，
+     * 把 null 永久覆盖库中真实值；非 null 且与库不同（含库为 null 的新增信息）仍判变更。
      */
-    fun hasScanMetadataChanged(scanned: MediaFileEntity, existing: MediaFileEntity): Boolean =
-        scanned.sizeBytes != existing.sizeBytes ||
-            scanned.modifiedAtMillis != existing.modifiedAtMillis ||
-            scanned.durationMillis != existing.durationMillis ||
-            scanned.width != existing.width ||
-            scanned.height != existing.height
+    fun hasScanMetadataChanged(scanned: MediaFileEntity, existing: MediaFileEntity): Boolean {
+        if (scanned.sizeBytes != existing.sizeBytes) return true
+        if (scanned.modifiedAtMillis != existing.modifiedAtMillis) return true
+        scanned.durationMillis?.let { if (it != existing.durationMillis) return true }
+        scanned.width?.let { if (it != existing.width) return true }
+        scanned.height?.let { if (it != existing.height) return true }
+        return false
+    }
 
     /**
      * 将候选列表转换为 MediaFileEntity 列表，处理重复文件名的 recordKey 生成。

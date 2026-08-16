@@ -330,7 +330,7 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - COS 作者关联使用 `AuthorMediaCrossRef`（扫描时直接记录 author→files 映射创建 crossRefs，不使用 URI 前缀匹配）
 - COS 扫描流程和路径解析算法详见 `GUIDE_SCAN.md`
 - COS 目录结构（三种文件夹格式）详见 `GUIDE_AUTHOR.md`
-- 重建 COS 索引（`rebuildCosIndex()`）：清空旧 COS 文件的 `AuthorMediaCrossRef` + 清理孤立作者 + 清空 COS 媒体文件和 cos_works 表，不影响非 COS 数据
+- 重建 COS 索引（`rebuildCosIndex()`）：单事务内读取现有 COS 键并经 `deleteAllRefsChunked` 级联清理全部引用表（stats/history/timeline/tags/作者关联）+ 清理孤立作者 + 清空 COS 媒体文件和 cos_works 表，不影响非 COS 数据（v1.16 审查修复：读取移入事务内、清理范围从仅 AuthorMediaCrossRef 扩为全引用级联）
 - 重建常规索引（`rebuildMediaIndex()`）：只清空非 COS 媒体文件，不影响 COS 数据
 - 删除 COS 扫描源时（v1.12 起按 `sourceUri` 精确匹配），只级联删除该源的 CosWorkEntity 和 COS 媒体文件，不再误删其他源作品；旧版数据（sourceUri 为 null）保守保留不做 folderUri 前缀兜底清理（v1.15 修正：folderUri 是文件系统路径、剩余源 uriString 是 tree URI，前缀匹配恒失败会整体误删，宁残留不可误删）
 - COS 刷新时清理已消失/改名作品：`CosWorkDao.deleteByIds(ids)`（v1.15 新增，按主键删除该源扫描不到的 cos_works 行，不改表结构无需迁移；配套 Repository 方法 `getCosWorksBySourceUri`/`deleteCosWorksByIds`）

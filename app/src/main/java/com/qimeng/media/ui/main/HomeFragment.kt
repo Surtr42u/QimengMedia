@@ -67,6 +67,10 @@ class HomeFragment : Fragment() {
     private var rankPeriod = MediaRankingPeriod.DAY
     private var columns = GRID_COLUMNS
     private var displayCount = INITIAL_DISPLAY_COUNT
+    // v1.16：预加载 pending 标志——onScrolled 触发即置位，diff 落地/重新提交列表时复位。
+    // 防止 submitList 的 diff 未落地、lm.itemCount 尚未增长时，快速滑动的多个 onScrolled
+    // 连续触发 displayCount += 20 一次装全库
+    private var pendingPreload = false
     private var query = ""
     private var filterState = MediaFilterState()
     private var cachedMedia = emptyList<MediaFileEntity>()
@@ -176,14 +180,19 @@ class HomeFragment : Fragment() {
                 // 让加载发生在滑动中途（滑动动画掩盖解码），而不是触底瞬间。
                 if (dy <= 0 || displayCount >= (tabSortedItems[currentTab]?.size ?: 0)) return
                 val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
+                // v1.16：pending 期间（上次预加载的 diff 尚未落地）忽略新触发，
+                // 避免 lm.itemCount 不变导致一次滑动连加多轮 20 条装全库
+                if (pendingPreload) return
                 if (lm.findLastVisibleItemPosition() >= lm.itemCount - 1 - PRELOAD_THRESHOLD_ITEMS) {
+                    pendingPreload = true
                     displayCount += DISPLAY_INCREMENT
                     tabDisplayCounts[currentTab] = displayCount
                     val items = tabSortedItems[currentTab].orEmpty()
                     // v1.12：目标 tab 首次切换后 render 尚在挂起、该键仍为空时，直接跳过
                     // ——旧实现会 submitList(emptyList) 把当前列表清空成白屏闪烁，直至 render 完成
                     if (items.isEmpty()) return
-                    adapter.submitList(items.take(displayCount))
+                    // v1.16：diff 落地回调中复位 pending 标志，此后才允许下一次预加载
+                    adapter.submitList(items.take(displayCount)) { pendingPreload = false }
                 }
             }
         })
@@ -200,6 +209,7 @@ class HomeFragment : Fragment() {
             // 保留 dailyShownCountMap，让之前展示过的文件被惩罚，新文件排到前面
             lastRenderedKeys = ""
             displayCount = INITIAL_DISPLAY_COUNT
+            pendingPreload = false // v1.16：刷新重置分页状态，同步清除预加载 pending 标志
             launchRender()
             swipeRefresh?.isRefreshing = false
         }
@@ -216,6 +226,7 @@ class HomeFragment : Fragment() {
                 onApply = { next ->
                     filterState = next
                     displayCount = INITIAL_DISPLAY_COUNT
+                    pendingPreload = false // v1.16：筛选重置分页状态，同步清除预加载 pending 标志
                     launchRender()
                 },
                 onAddTag = { name -> viewModel.createTag(name) },
@@ -338,6 +349,7 @@ class HomeFragment : Fragment() {
         currentTab = tab
         // 恢复目标 tab 的排序缓存（如果有），否则使用默认值
         displayCount = tabDisplayCounts[tab] ?: INITIAL_DISPLAY_COUNT
+        pendingPreload = false // v1.16：切 tab 重置分页状态，同步清除预加载 pending 标志
         updateChipStates()
         rankPeriodContainer?.visibility = if (tab == TAB_RANKING) View.VISIBLE else View.GONE
         launchRender()
@@ -346,6 +358,7 @@ class HomeFragment : Fragment() {
     private fun setRankPeriod(period: MediaRankingPeriod) {
         rankPeriod = period
         displayCount = INITIAL_DISPLAY_COUNT
+        pendingPreload = false // v1.16：重置分页状态，同步清除预加载 pending 标志
         updateChipStates()
         launchRender()
     }
@@ -452,6 +465,9 @@ class HomeFragment : Fragment() {
 
         val cachedSortedItems = tabSortedItems[currentTab].orEmpty()
         val items = if (query.isNotBlank()) cachedSortedItems else cachedSortedItems.take(displayCount)
+        // v1.16：render 重新计算并提交列表即视为数据已落地，复位预加载 pending 标志
+        // （tabSortedItems 为空导致 onScrolled 置位后 return 的场景也依赖此处兜底复位）
+        pendingPreload = false
         val keys = items.joinToString("|") { it.recordKey }
         if (keys != lastRenderedKeys) {
             lastRenderedKeys = keys

@@ -7,11 +7,11 @@ import com.qimeng.media.data.db.entity.MediaFileEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -22,6 +22,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ThumbnailUseCase(
     private val application: Application
 ) {
+    // v1.x：预生成任务统一用类内应用级 scope 启动——旧实现经调用方传入的 scope
+    //（viewModelScope）启动，队列中下一任务沿用"上一任务的 scope"，观察者经
+    // applicationScope 提交的任务可能落到已取消的 viewModelScope 上被静默丢弃。
+    // UseCase 为容器级单例，此 scope 随 App 存活
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     // v1.x：AtomicBoolean 保证 check-then-act 原子性——旧实现 @Volatile 的「检查 + 置位」两步分离，
     // 两个线程可同时通过检查并发启动两个预生成任务；compareAndSet 将检查与置位合并为原子操作
     private val isPregenerating = AtomicBoolean(false)
@@ -29,7 +35,7 @@ class ThumbnailUseCase(
     private val _progress = MutableStateFlow<ThumbnailProgress>(ThumbnailProgress.Idle)
     val progress: StateFlow<ThumbnailProgress> = _progress.asStateFlow()
 
-    /** 待处理的队列 */
+    /** 待处理的队列（只存数据与来源，不携带 scope，启动统一用 [appScope]） */
     private val pendingQueue = ConcurrentLinkedQueue<PendingTask>()
 
     private data class PendingTask(
@@ -45,7 +51,7 @@ class ThumbnailUseCase(
      *
      * @param source 来源标识，用于UI区分常规/COS进度
      */
-    fun pregenerateThumbnails(mediaFiles: List<MediaFileEntity>, coroutineScope: CoroutineScope, source: ThumbnailSource = ThumbnailSource.GENERAL) {
+    fun pregenerateThumbnails(mediaFiles: List<MediaFileEntity>, source: ThumbnailSource = ThumbnailSource.GENERAL) {
         if (mediaFiles.isEmpty()) {
             AppLog.d("Scan", "pregenerateThumbnails: empty list, skipped")
             return
@@ -57,13 +63,13 @@ class ThumbnailUseCase(
             pendingQueue.add(PendingTask(mediaFiles, source))
             return
         }
-        startPregeneration(mediaFiles, coroutineScope, source)
+        startPregeneration(mediaFiles, source)
     }
 
-    private fun startPregeneration(mediaFiles: List<MediaFileEntity>, coroutineScope: CoroutineScope, source: ThumbnailSource) {
+    private fun startPregeneration(mediaFiles: List<MediaFileEntity>, source: ThumbnailSource) {
         _progress.value = ThumbnailProgress.Running(0, mediaFiles.size, source)
         AppLog.d("Scan", "pregenerateThumbnails: starting with ${mediaFiles.size} files (${source.label})")
-        coroutineScope.launch(Dispatchers.IO) {
+        appScope.launch {
             try {
                 ThumbnailCache.pregenerateThumbnails(application, mediaFiles) { done, total ->
                     _progress.value = ThumbnailProgress.Running(done, total, source)
@@ -71,14 +77,16 @@ class ThumbnailUseCase(
                 _progress.value = ThumbnailProgress.Done(mediaFiles.size, source)
                 AppLog.d("Scan", "pregenerateThumbnails: completed ${mediaFiles.size} files (${source.label})")
             } catch (e: CancellationException) {
-                // v1.12：取消必须向上透传，不能吞掉（否则 finally 的排队任务也永远不会执行）
+                // 取消同样复位 Idle（仅 Exception 分支复位会导致取消后 _progress 停留 Running）；
+                // 取消必须向上透传，不能吞掉（否则 finally 的排队任务也永远不会执行）
+                _progress.value = ThumbnailProgress.Idle
                 throw e
             } catch (e: Exception) {
                 _progress.value = ThumbnailProgress.Idle
                 AppLog.e("Scan", "pregenerateThumbnails failed: ${e.message}", e)
             } finally {
                 isPregenerating.set(false)
-                // 处理队列中的下一个请求
+                // 处理队列中的下一个请求（应用级 scope 启动，不受上一个任务取消影响）
                 val next = pendingQueue.poll()
                 if (next != null) {
                     // v1.x：启动下一个任务前再次 CAS 保护——CAS 失败说明有并发调用已抢先
@@ -87,20 +95,7 @@ class ThumbnailUseCase(
                     if (!isPregenerating.compareAndSet(false, true)) {
                         pendingQueue.add(next)
                     } else {
-                        // v1.12：finally 内单独 try-catch——外层已取消时 withContext(Main) 会抛
-                        // CancellationException，原实现无保护导致排队任务被吞、队列永不处理
-                        try {
-                            withContext(Dispatchers.Main) {
-                                startPregeneration(next.mediaFiles, coroutineScope, next.source)
-                            }
-                        } catch (c: CancellationException) {
-                            // 取消时不能丢任务也不能卡死运行标记：复位 isPregenerating 并把
-                            // next 放回队列，下次预生成调用会重新处理（与 v1.12 修复目标一致——
-                            // 原实现仅打日志，导致任务被吞且标记永久为 true、后续全部只排队不执行）
-                            isPregenerating.set(false)
-                            pendingQueue.add(next)
-                            AppLog.d("Scan", "pregenerateThumbnails: cancelled while starting next task, requeued")
-                        }
+                        startPregeneration(next.mediaFiles, next.source)
                     }
                 }
             }

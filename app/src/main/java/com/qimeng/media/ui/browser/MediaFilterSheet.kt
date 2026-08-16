@@ -164,31 +164,7 @@ object MediaFilterSheet {
         content.addView(section(context, colors, "标签"))
         val tagGroup = ChipGroup(context).apply { isSingleLine = false }
         tags.forEach { tag ->
-            tagGroup.addView(Chip(context).apply {
-                text = tag.name
-                isCheckable = true
-                isChecked = tag.name in holder.value.selectedTags
-                setOnClickListener {
-                    val next = holder.value.selectedTags.toMutableSet()
-                    if (isChecked) next.add(tag.name) else next.remove(tag.name)
-                    holder.value = holder.value.copy(selectedTags = next)
-                }
-                setOnLongClickListener {
-                    AlertDialog.Builder(context)
-                        .setTitle("删除标签")
-                        .setMessage("确定删除标签「${tag.name}」？删除后所有文件的该标签关联将一并移除。")
-                        .setPositiveButton("删除") { _, _ ->
-                            onDeleteTag(tag.tagId)
-                            (parent as? ViewGroup)?.removeView(this)
-                            val next = holder.value.selectedTags.toMutableSet()
-                            next.remove(tag.name)
-                            holder.value = holder.value.copy(selectedTags = next)
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
-                    true
-                }
-            })
+            tagGroup.addView(buildTagChip(context, holder, tag.name, tag.tagId, onDeleteTag))
         }
         val addTagBtn = TextView(context).apply {
             text = "+ 添加标签"
@@ -207,19 +183,25 @@ object MediaFilterSheet {
                     .setPositiveButton("添加") { _, _ ->
                         val name = input.text.toString().trim()
                         if (name.isNotEmpty()) {
-                            onAddTag(name)
-                            // 立即在 ChipGroup 中添加新标签，消除延迟感
-                            val newChip = Chip(context).apply {
-                                text = name
-                                isCheckable = true
-                                isChecked = false
-                                setOnClickListener {
-                                    val next = holder.value.selectedTags.toMutableSet()
-                                    if (isChecked) next.add(name) else next.remove(name)
-                                    holder.value = holder.value.copy(selectedTags = next)
+                            // v1.16：同名查重——初始标签列表或本会话已动态添加的 chip 中已有同名时，
+                            // 不再重复调用 onAddTag/添加 chip，避免重复创建与视觉重复
+                            val existsInTags = tags.any { it.name == name }
+                            var existsInGroup = false
+                            for (i in 0 until tagGroup.childCount) {
+                                val child = tagGroup.getChildAt(i)
+                                if (child is Chip && child.text == name) {
+                                    existsInGroup = true
+                                    break
                                 }
                             }
-                            tagGroup.addView(newChip)
+                            if (existsInTags || existsInGroup) {
+                                android.widget.Toast.makeText(context, "标签「$name」已存在", android.widget.Toast.LENGTH_SHORT).show()
+                                return@setPositiveButton
+                            }
+                            onAddTag(name)
+                            // 立即在 ChipGroup 中添加新标签，消除延迟感
+                            // v1.16：统一走 buildTagChip 构建（新建标签 tagId 尚未生成，长按删除待重新打开面板后可用）
+                            tagGroup.addView(buildTagChip(context, holder, name, tagId = null, onDeleteTag))
                         }
                     }
                     .setNegativeButton("取消", null)
@@ -228,6 +210,46 @@ object MediaFilterSheet {
         }
         content.addView(tagGroup)
         content.addView(addTagBtn)
+    }
+
+    /**
+     * 构建单个标签 Chip（v1.16 提取统一构建）：点击切换选中、长按删除（确认后回调 onDeleteTag 并同步选中集）。
+     * @param tagId 标签 id；动态新增的标签 id 未生成时传 null，长按不响应删除
+     */
+    private fun buildTagChip(
+        context: Context,
+        holder: FilterStateHolder,
+        name: String,
+        tagId: Long?,
+        onDeleteTag: (Long) -> Unit
+    ): Chip {
+        return Chip(context).apply {
+            text = name
+            isCheckable = true
+            isChecked = name in holder.value.selectedTags
+            setOnClickListener {
+                val next = holder.value.selectedTags.toMutableSet()
+                if (isChecked) next.add(name) else next.remove(name)
+                holder.value = holder.value.copy(selectedTags = next)
+            }
+            setOnLongClickListener {
+                // v1.16：统一补充长按删除——动态新增 chip（tagId 未生成）不响应，重新打开面板后可删
+                if (tagId == null) return@setOnLongClickListener false
+                AlertDialog.Builder(context)
+                    .setTitle("删除标签")
+                    .setMessage("确定删除标签「$name」？删除后所有文件的该标签关联将一并移除。")
+                    .setPositiveButton("删除") { _, _ ->
+                        onDeleteTag(tagId)
+                        (parent as? ViewGroup)?.removeView(this)
+                        val next = holder.value.selectedTags.toMutableSet()
+                        next.remove(name)
+                        holder.value = holder.value.copy(selectedTags = next)
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                true
+            }
+        }
     }
 
     /** 底部按钮栏：重置 + 应用筛选（含年份范围交叉校验） */

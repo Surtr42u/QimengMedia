@@ -127,7 +127,10 @@ class AuthorImportUseCase(
         )
     }
 
-    /** 保存TXT导入的结构化数据，用于后续重新匹配 */
+    /** 保存TXT导入的结构化数据，用于后续重新匹配。
+     *  v1.x：分片存储——超大数据序列化单行会超 SQLite CursorWindow（约 2MB），
+     *  读取抛异常被 [loadTxtBlocks] 吞掉返回空列表导致 blocks 静默丢失。
+     *  写入按 [TXT_BLOCK_CHUNK_MAX_CHARS] 拆片，key 为 `${原key}#${序号}` + `${原key}#count` 记录片数。 */
     private suspend fun saveTxtBlocks(fileName: String, blocks: List<AuthorBlock>) {
         val key = KEY_IMPORTED_TXT_BLOCKS_PREFIX + fileName
         val jsonArr = org.json.JSONArray()
@@ -139,9 +142,24 @@ class AuthorImportUseCase(
             }
             jsonArr.put(obj)
         }
+        val chunks = packElementsToChunks(splitJsonArrayElements(jsonArr.toString()), TXT_BLOCK_CHUNK_MAX_CHARS)
+        // 先读旧片数再写新值：本轮片数变少时清掉上一轮残留的多余分片
+        val oldCount = repository.getSetting(key + TXT_BLOCK_COUNT_SUFFIX)
+            ?.value?.trim()?.toIntOrNull() ?: 0
+        val now = System.currentTimeMillis()
+        chunks.forEachIndexed { idx, chunk ->
+            repository.upsertSetting(
+                SettingEntity(key = key + TXT_BLOCK_CHUNK_INFIX + idx, value = chunk, updatedAtMillis = now)
+            )
+        }
         repository.upsertSetting(
-            SettingEntity(key = key, value = jsonArr.toString(), updatedAtMillis = System.currentTimeMillis())
+            SettingEntity(key = key + TXT_BLOCK_COUNT_SUFFIX, value = chunks.size.toString(), updatedAtMillis = now)
         )
+        if (oldCount > chunks.size) {
+            (chunks.size until oldCount).forEach { i -> repository.deleteSetting(key + TXT_BLOCK_CHUNK_INFIX + i) }
+        }
+        // 清掉旧单行格式的原 key 数据（读取已优先走分片格式）
+        repository.deleteSetting(key)
     }
 
     /** 重新匹配单个已导入的TXT文件与当前库中的非COS文件
@@ -257,10 +275,16 @@ class AuthorImportUseCase(
         }
     }
 
-    /** 加载已保存的TXT结构化数据 */
+    /** 加载已保存的TXT结构化数据。
+     *  v1.x：优先读分片格式（#count + #序号片）拼合；无 #count 时按旧单行格式读取（兼容升级前数据）。 */
     private suspend fun loadTxtBlocks(fileName: String): List<AuthorBlock> {
         val key = KEY_IMPORTED_TXT_BLOCKS_PREFIX + fileName
-        val json = repository.getSetting(key)?.value ?: return emptyList()
+        val chunkCount = repository.getSetting(key + TXT_BLOCK_COUNT_SUFFIX)?.value
+        val chunkValues = chunkCount?.trim()?.toIntOrNull()?.takeIf { it > 0 }
+            ?.let { count -> (0 until count).map { i -> repository.getSetting(key + TXT_BLOCK_CHUNK_INFIX + i)?.value } }
+            ?: emptyList()
+        val json = resolveTxtBlocksJson(chunkCount, chunkValues, repository.getSetting(key)?.value)
+            ?: return emptyList()
         return try {
             val arr = org.json.JSONArray(json)
             (0 until arr.length()).map { i ->
@@ -296,9 +320,12 @@ class AuthorImportUseCase(
         repository.deleteSetting(key)
     }
 
-    /** 删除TXT文件时清理对应的blocks数据 */
+    /** 删除TXT文件时清理对应的blocks数据（含全部分片与片数标记，及旧单行格式兜底） */
     suspend fun removeImportedTxtBlocks(fileName: String) {
         val key = KEY_IMPORTED_TXT_BLOCKS_PREFIX + fileName
+        val count = repository.getSetting(key + TXT_BLOCK_COUNT_SUFFIX)?.value?.trim()?.toIntOrNull() ?: 0
+        repository.deleteSetting(key + TXT_BLOCK_COUNT_SUFFIX)
+        (0 until count).forEach { i -> repository.deleteSetting(key + TXT_BLOCK_CHUNK_INFIX + i) }
         repository.deleteSetting(key)
     }
 
@@ -385,5 +412,95 @@ class AuthorImportUseCase(
         const val KEY_IMPORTED_TXT_BLOCKS_PREFIX = "imported_txt_blocks_"
         const val KEY_IMPORTED_TXT_URI_PREFIX = "imported_txt_uri_"
         const val KEY_AUTHOR_REBUILD_V2_DONE = "author_rebuild_v2_done"
+
+        // ===== TXT blocks 分片存储（防超 SQLite CursorWindow 约 2MB）=====
+
+        /** 分片序号分隔：完整 key 为 `${KEY_IMPORTED_TXT_BLOCKS_PREFIX + fileName}#${序号}`。
+         *  已知极端边界：fileName 自身以 `#数字`/`#count` 结尾时理论上可与其他文件的分片 key
+         *  碰撞（同时入库两个此类文件才触发），不迁移已存数据，新增导入时避免此类文件名即可。 */
+        internal const val TXT_BLOCK_CHUNK_INFIX = "#"
+
+        /** 片数标记 key 后缀：`${原key}#count`，值为分片总数 */
+        internal const val TXT_BLOCK_COUNT_SUFFIX = "#count"
+
+        /** 单片 settings 值上限（字符）：CursorWindow 约 2MB，留足余量防读取抛异常 */
+        internal const val TXT_BLOCK_CHUNK_MAX_CHARS = 500 * 1024
+
+        /** 把完整 JSON 数组字符串按顶层元素切分。纯字符串扫描（处理字符串字面量内的
+         *  转义与括号），不依赖 org.json，可在 JVM 单元测试直接验证。
+         *  仅支持对象元素数组（blocks 存储场景固定为 JSONObject 数组）。 */
+        internal fun splitJsonArrayElements(json: String): List<String> {
+            val elements = mutableListOf<String>()
+            var depth = 0
+            var inString = false
+            var escaped = false
+            var start = -1
+            for (i in json.indices) {
+                val c = json[i]
+                if (inString) {
+                    when {
+                        escaped -> escaped = false
+                        c == '\\' -> escaped = true
+                        c == '"' -> inString = false
+                    }
+                    continue
+                }
+                when (c) {
+                    '"' -> inString = true
+                    '[', '{' -> {
+                        if (depth == 1 && start < 0) start = i
+                        depth++
+                    }
+                    ']', '}' -> {
+                        depth--
+                        if (depth == 1 && start >= 0) {
+                            elements.add(json.substring(start, i + 1))
+                            start = -1
+                        }
+                    }
+                }
+            }
+            return elements
+        }
+
+        /** 把顶层元素打包成若干 ≤maxChars 的 JSON 数组片（含外层方括号）。
+         *  超过 maxChars 的单个元素独占一片，保证有界推进不死循环。 */
+        internal fun packElementsToChunks(elements: List<String>, maxChars: Int): List<String> {
+            if (elements.isEmpty()) return listOf("[]")
+            val chunks = mutableListOf<String>()
+            val current = StringBuilder()
+            for (element in elements) {
+                val addition = if (current.isEmpty()) element else ",$element"
+                if (current.isNotEmpty() && current.length + addition.length + 2 > maxChars) {
+                    chunks.add("[$current]")
+                    current.setLength(0)
+                }
+                current.append(if (current.isEmpty()) element else addition)
+            }
+            if (current.isNotEmpty()) chunks.add("[$current]")
+            return chunks
+        }
+
+        /** 拼合多片 JSON 数组为完整 JSON 数组字符串（去掉各片外层方括号后重拼） */
+        internal fun joinJsonArrayChunks(chunks: List<String>): String =
+            chunks.joinToString(separator = ",", prefix = "[", postfix = "]") {
+                it.removePrefix("[").removeSuffix("]")
+            }
+
+        /** 决定 blocks 读取来源：有有效 #count 时拼合分片；否则回退旧单行格式（升级兼容）。
+         *  剔除空数组片，防止拼合出 `[{..},,]` 非法 JSON。 */
+        internal fun resolveTxtBlocksJson(
+            countValue: String?,
+            chunkValues: List<String?>,
+            legacyValue: String?
+        ): String? {
+            val count = countValue?.trim()?.toIntOrNull() ?: 0
+            if (count > 0) {
+                val parts = chunkValues.take(count).filterNotNull()
+                    .filter { it.removePrefix("[").removeSuffix("]").isNotBlank() }
+                if (parts.isNotEmpty()) return joinJsonArrayChunks(parts)
+            }
+            return legacyValue
+        }
     }
 }

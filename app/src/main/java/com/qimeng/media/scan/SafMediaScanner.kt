@@ -35,7 +35,11 @@ class SafMediaScanner(private val context: Context) {
         folderName: String,
         output: MutableList<MediaCandidate>
     ) {
-        for (child in safeListFiles(directory)) {
+        // 目录暂时不可读 ≠ 目录无文件：抛错让整次扫描失败、上层跳过本轮，
+        // 防止该子树文件被误判 stale 删除（宁可整轮跳过不可误删）
+        val children = safeListFiles(directory)
+            ?: error("目录暂时不可读: ${directory.uri}")
+        for (child in children) {
             when {
                 child.isDirectory -> {
                     val childFolderName = child.name?.ifBlank { null } ?: folderName
@@ -82,13 +86,15 @@ class SafMediaScanner(private val context: Context) {
         extractMetadata(keyCode)?.toLongOrNull()?.takeIf { it > 0L }
 
     /**
-     * 安全列出目录内容：单个子目录访问失败（权限被拒、IO 异常等）时跳过该目录继续扫描，
-     * 不中断整个扫描流程。v1.x：由仅捕获 SecurityException 扩展为捕获 IOException 等所有异常。
+     * 安全列出目录内容。返回 null 表示目录访问失败（权限被拒、IO 异常等）——
+     * 与"目录为空"（返回空数组）区分：null 时调用方必须把本次扫描视为失败，
+     * 不能把该目录文件计入 stale 判定，否则子目录暂时不可读会导致上层误删数据。
+     * v1.x：由仅捕获 SecurityException 扩展为捕获 IOException 等所有异常。
      */
-    private fun safeListFiles(directory: DocumentFile): Array<DocumentFile> = try {
+    private fun safeListFiles(directory: DocumentFile): Array<DocumentFile>? = try {
         directory.listFiles()
     } catch (e: Exception) {
         AppLog.w("SafScan", "listFiles failed, skip directory: ${directory.uri}", e)
-        emptyArray()
+        null
     }
 }

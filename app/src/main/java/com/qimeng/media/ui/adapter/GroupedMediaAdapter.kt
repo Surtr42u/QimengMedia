@@ -26,6 +26,14 @@ class GroupedMediaAdapter(
     private var source: List<MediaFileEntity> = emptyList()
     private var lastKeys: String = ""
 
+    /**
+     * 提交序号（防过期覆盖）：每次提交（同步/异步）递增。
+     * 异步计算在 Default 线程完成后若序号已过期（期间发生新提交）则丢弃结果，
+     * 避免调用方 lifecycleScope 不受 renderJob.cancel() 管控时，旧列表晚到覆盖新列表。
+     * 仅在主线程读写，无并发问题。
+     */
+    private var submitSeq = 0
+
     /** 浏览时间映射：recordKey → openedAtMillis，用于历史页面按浏览时间分组 */
     var viewedAtMap: Map<String, Long> = emptyMap()
 
@@ -33,7 +41,29 @@ class GroupedMediaAdapter(
     var thumbnailWidth = 480
     var thumbnailHeight = 270
 
+    /** 附着的 RecyclerView 上下文（v1.16：updateThumbnailSize 估算屏宽用） */
+    private var recyclerViewContext: android.content.Context? = null
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        recyclerViewContext = recyclerView.context
+    }
+
+    /**
+     * 按列数更新缩略图解码尺寸（v1.16）：按屏宽/列数估算单列宽度，clamp 到 240..1440，
+     * 高度按 16:9 推导。列数变化（PinchZoom 回调/初始 setup）时调用，
+     * 避免固定 480x270 导致 2 列模糊、5 列浪费。
+     */
+    fun updateThumbnailSize(columns: Int) {
+        if (columns <= 0) return
+        val widthPixels = recyclerViewContext?.resources?.displayMetrics?.widthPixels
+            ?: android.content.res.Resources.getSystem().displayMetrics.widthPixels
+        val estimated = widthPixels / columns
+        thumbnailWidth = estimated.coerceIn(240, 1440)
+        thumbnailHeight = thumbnailWidth * 9 / 16
+    }
+
     fun submitMedia(items: List<MediaFileEntity>) {
+        submitSeq++ // 同步提交同样使在途异步提交过期
         val fingerprint = items.hashCode().toString() + "_" + items.size
         if (fingerprint == lastKeys) return
         lastKeys = fingerprint
@@ -54,6 +84,7 @@ class GroupedMediaAdapter(
      */
     fun submitMediaAsync(items: List<MediaFileEntity>, scope: LifecycleCoroutineScope) {
         val viewedAtSnapshot = viewedAtMap
+        val seq = ++submitSeq // 记录本次提交序号，计算期间若有新提交则本次结果过期
         scope.launch {
             val (fingerprint, rows) = withContext(Dispatchers.Default) {
                 val fp = items.hashCode().toString() + "_" + items.size
@@ -66,6 +97,8 @@ class GroupedMediaAdapter(
                 fp to newRows
             }
             // 回到主线程提交：lastKeys/source 保持主线程单线程读写，与同步路径语义一致
+            // 序号已过期（期间发生新提交）则丢弃，避免旧列表晚到覆盖新列表
+            if (seq != submitSeq) return@launch
             if (fingerprint == lastKeys) return@launch
             lastKeys = fingerprint
             source = items
@@ -74,6 +107,7 @@ class GroupedMediaAdapter(
     }
 
     fun submitMediaWithGroups(items: List<MediaFileEntity>, groups: Map<String, List<MediaFileEntity>>) {
+        submitSeq++ // 同步提交同样使在途异步提交过期
         val fingerprint = items.hashCode().toString() + "_g_" + groups.keys.hashCode()
         if (fingerprint == lastKeys) return
         lastKeys = fingerprint
@@ -96,6 +130,7 @@ class GroupedMediaAdapter(
         groups: Map<String, List<MediaFileEntity>>,
         scope: LifecycleCoroutineScope
     ) {
+        val seq = ++submitSeq // 记录本次提交序号，计算期间若有新提交则本次结果过期
         scope.launch {
             val (fingerprint, rows) = withContext(Dispatchers.Default) {
                 val fp = items.hashCode().toString() + "_g_" + groups.keys.hashCode()
@@ -107,6 +142,8 @@ class GroupedMediaAdapter(
                 }
                 fp to newRows
             }
+            // 序号已过期（期间发生新提交）则丢弃，避免旧列表晚到覆盖新列表
+            if (seq != submitSeq) return@launch
             if (fingerprint == lastKeys) return@launch
             lastKeys = fingerprint
             source = items

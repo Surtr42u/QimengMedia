@@ -46,7 +46,22 @@ private data class ComputeResult(
     val sourceGroups: Map<String, List<MediaFileEntity>>,
     val charGroups: Map<String, List<MediaFileEntity>>,
     val filtered: List<MediaFileEntity>,
-    val totalSize: Long
+    val totalSize: Long,
+    // v1.16：带回计算后的新缓存键，由主线程统一回写 sourceGroupsKey/charGroupsKey
+    val sourceKey: String,
+    val charKey: String
+)
+
+/**
+ * 分组缓存主线程快照（v1.16）：render 启动前在主线程取当前缓存值传入，
+ * Default 块内不再读写共享缓存字段，计算结果统一回主线程回写，
+ * 使 renderJob.cancel() 能安全阻止已跑完的计算回写过期分组。
+ */
+private data class GroupsCacheSnapshot(
+    val sourceGroups: Map<String, List<MediaFileEntity>>,
+    val sourceKey: String,
+    val charGroups: Map<String, List<MediaFileEntity>>,
+    val charKey: String
 )
 
 class AllFilesFragment : Fragment() {
@@ -131,7 +146,13 @@ class AllFilesFragment : Fragment() {
 
         // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
         PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.allFilesRecycler,
-            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
+            onColumnsChanged = { newCols ->
+                appPrefsManager?.updateGridColumnsAll(newCols)
+                // v1.16：列数变化同步缩略图解码尺寸（屏宽/列数估算），2 列不模糊、5 列不浪费
+                adapter.updateThumbnailSize(newCols)
+            })
+        // v1.16：初始 setup 按当前列数设定缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
     }
 
     private var scrollListener: ViewTreeObserver.OnScrollChangedListener? = null
@@ -243,6 +264,8 @@ class AllFilesFragment : Fragment() {
         gridLayoutManager.spanSizeLookup?.invalidateSpanIndexCache()
         // v1.15：列数按钮切换同样持久化（双指缩放已在 onColumnsChanged 回调持久化）
         appPrefsManager?.updateGridColumnsAll(columnsRef.value)
+        // v1.16：列数变化同步缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
         val iconRes = when (columnsRef.value) {
             2 -> R.drawable.ic_grid_2
             3 -> R.drawable.ic_grid_3
@@ -282,22 +305,30 @@ class AllFilesFragment : Fragment() {
         renderJob?.cancel()
         renderJob = viewLifecycleOwner.lifecycleScope.launch {
             val computeStart = System.currentTimeMillis()
-            val computeResult = computeAllGroupsAsync(workingMedia, isCosPartition, isAllPartition)
+            // v1.16：主线程先快照缓存初值——Default 块内只读快照计算，不再直接写共享缓存字段
+            val cacheIn = GroupsCacheSnapshot(cachedSourceGroups, sourceGroupsKey, cachedCharGroups, charGroupsKey)
+            val computeResult = computeAllGroupsAsync(workingMedia, isCosPartition, isAllPartition, cacheIn, viewMode)
 
             AppLog.d("AllFiles", "render: compute=${System.currentTimeMillis() - computeStart}ms, mode=$viewMode, workSize=${workingMedia.size}")
 
             if (_binding == null) return@launch
+            // v1.16：回主线程统一回写缓存字段（withContext 恢复点检查取消，
+            // renderJob.cancel() 后此处不会执行，过期分组不再回写覆盖新列表）
             cachedSourceGroups = computeResult.sourceGroups
+            sourceGroupsKey = computeResult.sourceKey
             cachedCharGroups = computeResult.charGroups
+            charGroupsKey = computeResult.charKey
             updateAllUI(computeResult, isCosPartition, isAllPartition, renderStart)
         }
     }
 
-    /** 协程内计算：类型筛选 + 缓存键判定 + 出处/角色分组 + applyFilter */
+    /** 协程内计算：类型筛选 + 缓存键判定 + 出处/角色分组 + applyFilter（缓存读写均走快照与返回值） */
     private suspend fun computeAllGroupsAsync(
         workingMedia: List<MediaFileEntity>,
         isCosPartition: Boolean,
-        isAllPartition: Boolean
+        isAllPartition: Boolean,
+        cacheIn: GroupsCacheSnapshot,
+        viewModeSnapshot: String
     ): ComputeResult = withContext(Dispatchers.Default) {
         val stats = cachedStats.associateBy { it.recordKey }
         val tagMap = cachedTags.groupBy { it.recordKey }.mapValues { entry -> entry.value.map { it.name }.toSet() }
@@ -312,8 +343,11 @@ class AllFilesFragment : Fragment() {
         val newSourceKey = "$partitionsSnapshot|$filterType|$dataVersion"
         val newCharKey = "$partitionsSnapshot|$filterType|$sourcesSnapshot|$dataVersion"
 
-        if (newSourceKey != sourceGroupsKey) {
-            cachedSourceGroups = when {
+        // v1.16：局部变量承载缓存命中/重算结果，Default 块内不写共享字段
+        var srcGroups = cacheIn.sourceGroups
+        var srcKey = cacheIn.sourceKey
+        if (newSourceKey != srcKey) {
+            srcGroups = when {
                 isCosPartition -> MediaGroupHelper.groupByCosAuthor(typed, cachedAuthorMedia, cachedAuthors)
                 isAllPartition -> {
                     val regular = MediaGroupHelper.groupBySource(typed.filter { !it.isCosFile })
@@ -322,18 +356,20 @@ class AllFilesFragment : Fragment() {
                 }
                 else -> MediaGroupHelper.groupBySource(typed)
             }
-            sourceGroupsKey = newSourceKey
+            srcKey = newSourceKey
         }
 
-        val needCharGroups = viewMode == VIEW_MODE_CHARACTER || selectedChars.isNotEmpty()
-        if (needCharGroups && newCharKey != charGroupsKey) {
+        val needCharGroups = viewModeSnapshot == VIEW_MODE_CHARACTER || selectedChars.isNotEmpty()
+        var chrGroups = cacheIn.charGroups
+        var chrKey = cacheIn.charKey
+        if (needCharGroups && newCharKey != chrKey) {
             // v1.12：快照化判断与过滤，避免并发修改
             val sourcesSnapshotSet = selectedSources.toSet()
             val baseForChars = if (sourcesSnapshotSet.isNotEmpty()) {
-                val sourceMediaSet = cachedSourceGroups.filterKeys { it in sourcesSnapshotSet }.values.flatten().toSet()
+                val sourceMediaSet = srcGroups.filterKeys { it in sourcesSnapshotSet }.values.flatten().toSet()
                 typed.filter { it in sourceMediaSet }
             } else typed
-            cachedCharGroups = when {
+            chrGroups = when {
                 isCosPartition -> MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
                 isAllPartition -> {
                     val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })
@@ -342,11 +378,8 @@ class AllFilesFragment : Fragment() {
                 }
                 else -> MediaGroupHelper.groupByCharacter(baseForChars)
             }
-            charGroupsKey = newCharKey
+            chrKey = newCharKey
         }
-
-        val srcGroups = cachedSourceGroups
-        val chrGroups = cachedCharGroups
 
         // v1.12：快照传入，避免 Default 线程迭代可变 Set 的 CME
         val sourcesSnapshotSet = selectedSources.toSet()
@@ -357,7 +390,7 @@ class AllFilesFragment : Fragment() {
 
         val result = MediaBrowserLogic.applyFilter(displayed, query = "", filterState, stats, tagMap, cachedHistory)
         val size = result.sumOf { it.sizeBytes }
-        ComputeResult(srcGroups, chrGroups, result, size)
+        ComputeResult(srcGroups, chrGroups, result, size, srcKey, chrKey)
     }
 
     /** 协程外 UI 更新：药丸渲染 + fingerprint + adapter 提交 + 计时 */

@@ -97,6 +97,10 @@ class SearchFragment : Fragment() {
     // v1.14：外部传入的初始查询词（如统计页标签点击跳转），数据流就绪后自动执行一次搜索
     private var pendingInitialQuery: String? = null
 
+    // v1.16 修复：进入搜索页前的窗口原 softInputMode 快照，销毁视图时还原原值，
+    // 替代原硬编码 ADJUST_RESIZE（系统默认为其他模式时会被悄悄改掉影响后续页面）
+    private var originalSoftInputMode = 0
+
     // 搜索历史
     private val historyPrefs by lazy { requireContext().getSharedPreferences("search_history", Context.MODE_PRIVATE) }
 
@@ -111,6 +115,8 @@ class SearchFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         // 搜索页键盘弹出时不调整布局，避免底部tab显示在键盘上方
+        // v1.16 修复：设置前快照原 softInputMode，onDestroyView 还原原值（见 originalSoftInputMode）
+        originalSoftInputMode = requireActivity().window.attributes.softInputMode
         requireActivity().window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         val bnInfo = (requireActivity() as? MainActivity)?.getBottomNavigationInfo().orEmpty()
         AppLog.d("Search", "onViewCreated: softInputMode=ADJUST_NOTHING, bottomNav=$bnInfo")
@@ -136,9 +142,11 @@ class SearchFragment : Fragment() {
         observeData()
 
         // 自动弹出键盘
+        // v1.16 修复：postDelayed 回调执行时 Fragment 可能已 detach，requireContext() 会抛
+        // IllegalStateException，改用 context?（detach 后为 null 直接跳过）
         searchInput?.postDelayed({
             searchInput?.requestFocus()
-            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            val imm = context?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.showSoftInput(searchInput, 0)
         }, 200)
     }
@@ -525,9 +533,10 @@ class SearchFragment : Fragment() {
     }
 
     private fun showKeyboard() {
+        // v1.16 修复：同 onViewCreated——postDelayed 回调可能晚于 detach 执行，用 context? 替代 requireContext()
         searchInput?.postDelayed({
             searchInput?.requestFocus()
-            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            val imm = context?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.showSoftInput(searchInput, 0)
         }, 100)
     }
@@ -539,9 +548,13 @@ class SearchFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // 恢复默认softInputMode
-        @Suppress("DEPRECATION")
-        requireActivity().window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // v1.16 修复：还原进入前快照的原 softInputMode，而非硬编码 ADJUST_RESIZE
+        // （系统默认为其他模式时原实现会悄悄改掉，影响后续页面键盘行为）
+        if (originalSoftInputMode != 0) {
+            @Suppress("DEPRECATION")
+            activity?.window?.setSoftInputMode(originalSoftInputMode)
+            originalSoftInputMode = 0
+        }
         searchInput = null
         searchBack = null
         searchAction = null

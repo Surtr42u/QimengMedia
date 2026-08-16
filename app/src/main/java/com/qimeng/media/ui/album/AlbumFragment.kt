@@ -102,7 +102,10 @@ class AlbumFragment : Fragment() {
         cosMedia: List<MediaFileEntity>,
         cosAuthors: List<AuthorEntity>
     ) {
-        withContext(Dispatchers.Default) {
+        // v1.16：Default 块只算数据与 renderHash，回主线程再比较/赋值/渲染——
+        // 旧实现在 Default 线程读写 lastRenderHash/cachedGroups/cosGroups 共享字段，
+        // 与主线程（renderAlbums、启动缓存渲染）存在并发窗口
+        val (groups, cosGroups, renderHash) = withContext(Dispatchers.Default) {
             // 常规文件按出处分组
             // v1.12：改用 matchAll().first 走全局缓存，替代无缓存 match()，
             // 批量分组时同一文件名只匹配一次
@@ -138,17 +141,16 @@ class AlbumFragment : Fragment() {
                 append("|cos|")
                 append(cosGroups.entries.sortedBy { it.key }.joinToString("|") { "${it.key}:${it.value.size}" })
             }
-            if (renderHash == lastRenderHash) return@withContext
-            lastRenderHash = renderHash
-
-            cachedGroups = groups
-            cachedCosGroups = cosGroups
-            hasReceivedData = true
-
-            withContext(Dispatchers.Main) {
-                renderAlbums()
-            }
+            Triple(groups, cosGroups, renderHash)
         }
+
+        // 主线程统一比较 + 赋值 + 渲染（computeGroups 从主线程 collect 调用，恢复后仍在主线程）
+        if (renderHash == lastRenderHash) return
+        lastRenderHash = renderHash
+        cachedGroups = groups
+        cachedCosGroups = cosGroups
+        hasReceivedData = true
+        renderAlbums()
     }
 
     private fun renderAlbums() {

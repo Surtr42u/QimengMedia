@@ -100,7 +100,7 @@
 - 排行榜 chip：日榜 / 周榜 / 月榜 / 年榜
 - COS chip：切换到 COS 推荐模式，只显示 `isCosFile=true` 的媒体
 - 双列 RecyclerView（`MediaThumbnailAdapter`，Coil 加载，`itemViewCacheSize=20`）
-- **距底部 ≤6 项提前增量加载下一页，不重排**（v1.15：原"滚动到底增量加载"在触底最后一帧同步 +20 条并立即批量 bind，新条目视频双重解码 + 预生成抢 IO 集中在那帧 → 明显"卡一下"；改提前加载让解码发生在滑动中途被动画掩盖）
+- **距底部 ≤6 项提前增量加载下一页，不重排**（v1.15：原"滚动到底增量加载"在触底最后一帧同步 +20 条并立即批量 bind，新条目视频双重解码 + 预生成抢 IO 集中在那帧 → 明显"卡一下"；改提前加载让解码发生在滑动中途被动画掩盖；v1.16 审查修复：增 `pendingPreload` 标志——触发即置位、diff commitCallback 复位，防快速滑动时多个 onScrolled 基于 diff 未落地的 itemCount 连续 +=20 一次装全库）
 - 左右横滑切换推荐/COS/排行榜：使用 `GestureDetector.onFling` 检测快速水平滑动，阈值 50dp + 速度 300
 - 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式，传当前页面已分页加载显示的文件列表（`adapter.currentList`，非完整排序列表 `tabSortedItems[currentTab]`），详情页仅可左右滑动浏览当前推荐页已可见的文件，数目与推荐页显示一致
 - 搜索框不可聚焦，点击跳转独立搜索界面（`SearchFragment`，通过 `MainActivity.showSearchFragment()` add 模式）
@@ -162,6 +162,8 @@
 - 图片（含 GIF 动图）：`ZoomImageView`，`showMediaAt()` 中 `MediaType.IMAGE` 和 `MediaType.ANIMATED_IMAGE` 均走图片分支（隐藏视频播放器 UI），GIF 动图使用 `AnimatedImageDecoder` 加载动画帧；使用 Coil `size(Size.ORIGINAL)` 加载原图（**设计决策：详情页始终显示完整原图，不降采样**，用户点击查看的就是原始分辨率图片），淡入淡出滑动；始终 edge-to-edge 全屏布局，系统栏显隐不触发布局变化，避免图片重新居中；**智能分层渲染**（2026-06-20 优化，2026-06-21 修复超大图渲染阈值，2026-06-23 去重）：`ZoomImageView.setImageDrawable` 调用 `applyOptimalLayerType()` 按图尺寸智能选层（`setImageBitmap` 不再单独调用，由 `super.setImageBitmap` 链式触发的 `setImageDrawable` 统一负责，消除同图二次判断冗余）——GIF（`AnimatedImageDrawable`）→ `LAYER_TYPE_HARDWARE`（动画依赖硬件刷新帧）；普通图长边 ≤ **硬件渲染安全阈值 4096**（`HARDWARE_RENDER_SAFE_SIZE`）→ `LAYER_TYPE_HARDWARE`（GPU 直渲，4096 图绘制从 ~50ms 降到 ~5ms，消除来回切大图卡顿）；普通图长边 > 4096 → `LAYER_TYPE_SOFTWARE`（CPU 软件渲染，正确应用 MATRIX 缩放）。**⚠️ 阈值选择根因**（2026-06-21 修复）：原方案用 `GpuInfo.maxTextureSize()`（探测 `GL_MAX_TEXTURE_SIZE`，旗舰机实测可达 16384）作阈值，但这是 OpenGL 理论上限，厂商 GPU 驱动对超大 bitmap（如 8000x8000=256MB）无法正确应用 MATRIX 缩放——超大图走 HARDWARE 时 matrix 失效，图按原始像素从左上角绘制（表现为左上角小方块、不居中）。4096 是业界公认稳定值（Glide/Fresco 默认上限，Android Canvas 软件层 Skia MAXMIMUM_BITMAP_SIZE=32766 远大于此不会崩），与 `GpuInfo` 探测失败回退值 `DEFAULT_MAX_TEXTURE_SIZE=4096` 一致。手势期间（双指缩放/拖拽）同样用 `shouldUseHardwareForCurrent()` **同 4096 阈值**判断，超大图手势时保持 SOFTWARE。不再使用 `Bitmap.Config.HARDWARE`（原 ≤4096px 用 HARDWARE 的方案会导致 HARDWARE Bitmap 在 SOFTWARE 层上无法绘制，大图白屏卡死）；**两个独立阈值需区分**：①渲染安全阈值 4096（`HARDWARE_RENDER_SAFE_SIZE`，HARDWARE/SOFTWARE 分层判断，保渲染正确性）②Coil maxBitmapSize = `gpuMax`（`GpuInfo.maxTextureSize()`，解码降采样上限，放开让 8192 解原图）。两者独立，改其一不影响另一个；**Coil maxBitmapSize 放开**（2026-06-20）：Coil3 默认 `maxBitmapSize=4096` 会把超大图降采样（8192→4096），偏离"始终原图"决策。`QimengApplication` ImageLoader 配置 `.maxBitmapSize(Size(gpuMax, gpuMax))` 放开到 GPU 上限，让 8192/7680 等超大图显示原图。代价是内存上升（超大图原图 ARGB_8888 ~150MB/张，浏览多张超大图 Native Heap 峰值可达 ~900MB），靠 Coil LRU 35% + onTrimMemory + 超大图预渲染收紧控制；**超大图 SOFTWARE 渲染 trade-off**（2026-06-21）：超大图（>4096）走 SOFTWARE 比 HARDWARE 慢（CPU 逐像素处理，8000x8000 量级可能 100ms+），但保证 matrix 缩放正确、显示位置正常。保正确性优先于渲染速度，这是已知 trade-off；**缩放范围**：0.5x~5x，双击放大1.8x；**性能优化**：近1.0的scale factor跳过减少无效重绘，`requestDisallowInterceptTouchEvent` 手势期间只调用一次；退出详情页时取消所有加载/预加载请求、释放ImageView drawable，确保全尺寸bitmap被回收
 - 视频（仅 `MediaType.VIDEO`）：未播放时用 `ZoomImageView` 显示视频帧预览（透明背景，透出主题色，与图片分支一致；优先使用 `MediaMetadataRetriever` 提取首帧，失败时回退到 Coil VideoFrameDecoder），中央显示 ▶ 播放按钮；单击预览区直接启动播放（进入 BiliPlayerView），横滑浏览其他文件。播放时 BiliPlayerView 接管触摸
 - **视频播放幂等（v1.15）**：`startVideoPlayback` 开头以 `if (isVideoPlaying) return` 做幂等保护，双击/快速重复点击不会重复 setVideoUri 重建 MediaItem 导致播放被重置
+- **同源续播（v1.16 审查修复）**：播放中关闭退回预览再点播放时，`startVideoPlayback` 检查 `currentMediaItem` 同 uri 且 `playbackState != STATE_IDLE` 则只恢复播放不重建 MediaItem（进度不再归零；横滑切图 stopVideoPlayback 置 IDLE，切回走正常重建）
+- **冷启动空库重试（v1.16 审查修复）**：`loadDetailSource` 首次快照 allMedia 为空（扫描未完成）时 5×300ms 有限重试，仍空才弹栈（原空快照即 popBackStack 详情页闪退）
 - **点赞/收藏写入即触发自动同步（v1.15）**：`toggleLike`/`toggleFavorite` 写入 SharedPreferences 后调用 `viewModel.triggerAutoSyncIfNeeded()`（30 秒防抖），不再等退出详情页才落盘
 - 按返回键：播放中先退到 chrome 浏览模式（暂停+chrome显示），再按退回首页
 - 按需解码媒体元数据（`showInfoSheet`）：**v1.15 防重复弹窗 + 先 show 再补解码 + 占位行原地更新 + 无"完成"按钮**——`infoSheetShowing` 标志防解码期间重复点击堆叠多个对话框；解码协程改 `viewLifecycleOwner.lifecycleScope`（Fragment 退栈后自动取消，不再操作已销毁视图）；先展示已有行与"解码中…"占位，解码完成后**原地替换占位行文本**（`addInfoRow` 返回 value TextView 引用，避免追加重复"尺寸"行）；详细信息弹窗**无"完成"按钮**（BottomSheet 下滑手势 / 点外部空白关闭即可，显式关闭按钮冗余，v1.0 历史遗留已删除；`sheetDone` 保留供标签管理/快速转跳弹窗使用）。
@@ -242,8 +244,8 @@
 - `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；**v1.15 触摸拦截修复**——`onTouchEvent` 改为 ACTION_DOWN 决策：命中数据点（48dp 阈值内）才消费事件保持点击高亮/气泡，未命中返回 false 放行外层 NestedScrollView/ScrollView 滚动，图表区域内不再无法滚动页面；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除
 
 **排行榜组件**（`ui/stats/`）：
-- `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选
-- `StatsDetailFragment`：统计详情页（全新界面，非 BottomSheet），点击卡片进入，展示 Top 20 完整列表 + 统计摘要 + 数据洞察
+- `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选；v1.16 审查修复：areItemsTheSame 只比 id（title 并入内容比较，防同名误判）；submitList 覆写（单参+双参）对空列表自动显示"暂无数据"占位条目（不可点击），排行卡空数据不再只剩标题
+- `StatsDetailFragment`：统计详情页（全新界面，非 BottomSheet），点击卡片进入，展示 Top 20 完整列表 + 统计摘要 + 数据洞察；v1.16 审查修复：renderFavorites/renderAuthorsTags 聚合移 Dispatchers.Default + 序号防重（"全部"时间范围不再主线程聚合卡顿），输入主线程快照
 
 ## 我的页
 

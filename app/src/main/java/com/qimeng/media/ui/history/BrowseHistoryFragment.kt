@@ -62,6 +62,9 @@ class BrowseHistoryFragment : Fragment() {
     private var lastRenderHash = ""
     // v1.12：render 协程 job——旧 render 晚完成会覆盖新选中态 UI，启动新 render 前取消旧的
     private var renderJob: Job? = null
+    // v1.16：computeAndRender 协程 job——旧实现每次 collect 直接 launch 新协程不取消上一个，
+    // Default 计算乱序完成时旧 historyMedia 晚到覆盖新列表；先 cancel 再 launch（仿 renderJob 模式）
+    private var computeRenderJob: Job? = null
     private var cachedCosMedia = emptyList<MediaFileEntity>()
     private var cachedCosWorks = emptyList<CosWorkEntity>()
     private var cachedAuthorMedia = emptyList<AuthorMediaCrossRef>()
@@ -133,7 +136,13 @@ class BrowseHistoryFragment : Fragment() {
 
         // v1.15：双指缩放结束后把新列数持久化到 AppPrefsManager（重启保留）
         PinchZoomHelper.setup(requireContext(), columnsRef, gridLayoutManager, binding.historyRecycler,
-            onColumnsChanged = { newCols -> appPrefsManager?.updateGridColumnsAll(newCols) })
+            onColumnsChanged = { newCols ->
+                appPrefsManager?.updateGridColumnsAll(newCols)
+                // v1.16：列数变化同步缩略图解码尺寸（屏宽/列数估算），2 列不模糊、5 列不浪费
+                adapter.updateThumbnailSize(newCols)
+            })
+        // v1.16：初始 setup 按当前列数设定缩略图解码尺寸
+        adapter.updateThumbnailSize(columnsRef.value)
     }
 
     private fun setupChips() {
@@ -207,7 +216,9 @@ class BrowseHistoryFragment : Fragment() {
         }
         // 按浏览时间（openedAtMillis）倒序排列，而非文件修改时间
         val openedAtMap = cachedHistory.associate { it.recordKey to it.openedAtMillis }
-        viewLifecycleOwner.lifecycleScope.launch {
+        // v1.16：先取消上一个 computeAndRender 协程，防止旧 Default 计算晚完成覆盖新列表
+        computeRenderJob?.cancel()
+        computeRenderJob = viewLifecycleOwner.lifecycleScope.launch {
             // v1.12：历史过滤 + 时间倒序排序移入 Default 线程，避免主线程全量处理
             val historyMedia = withContext(Dispatchers.Default) {
                 workingMedia.filter { it.recordKey in historyKeys }
@@ -272,10 +283,9 @@ class BrowseHistoryFragment : Fragment() {
         }
         val charGroups = withContext(Dispatchers.Default) {
             if (viewMode == VIEW_MODE_CHARACTER) {
-                val baseForChars = if (selectedSources.isNotEmpty()) {
-                    val sourceMediaSet = sourceGroups.filterKeys { it in selectedSources }.values.flatten().toSet()
-                    typed.filter { it in sourceMediaSet }
-                } else typed
+                // v1.16：删除按 selectedSources 过滤 baseForChars 的死分支——CHARACTER 模式下
+                // selectedSources 已被 setViewMode/updateHistoryUI 清空，分支永不触发（与 AllFilesFragment 对齐）
+                val baseForChars = typed
                 if (isCosPartition) MediaGroupHelper.groupByCosWork(baseForChars, cachedAuthorMedia, cachedAuthors, cachedCosWorks)
                 else if (isAllPartition) {
                     val regular = MediaGroupHelper.groupByCharacter(baseForChars.filter { !it.isCosFile })

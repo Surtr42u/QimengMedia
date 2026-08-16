@@ -236,47 +236,71 @@ class DataStatsFragment : Fragment() {
         }
     }
 
-    /** 渲染常看文件列表（窗口内浏览聚合 Top 3，文件名 + 浏览次数） */
+    /** 渲染常看文件序号：只采纳最后一次请求结果（同 renderOverviewSeq 模式） */
+    private var renderTopFilesSeq = 0
+
+    /** 渲染常看文件列表（窗口内浏览聚合 Top 3，文件名 + 浏览次数）
+     * v1.16：聚合计算移 Default 线程——"全部"时间范围长年数据不再在主线程 collect 内全量聚合卡顿 */
     private fun renderTopFiles() {
+        val seq = ++renderTopFilesSeq
         val window = windowDaily()
-        val top3 = window
-            .filter { it.viewCount + it.playCount > 0 }
-            .groupBy { it.recordKey }
-            .map { (key, list) -> Triple(key, list.first().fileName, list.sumOf { it.viewCount + it.playCount }) }
-            .sortedByDescending { it.third }
-            .take(3)
-        renderTextList(binding.topFilesList, top3.map { Triple(it.second, "${it.third} 次", it.first) })
+        viewLifecycleOwner.lifecycleScope.launch {
+            val top3 = withContext(Dispatchers.Default) {
+                window
+                    .filter { it.viewCount + it.playCount > 0 }
+                    .groupBy { it.recordKey }
+                    .map { (key, list) -> Triple(key, list.first().fileName, list.sumOf { it.viewCount + it.playCount }) }
+                    .sortedByDescending { it.third }
+                    .take(3)
+            }
+            if (seq != renderTopFilesSeq) return@launch
+            renderTextList(binding.topFilesList, top3.map { Triple(it.second, "${it.third} 次", it.first) })
+        }
     }
+
+    /** 渲染常看作者序号：只采纳最后一次请求结果（同 renderOverviewSeq 模式） */
+    private var renderTopAuthorsSeq = 0
 
     /**
      * 渲染常看作者与标签列表（作者/标签混合 Top 3）。
      * 作者浏览 = 该作者关联文件在窗口内浏览聚合的次数和（allAuthorMedia → recordKey 匹配窗口浏览 key）。
+     * v1.16：聚合计算移 Default 线程——"全部"时间范围长年数据不再在主线程 collect 内全量聚合卡顿；
+     * 输入在主线程快照，Default 块内只读快照计算
      */
     private fun renderTopAuthors() {
+        val seq = ++renderTopAuthorsSeq
         val window = windowDaily()
-        val viewsByKey = window.associate { it.recordKey to (it.viewCount + it.playCount) }
-        val browsedKeys = viewsByKey.filterValues { it > 0 }.keys
+        val authorData = cachedAuthorData
+        val authorMedia = cachedAuthorMedia
+        val mediaTags = cachedMediaTags
+        viewLifecycleOwner.lifecycleScope.launch {
+            val mixed = withContext(Dispatchers.Default) {
+                val viewsByKey = window.associate { it.recordKey to (it.viewCount + it.playCount) }
+                val browsedKeys = viewsByKey.filterValues { it > 0 }.keys
 
-        // 作者浏览聚合（按浏览数值降序取前 2）
-        val authorRows = cachedAuthorData.mapNotNull { (authorId, name, _) ->
-            val views = cachedAuthorMedia
-                .filter { it.authorId == authorId && it.recordKey in browsedKeys }
-                .sumOf { viewsByKey[it.recordKey] ?: 0 }
-            if (views > 0) Triple(name, views, authorId) else null
-        }.sortedByDescending { it.second }.take(2)
+                // 作者浏览聚合（按浏览数值降序取前 2）
+                val authorRows = authorData.mapNotNull { (authorId, name, _) ->
+                    val views = authorMedia
+                        .filter { it.authorId == authorId && it.recordKey in browsedKeys }
+                        .sumOf { viewsByKey[it.recordKey] ?: 0 }
+                    if (views > 0) Triple(name, views, authorId) else null
+                }.sortedByDescending { it.second }.take(2)
 
-        // 标签浏览聚合（按浏览数值降序取前 2）
-        val tagRows = cachedMediaTags
-            .filter { it.recordKey in browsedKeys }
-            .groupBy { it.name }
-            .map { (name, list) -> Triple(name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }, name) }
-            .sortedByDescending { it.second }
-            .take(2)
+                // 标签浏览聚合（按浏览数值降序取前 2）
+                val tagRows = mediaTags
+                    .filter { it.recordKey in browsedKeys }
+                    .groupBy { it.name }
+                    .map { (name, list) -> Triple(name, list.sumOf { viewsByKey[it.recordKey] ?: 0 }, name) }
+                    .sortedByDescending { it.second }
+                    .take(2)
 
-        // 混合：作者在前 + 标签在后，共 3 行
-        val mixed = (authorRows.map { Triple(it.first, "${it.second} 次", it.third) } +
-            tagRows.map { Triple(it.first, "${it.second} 次", it.third) }).take(3)
-        renderTextList(binding.topAuthorsList, mixed)
+                // 混合：作者在前 + 标签在后，共 3 行
+                (authorRows.map { Triple(it.first, "${it.second} 次", it.third) } +
+                    tagRows.map { Triple(it.first, "${it.second} 次", it.third) }).take(3)
+            }
+            if (seq != renderTopAuthorsSeq) return@launch
+            renderTextList(binding.topAuthorsList, mixed)
+        }
     }
 
     /** 渲染紧凑文本列表（标题 + 副标题 + 隐藏点击 id，整卡可点击进详情） */

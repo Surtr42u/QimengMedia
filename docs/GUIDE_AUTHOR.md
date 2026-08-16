@@ -128,7 +128,7 @@
 
 ### 双向匹配机制
 
-TXT 导入时，解析后的结构化数据（AuthorBlock 列表）会序列化为 JSON 保存到 settings 表（key 为 `imported_txt_blocks_<fileName>`），用于后续重新匹配；同时保存 TXT 文件的 URI（key 为 `imported_txt_uri_<fileName>`），用于刷新时重新读取文件：
+TXT 导入时，解析后的结构化数据（AuthorBlock 列表）会序列化为 JSON 保存到 settings 表（key 为 `imported_txt_blocks_<fileName>`），用于后续重新匹配；同时保存 TXT 文件的 URI（key 为 `imported_txt_uri_<fileName>`），用于刷新时重新读取文件。**v1.16 审查修复：blocks 分片存储**——超大数据序列化单行会超 SQLite CursorWindow（约 2MB），读取抛异常被吞导致 blocks 静默丢失；现按单片 ≤500KB 字符拆分为 `imported_txt_blocks_<fileName>#<序号>` + `#count` 记录片数，读取优先分片格式、无 #count 回退旧单行（兼容旧备份），删除时清全部分片。已知极端边界：fileName 自身以 `#数字`/`#count` 结尾时理论上可与其他文件分片 key 碰撞（需两个此类文件同时入库才触发）：
 
 - **统一重建语义**：导入、刷新、删除、扫描四个入口的作者关联重建，全部委托 `AuthorImportUseCase.rebuildAssociationsFromBlocks()` 从**全部已导入 TXT** 统一重建关联（遍历全部 TXT 的 blocks → 匹配当前库非 COS 文件 → upsertAllAuthors + deleteCrossRefsByAuthorIds(全部相关作者) + upsertAllAuthorMedia）。因为先删全部相关作者旧关联再插全量新关联，跨 TXT 同名作者关联 = 所有 TXT 该作者匹配文件并集，不会被单 TXT 的"删旧插新"覆盖。这修复了"先扫描文件后导入多个 TXT 时某作者关联被清空为 0"的问题（根因：旧的单 TXT 导入只收集当前 TXT 关联却删该作者全部旧 crossRef，导致别的 TXT 给该作者建的关联被覆盖）。
 - **启动时一次性修复历史脏数据**：`rebuildAssociationsOnceIfNeeded()` 在 App 启动时自动执行，用 settings flag `author_rebuild_v2_done` 保证仅升级后首次启动执行一次，调用 `rebuildAssociationsFromBlocks` 重建关联。修复 v2 统一重建之前的版本遗留的脏数据（已被覆盖清空为 0 的作者关联）。这样覆盖安装新版后首次打开即自动修复，无需卸载重装或手动重新扫描。

@@ -33,6 +33,7 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -171,16 +172,25 @@ class MediaThumbnailAdapter(
                     // 预生成可能已在解码此文件，先检查缓存是否已存在
                     val cacheFile = ThumbnailCache.getThumbnailFile(itemView.context, item.recordKey)
                     if (cacheFile.exists()) return@launch
-                    adapterDecodeSemaphore.acquire()
+                    // v1.16：acquire() 是非协作阻塞——decodeJob cancel 后线程仍阻塞等 permit 并继续解码；
+                    // 改 tryAcquire 超时循环 + ensureActive，取消后最多等一个超时周期即快速退出
+                    var acquired = false
                     try {
+                        while (!acquired) {
+                            ensureActive() // 已取消则抛 CancellationException，不再排队等 permit
+                            acquired = adapterDecodeSemaphore.tryAcquire(
+                                50, java.util.concurrent.TimeUnit.MILLISECONDS
+                            )
+                        }
                         // 再次检查，等待信号量期间预生成可能已创建缓存
                         if (ThumbnailCache.getThumbnailFile(itemView.context, item.recordKey).exists()) return@launch
+                        ensureActive() // 拿到 permit 后解码前再查一次取消，避免取消后仍解码
                         val bitmap = ThumbnailLoader.loadImageThumbnail(itemView.context, item.uriString)
                         if (bitmap != null) {
                             ThumbnailCache.writeThumbnail(itemView.context, item.recordKey, bitmap)
                         }
                     } finally {
-                        adapterDecodeSemaphore.release()
+                        if (acquired) adapterDecodeSemaphore.release()
                     }
                 }
             }

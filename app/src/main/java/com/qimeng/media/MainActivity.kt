@@ -15,6 +15,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.qimeng.media.core.AppLog
 import com.qimeng.media.databinding.ActivityMainBinding
 import com.qimeng.media.ui.album.AlbumFragment
@@ -30,6 +31,8 @@ import com.qimeng.media.ui.library.MediaLibraryViewModel
 import com.qimeng.media.ui.profile.ProfileFragment
 import com.qimeng.media.ui.search.SearchFragment
 import com.qimeng.media.ui.stats.StatsDetailFragment
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -51,9 +54,13 @@ class MainActivity : AppCompatActivity() {
         val allGranted = permissions.all { it.value }
         if (allGranted) {
             // 延迟3秒启动扫描，让UI先稳定渲染
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                ViewModelProvider(this)[MediaLibraryViewModel::class.java].autoRefreshAllSources()
-            }, 3000)
+            // v1.16 修复：原 Handler.postDelayed 持有 Activity，回调触发前退出会在已销毁
+            // Activity 上触发扫描；lifecycleScope 随销毁自动取消（默认主线程，行为等价）
+            lifecycleScope.launch {
+                delay(3000)
+                ViewModelProvider(this@MainActivity)[MediaLibraryViewModel::class.java]
+                    .autoRefreshAllSources()
+            }
         }
     }
 
@@ -147,9 +154,13 @@ class MainActivity : AppCompatActivity() {
             permissionLauncher.launch(permissions)
         } else {
             // 延迟3秒启动扫描，让UI先稳定渲染
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                ViewModelProvider(this)[MediaLibraryViewModel::class.java].autoRefreshAllSources()
-            }, 3000)
+            // v1.16 修复：同 permissionLauncher——lifecycleScope 延迟任务随 Activity 销毁自动取消，
+            // 替代裸 Handler.postDelayed（销毁后仍执行导致在已销毁 Activity 上触发扫描）
+            lifecycleScope.launch {
+                delay(3000)
+                ViewModelProvider(this@MainActivity)[MediaLibraryViewModel::class.java]
+                    .autoRefreshAllSources()
+            }
         }
     }
 
@@ -219,7 +230,9 @@ class MainActivity : AppCompatActivity() {
             // v1.12：add 时指定稳定 tag，供下次 recreate() 后从 FragmentManager 找回恢复实例
             transaction.add(R.id.fragmentContainer, fragment, tabFragmentTag(tabId))
         }
-        transaction.commit()
+        // v1.16 修复：tab 首次添加可能发生在 onSaveInstanceState 之后，commit() 会抛
+        // IllegalStateException；tab 切换非关键状态，允许状态丢失提交即可
+        transaction.commitAllowingStateLoss()
         return true
     }
 

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -225,6 +226,8 @@ object ThumbnailCache {
                     }
                 }
             } catch (e: Exception) {
+                // 取消必须透传：吞掉会让 runPool 的 async 任务无法随外层取消及时结束
+                if (e is CancellationException) throw e
                 failed.incrementAndGet()
                 if (failed.get() <= 3) {
                     AppLog.e("ThumbCache", "thumbnail exception: ${media.fileName}", e)

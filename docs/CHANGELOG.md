@@ -10,6 +10,56 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 全项目审查修复：45 项 bug/漏洞全量闭环（v1.16，2026-08-16）
+
+执行 AI：GLM-5.3（主 AI：审查派发/方案基线/点验/补丁/文档）+ 4 片 executor（扫描组/备份数据组/UI-A 组/UI-B 组）+ 1 轮 reviewer 对抗审查
+
+用户要求完整审查项目 bug/漏洞并全部修复不留遗留清单。三片只读调研（数据+备份/扫描+UseCase/UI+ViewModel）产出 2 高危 + 14 中危 + 29 低危共 45 项，主 AI 点验 4 个关键项属实后按四组并行修复，reviewer 全新上下文对抗审查通过（含亲自重跑测试验证），全部遗留点由主 AI 闭合。**验证：`assembleDebug` + `testDebugUnitTest` 180 tests / 0 failures（153 旧 + 27 新）+ detekt 通过；`gradlew --stop` 已执行。**
+
+### 高危（数据永久丢失 / 崩溃）
+
+| 项 | 改动 |
+|---|---|
+| 整源误删防护 | `MediaStoreObserver` SAF 复核改 `runCatching.getOrNull()`：复核异常（权限撤销等）≠ 目录确认为空，失败跳过该源本轮不清理（原 `getOrDefault(空)` 会把 `.nomedia` 目录+SAF 授权失效场景的整源记录连带统计/历史/标签/作者关联永久删除） |
+| 排行崩溃 | `AuthorListFragment` `submitList` 后立即 `notifyDataSetChanged`（diff 进行中全量 notify 触发 "Inconsistency detected" IOOBE）改移入 submitList commitCallback；`AuthorListAdapter.submitList` 增加双参重载透传 callback |
+
+### 中危（14 项）
+
+| 类别 | 改动 |
+|---|---|
+| 扫描·子目录误删 | `SafMediaScanner.safeListFiles` 失败返回 null 与"空目录"区分（原异常返回空数组→上层判 stale 删除），`scanDirectoryFast` 对 null 抛错使整轮跳过 |
+| 扫描·COS 整源误删 | `ScanUseCase` COS SAF 回退 `fromTreeUri` 为 null 改 `error()` 抛出走 Error 分支（原返回空 Triple 当"0 文件"整源删除） |
+| 扫描·并发互删 | 新增 `core/ScanSourceLocks.kt`（ConcurrentHashMap<String, Mutex> 按 sourceUri 串行化），六个扫描入口（手动/刷新/COS/自动×2/观察者）的"读 existingKeys→upsert→删 stale"临界区统一加锁，消除三方并发互删刚 upsert 的行 |
+| 扫描·null 覆盖 | `ScanUtils.hasScanMetadataChanged` 对 SAF 回退实体的 null 元数据（width/height/duration）视为"未知不判变更"；`MediaStoreObserver` upsert 前用库中已有值回填 null 字段（防 Room 整行 upsert 把真实值覆盖为 null，SAF 主路径可见后可自愈） |
+| 缩略图·队列 scope | `ThumbnailUseCase` 队列任务统一类内 appScope（SupervisorJob+IO）启动，`pregenerateThumbnails` 移除 scope 参数（8 处调用方同步），修复观察者任务落到已取消 viewModelScope 被静默丢弃 |
+| TXT·分片存储 | `AuthorImportUseCase.saveTxtBlocks` 超 CursorWindow 2MB 单行静默丢失改分片存储（`#序号`+`#count`，单片 ≤500KB 字符），`loadTxtBlocks` 兼容旧单行格式，`removeImportedTxtBlocks` 清全部分片；切分/打包/拼合抽为 companion 纯函数并补 7 个测试用例 |
+| 备份·原子写退化 | `BackupManager.writeJsonAtomic` 旧备份 rename .bak 失败时不再"先删旧再 rename 新"（连续 rename 失败会丢唯一备份），改放弃本次导出保留旧备份完整 |
+| 备份·导入校验 | 全部 12 个导入实体映射主键/外键字段 `isBlank → skip`（recordKey/key/authorId/uriString/name/folderUri），空键不再入库被当"合法键"放行引用数据 |
+| 备份·快照一致 | `buildBackupJson` 多表读取整体包 `db.withTransaction` 一致快照（原 tags 两查不一致致恢复丢关联），tags 单次查询复用；SharedPreferences 读留事务外 |
+| 偏好·导入钳制 | `AppPrefsManager.importFromJson` 增 sanitizeGridColumns/themeMode 白名单/sanitizeWeight 三纯函数（gridColumns 按各页实际范围钳制、NaN/无穷回退默认），修复 gridColumns=0/负数致 GridLayoutManager 崩溃；补 12 用例测试 |
+| UI·过期提交 | `GroupedMediaAdapter` 增 submitSeq 提交序号（4 提交方法递增、Async 完成校验丢弃过期结果），修复不受 renderJob 管控的旧 rows 晚到覆盖新列表 |
+| UI·跨线程缓存 | `AllFilesFragment.computeAllGroupsAsync` Default 块只算局部（GroupsCacheSnapshot 快照带回），回主线程再回写 4 个共享缓存字段 |
+| UI·预加载风暴 | `HomeFragment` 增 pendingPreload 标志（置位→diff commitCallback 复位），修复快速滑动基于未落地 itemCount 连续 +=20 一次装全库 |
+| UI·空态 | `RankListAdapter` 覆写 submitList（单参+双参）：空列表显示"暂无数据"占位（不可点击不高亮），常看作者/标签卡空数据不再只剩标题 |
+
+### 低危（29 项）
+
+| 类别 | 改动 |
+|---|---|
+| 扫描组 | 观察者刷新期变更通知丢弃改"结束后 count>0 补一轮调度"；`registeredSources` 加 @Volatile + 删除死方法 updateSources；scanDirectory 先 upsertScanSource 再写文件（消除与孤儿清理并发的误删窗口）；5 处 `lastScannedAtMillis` upsert 前按 uriString 确认源仍存在（含 refreshScanSource/refreshCosSource 的 existing==null，不复活已删源）；ThumbnailUseCase 取消分支复位 progress Idle；ThumbnailCache.processBatch rethrow CancellationException；COS SAF 回退根目录直接文件不入库（无作者归属不可见记录）；10 处 catch(Exception) 前置 CancellationException 透传（含 scanDirectory 外层） |
+| 备份组 | appPrefs 导入结果计数（原失败仍 count++）；导入 mediaMap 改 `getAllKeysAndFileNames` 轻量投影；dailyBrowse 先钳制再拼 PK（负数不再产生矛盾行/撞 PK）；sizeBytes/modifiedAtMillis/indexedAtMillis 负数钳制；3 处 LIKE 前缀查询加 `ESCAPE '\'` + repository `escapeLikePattern` 转义；rebuildCosIndex 读取移入事务+改 `deleteAllRefsChunked` 全引用级联；loadFromDisk 损坏日志升级 W 级+保留 .corrupt 副本 |
+| UI 组 | RankListAdapter areItemsTheSame 只比 id（title 并入 contents 比较）；GroupedMediaAdapter 增 `updateThumbnailSize(columns)` 五页接入（All/Favorite/History/AuthorFiles/AlbumDetail，列数变化同步解码尺寸）；FavoriteFragment 收藏监听过滤移 Default；BrowseHistoryFragment computeRenderJob cancel-first；三页 CHARACTER 模式 selectedSources 死分支删除（与 AllFiles 统一）；StatsDetail renderFavorites/renderAuthorsTags + DataStats renderTopFiles/renderTopAuthors 聚合移 Default+序号防重（"全部"范围不再主线程卡顿）；AlbumFragment lastRenderHash 判定回主线程；MediaFilterSheet 统一 buildTagChip（动态 Chip 长按删除+同名查重）；MediaThumbnailAdapter semaphore 改 tryAcquire 循环+ensureActive 协作取消；MainActivity 两处裸 Handler.postDelayed 改 lifecycleScope.delay（Activity 销毁自动取消）+ tab 首次添加 commitAllowingStateLoss；SearchFragment SoftInputMode 进入前保存原值销毁还原（不再硬编码 ADJUST_RESIZE）+ 两处 postDelayed 回调 requireContext 改 context?；MediaDetailFragment 冷启动空库 5×300ms 有限重试（原空快照即弹栈闪退）+ 同源续播（currentMediaItem 同 uri 且非 IDLE 只 playWhenReady=true 保留进度）；ZoomImageView onTouchEvent 恒 true 死条件清理；BiliPlayerView player==null 停轮询（setPlayer/onAttachedToWindow 恢复点完备） |
+| schema | `app/schemas/4.json` 经 `git log --all` 全历史确认从未提交过，MIGRATION_3_4 运行时逻辑在位不受影响，按基线跳过不编造 |
+
+### 新增文件与测试
+
+- 新增 `core/ScanSourceLocks.kt`（按 sourceUri 的共享扫描互斥）
+- 新增测试：`ScanUtilsMetadataTest`（8 例：null 不判变更/真实变更判定/边界）、`AppPrefsImportSanitizeTest`（12 例：列数/主题白名单/权重 NaN）、`AuthorImportUseCaseTest` 追加分片分节（7 例：往返还原/旧格式兼容/片丢失回退/转义边界），全项目测试 153→180
+
+### reviewer 对抗审查结论
+
+**通过**。对抗方向（锁死锁/分片四场景/占位语义/续播状态机/事务阻塞/调用方同步/测试真实性/null 回填折衷）逐项核验；5 个非阻塞瑕疵全部由主 AI 闭合（AlbumDetail 初始路径经 setColumns 链已覆盖、RankListAdapter 补双参覆写、变少清理以推演+纯函数覆盖记录、#N key 碰撞加代码注释文档化、文档同步本轮完成）。已知理论边界（fileName 以 `#数字`/`#count` 结尾的分片 key 碰撞，需两个此类文件同时入库才触发）已在 `AuthorImportUseCase` 常量注释记录。
+
 ## 常看作者与标签详情页拆分双排行卡（v1.16，2026-08-16）
 
 执行 AI：GLM-5.3

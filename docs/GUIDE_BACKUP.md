@@ -43,7 +43,7 @@
 - 写入备份目录前确认用户授权（SAF）。
 - 自动同步使用防抖（数据变化 30 秒 / 后台兜底 60 秒），避免每次小改动都写盘。
 - 写入时使用临时文件再替换（tmp → round-trip 校验 → 删旧 → rename），避免半写入损坏；**校验提前到 rename 之前**（校验 `.tmp` 内容可解析且一致），校验通过才删旧文件、再 rename；校验失败只删 `.tmp`、保留旧备份。
-- **v1.15 原子写加固**：rename 前旧备份先 `renameTo(.bak)` 暂存，新文件 rename 成功后删 `.bak`；任一步失败均保留至少一份有效备份（.bak 还原或退化先删旧再 rename），根治"删旧→rename 失败"导致唯一备份整体消失的问题。SAF provider 不支持 rename 旧文件时退化处理。
+- **v1.15 原子写加固**：rename 前旧备份先 `renameTo(.bak)` 暂存，新文件 rename 成功后删 `.bak`；任一步失败均保留至少一份有效备份（.bak 还原），根治"删旧→rename 失败"导致唯一备份整体消失的问题。**v1.16 审查修复**：SAF provider 不支持 rename 旧文件时，原退化路径"先删旧再 rename 新"在连续 rename 失败下仍会丢唯一备份——现改为放弃本次导出（删 .tmp、返回失败），旧备份完整保留，宁可本次导出失败不丢旧备份。
 - **v1.15 写侧大小上限**：`buildBackupJson` 完成后检查 `bytes.size > MAX_BACKUP_BYTES`（64MB，与读侧共用常量），超限拒绝写入并记 `AppLog.w`，不删旧备份——避免大库导出超限照写成功但永远读不回。
 - 导出失败提示用户，不影响数据库主数据。
 - **空库覆盖防护**：自动同步（`triggerAutoSyncIfNeeded`/`triggerFullSync`）和手动同步（`triggerManualSync`）在调用 BackupManager 写入前，用 `MediaFileDao.hasAny()`（EXISTS + LIMIT 1）检测 `media_files` 表是否为空。空库时跳过写入、置 `AutoSyncUseCase.restoreSuggestion` 为 true 通知 UI 提示"建议先导入恢复"，避免卸载重装后空数据库反向覆盖旧备份导致数据永久丢失。`triggerManualSync` 空库时返回 false，UI 据此显示"本地数据为空，已暂停同步"而非"同步失败"。
@@ -103,9 +103,9 @@
 
 ## 导入导出流程
 
-- 导出：`BackupManager.buildBackupJson` 读取所有 Room 表 + SharedPreferences + AppPrefs → 序列化为单个 JSON → 原子写入备份目录 `绮梦影库/qimeng_backup.json`。
-- 导入：从备份目录读取 `qimeng_backup.json` → 反序列化 → 单事务写入 Room + SharedPreferences + AppPrefs。
-- 备份 JSON 损坏时要提示用户，不允许崩溃。
+- 导出：`BackupManager.buildBackupJson` 读取所有 Room 表 + SharedPreferences + AppPrefs → 序列化为单个 JSON → 原子写入备份目录 `绮梦影库/qimeng_backup.json`。**v1.16 审查修复**：Room 多表读取整体包 `db.withTransaction` 取一致快照（原扫描并发期 tags 两查不一致可致备份内部自相矛盾、恢复丢关联），tags 单次查询复用；SharedPreferences/AppPrefs 读留事务外。
+- 导入：从备份目录读取 `qimeng_backup.json` → 反序列化 → 单事务写入 Room + SharedPreferences + AppPrefs。**v1.16 审查加固**：全部 12 个导入实体映射对主键/外键字段 `isBlank → skip`（空 recordKey/authorId/uriString 等不再入库被当"合法键"放行引用数据）；`AppPrefsManager.importFromJson` 对偏好值钳制（gridColumns 按各页实际范围、themeMode 白名单、推荐权重 NaN/无穷回退默认），修复畸形备份把 gridColumns 写成 0/负数导致 GridLayoutManager 崩溃；dailyBrowse/sizeBytes 等数值字段统一负数钳制；mediaMap 改 `getAllKeysAndFileNames` 轻量投影（不再全表物化 18 列实体）。
+- 备份 JSON 损坏时要提示用户，不允许崩溃。`AppPrefsManager` 自身落盘文件损坏时日志升级 W 级并保留 `.corrupt` 副本供排查（v1.16）。
 - **导出过滤**：v2.0 起不再按 media_files 白名单过滤（旧版过滤是为避免已删除文件的残留数据出现在导出中）；现在 media_files 本身全量进备份，引用数据与之一致，无需过滤。恢复后引用数据按 recordKey 与 media_files 关联，缺失的引用由跨引用安全跳过兜底。
 
 ### schemaVersion

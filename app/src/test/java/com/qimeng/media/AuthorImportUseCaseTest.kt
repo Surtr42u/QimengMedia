@@ -168,4 +168,84 @@ class AuthorImportUseCaseTest {
         assertThat(blocks[0].authorNames).containsExactly("aaa")
         assertThat(blocks[1].authorNames).containsExactly("bbb")
     }
+
+    // ==================== blocks 分片存储（防超 CursorWindow，纯字符串逻辑） ====================
+
+    /** 构造 N 个形如 blocks 序列化产物的 JSON 对象元素的完整数组字符串 */
+    private fun buildBlocksJson(count: Int): String =
+        (0 until count).joinToString(",", prefix = "[", postfix = "]") {
+            """{"authorNames":["作者$it"],"sources":["src$it"],"works":["作品$it"]}"""
+        }
+
+    @Test
+    fun chunkRoundTrip_preservesAllElements() {
+        // 分片写入→读取拼合往返：元素集合与原数组一致（元素级比对，不依赖 JSON 库）
+        val original = buildBlocksJson(count = 7)
+        val elements = AuthorImportUseCase.splitJsonArrayElements(original)
+        assertThat(elements).hasSize(7)
+
+        val chunks = AuthorImportUseCase.packElementsToChunks(elements, maxChars = 60)
+        assertThat(chunks.size).isGreaterThan(1) // 确认确实触发分片
+
+        val rejoined = AuthorImportUseCase.joinJsonArrayChunks(chunks)
+        assertThat(AuthorImportUseCase.splitJsonArrayElements(rejoined)).containsExactlyElementsIn(elements)
+    }
+
+    @Test
+    fun packChunks_eachWithinLimit() {
+        // 每片长度 ≤ maxChars（超长单元素独占一片的例外也满足有界推进）
+        val original = buildBlocksJson(count = 30)
+        val chunks = AuthorImportUseCase.packElementsToChunks(
+            AuthorImportUseCase.splitJsonArrayElements(original), maxChars = 200
+        )
+        assertThat(chunks.size).isGreaterThan(1)
+        chunks.forEach { assertThat(it.length).isAtMost(200) }
+    }
+
+    @Test
+    fun packEmpty_returnsSingleEmptyChunk() {
+        // 空 blocks 序列化为单条 "[]"，读取时 JSONArray("[]") 得空列表
+        val chunks = AuthorImportUseCase.packElementsToChunks(emptyList(), maxChars = 100)
+        assertThat(chunks).containsExactly("[]")
+    }
+
+    @Test
+    fun resolveChunked_preferredOverLegacy() {
+        // 有 #count 时拼合分片（旧单行数据即使存在也不再用）
+        val chunks = listOf("""[{"a":1}]""", """[{"b":2},{"c":3}]""")
+        val resolved = AuthorImportUseCase.resolveTxtBlocksJson(
+            countValue = "2", chunkValues = chunks, legacyValue = """[{"old":1}]"""
+        )
+        assertThat(resolved).isEqualTo("""[{"a":1},{"b":2},{"c":3}]""")
+    }
+
+    @Test
+    fun resolveLegacy_noCount_fallsBackToSingleRow() {
+        // 旧单行格式兼容：无 #count（或 count=0）时按旧 key 单行读取
+        val legacy = """[{"old":1},{"old":2}]"""
+        assertThat(
+            AuthorImportUseCase.resolveTxtBlocksJson(countValue = null, chunkValues = emptyList(), legacyValue = legacy)
+        ).isEqualTo(legacy)
+        assertThat(
+            AuthorImportUseCase.resolveTxtBlocksJson(countValue = "0", chunkValues = emptyList(), legacyValue = legacy)
+        ).isEqualTo(legacy)
+    }
+
+    @Test
+    fun resolveChunked_chunksMissing_fallsBackToLegacy() {
+        // count 标记存在但分片数据全部丢失：回退旧单行，不返回半拼合结果
+        assertThat(
+            AuthorImportUseCase.resolveTxtBlocksJson(
+                countValue = "2", chunkValues = listOf(null, null), legacyValue = """[{"old":1}]"""
+            )
+        ).isEqualTo("""[{"old":1}]""")
+    }
+
+    @Test
+    fun split_ignoresBracesInsideStringLiterals() {
+        // 字符串字面量内的转义引号与括号不破坏顶层元素切分
+        val original = """[{"s":"a\"}b{"},{"t":"[x,]"}]"""
+        val elements = AuthorImportUseCase.splitJsonArrayElements(original)
+        assertThat(elements).containsExactly("""{"s":"a\"}b{"}""", """{"t":"[x,]"}""").inOrder()
+    }
 }

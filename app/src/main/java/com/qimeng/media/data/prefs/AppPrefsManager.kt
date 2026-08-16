@@ -132,7 +132,8 @@ class AppPrefsManager(context: Context) {
         return synchronized(lock) {
             try {
                 val obj = JSONObject(json)
-                val imported = prefsFromJson(obj)
+                // themeMode 非白名单值回退为导入前的当前值（而非硬编码默认），避免恢复备份悄悄改主题
+                val imported = prefsFromJson(obj, _prefs.value.themeMode)
                 _prefs.value = imported
                 saveToDisk(imported)
                 true
@@ -149,7 +150,13 @@ class AppPrefsManager(context: Context) {
             val json = prefsFile.readText()
             prefsFromJson(JSONObject(json))
         } catch (e: Exception) {
-            com.qimeng.media.core.AppLog.d("Prefs", "loadFromDisk failed: ${e.message}")
+            // 偏好静默丢失不能只留调试日志：升级告警并保留 .corrupt 副本，便于排查损坏原因
+            AppLog.w("AppPrefs", "loadFromDisk failed: ${e.message}", e)
+            try {
+                prefsFile.copyTo(File(prefsFile.parentFile, "$PREFS_FILE.corrupt"), overwrite = true)
+            } catch (copyErr: Exception) {
+                AppLog.w("AppPrefs", "loadFromDisk 保留 .corrupt 副本失败: ${copyErr.message}")
+            }
             AppPrefs()
         }
     }
@@ -203,7 +210,7 @@ class AppPrefsManager(context: Context) {
             }
         }
 
-        private fun prefsFromJson(obj: JSONObject): AppPrefs {
+        private fun prefsFromJson(obj: JSONObject, fallbackThemeMode: String = "system"): AppPrefs {
             val sources = mutableSetOf<String>()
             val sourcesArr = obj.optJSONArray("custom_album_sources")
             if (sourcesArr != null) {
@@ -211,32 +218,59 @@ class AppPrefsManager(context: Context) {
                     sources.add(sourcesArr.getString(i))
                 }
             }
-            // 解析推荐偏好，缺失字段使用默认值
+            // 解析推荐偏好，缺失/非法字段（NaN/无穷/负数/超 1）回退默认值
             val recJson = obj.optJSONObject("recommendation_prefs")
             val recommendationPrefs = if (recJson != null) {
+                val defaults = RecommendationPrefs()
                 RecommendationPrefs(
-                    tagRelevance = recJson.optDouble("tagRelevance", 0.22).toFloat(),
-                    tagCollection = recJson.optDouble("tagCollection", 0.15).toFloat(),
-                    engagement = recJson.optDouble("engagement", 0.10).toFloat(),
-                    recency = recJson.optDouble("recency", 0.15).toFloat(),
-                    likeScore = recJson.optDouble("likeScore", 0.05).toFloat(),
-                    discovery = recJson.optDouble("discovery", 0.20).toFloat(),
-                    freshness = recJson.optDouble("freshness", 0.05).toFloat(),
-                    browseDepth = recJson.optDouble("browseDepth", 0.03).toFloat(),
-                    maxRandom = recJson.optDouble("maxRandom", 0.30).toFloat()
+                    tagRelevance = sanitizeWeight(recJson.optDouble("tagRelevance", 0.22).toFloat(), defaults.tagRelevance),
+                    tagCollection = sanitizeWeight(recJson.optDouble("tagCollection", 0.15).toFloat(), defaults.tagCollection),
+                    engagement = sanitizeWeight(recJson.optDouble("engagement", 0.10).toFloat(), defaults.engagement),
+                    recency = sanitizeWeight(recJson.optDouble("recency", 0.15).toFloat(), defaults.recency),
+                    likeScore = sanitizeWeight(recJson.optDouble("likeScore", 0.05).toFloat(), defaults.likeScore),
+                    discovery = sanitizeWeight(recJson.optDouble("discovery", 0.20).toFloat(), defaults.discovery),
+                    freshness = sanitizeWeight(recJson.optDouble("freshness", 0.05).toFloat(), defaults.freshness),
+                    browseDepth = sanitizeWeight(recJson.optDouble("browseDepth", 0.03).toFloat(), defaults.browseDepth),
+                    maxRandom = sanitizeWeight(recJson.optDouble("maxRandom", 0.30).toFloat(), defaults.maxRandom)
                 )
             } else {
                 RecommendationPrefs()
             }
             return AppPrefs(
                 customAlbumSources = sources,
-                themeMode = obj.optString("theme_mode", "system"),
-                gridColumnsHome = obj.optInt("grid_columns_home", 2),
-                gridColumnsAll = obj.optInt("grid_columns_all", 3),
-                gridColumnsAlbum = obj.optInt("grid_columns_album", 3),
+                themeMode = sanitizeThemeMode(obj.optString("theme_mode", "system"), fallbackThemeMode),
+                // 列数越界（0/负/超大）钳回 UI 合法区间：GridLayoutManager spanCount<=0 会直接崩溃
+                gridColumnsHome = sanitizeGridColumns(obj.optInt("grid_columns_home", 2), HOME_COLUMNS_MIN, HOME_COLUMNS_MAX),
+                gridColumnsAll = sanitizeGridColumns(obj.optInt("grid_columns_all", 3), GRID_COLUMNS_MIN, GRID_COLUMNS_MAX),
+                gridColumnsAlbum = sanitizeGridColumns(obj.optInt("grid_columns_album", 3), GRID_COLUMNS_MIN, GRID_COLUMNS_MAX),
                 autoSync = obj.optBoolean("auto_sync", false),
                 recommendationPrefs = recommendationPrefs
             )
         }
+
+        // ===== 导入/磁盘解析值钳制（纯函数，供 AppPrefsImportSanitizeTest 单测） =====
+
+        /** 列数钳制：越界值拉回合法区间（GridLayoutManager spanCount<=0 崩溃，超上限缩略图过小） */
+        fun sanitizeGridColumns(value: Int, minInclusive: Int, maxInclusive: Int): Int =
+            value.coerceIn(minInclusive, maxInclusive)
+
+        /** 主题模式白名单：非法串回退 fallback，防任意串入库后 UI 匹配不到分支 */
+        fun sanitizeThemeMode(value: String, fallback: String): String =
+            if (value in THEME_MODE_WHITELIST) value else fallback
+
+        /** 推荐权重钳制：权重语义为 [0,1] 系数，NaN/无穷/负数/超 1 回退 fallback */
+        fun sanitizeWeight(value: Float, fallback: Float): Float =
+            if (value.isFinite() && value >= 0f && value <= 1f) value else fallback
+
+        /** 主题模式合法值（AppCompatDelegate 昼夜模式语义） */
+        private val THEME_MODE_WHITELIST = setOf("system", "light", "dark")
+
+        /** 首页列数合法区间（HomeFragment 仅单/双列切换），默认 2 */
+        private const val HOME_COLUMNS_MIN = 1
+        private const val HOME_COLUMNS_MAX = 2
+
+        /** 全部/相册页列数合法区间（PinchZoomHelper MIN/MAX），默认 3 */
+        private const val GRID_COLUMNS_MIN = 2
+        private const val GRID_COLUMNS_MAX = 5
     }
 }
