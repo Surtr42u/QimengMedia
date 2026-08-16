@@ -21,6 +21,7 @@
 | 崩溃日志 | `AppLog.recordCrash`：UncaughtExceptionHandler 先写 `files/crash_log.txt`（与 app_log.txt 分离——后者 2MB 滚动截断会把崩溃记录冲掉），带年份时间/线程/完整堆栈，保最近 20 次，仅崩溃时写零日常开销；读法 `adb shell run-as com.qimeng.media cat files/crash_log.txt` |
 | 真凶定位 | 历史崩溃堆栈：`SpngDecoder.decodePng` 的 `ByteBuffer.allocateDirect(134MB)`（4800×7000 PNG 原始像素）× LargeImageDecoder 并发 2 → 268MB 顶满 256MB Java 堆 → OutOfMemoryError 闪退在 main 线程抛出（协程 Suppressed 显示 Cancelling 状态，即快速滑动触发取消中仍完成分配）。对应场景：详情页过快滑动浏览超大图；与扫描无关 |
 | 修复（用户拍板） | AndroidManifest 开启 `android:largeHeap="true"`：Java 堆上限 256MB→约 512MB（设备相关），2×134MB 大图解码叠加不再顶满；解码并发信号量本已封顶 2，叠加量不随上限增长，无新增 OOM 面。顺带 Coil 内存缓存（35% 堆）随大堆扩容，大图预载命中率提升。**不做项（用户决策）**：解码处 catch OOM 降级（极端 1 亿像素级单张图仍会崩，可接受）；大图字节加权并发（信号量封顶 2 后无必要，避免连续大图串行等待） |
+| 复测结论（同日） | largeHeap 后真机复测详情页大图滑动（4200×5760/7680×4320 级）：帧数据证明轻微卡顿（翻页瞬间 30-77ms 帧、74-100% 超时窗）全部对应超大图 >4096 走 SOFTWARE 层的翻页重绘，与 largeHeap 无关（改动前同场景数据一致）；解码仅首次 729ms 后全缓存命中、内存稳定无 GC 卡顿、无 5 秒阻塞无崩溃。**超大图滑动轻卡为"始终原图"设计的固有代价，用户已接受为最终状态**。后续讨论过并放弃的优化路径（用户拍板放弃，勿再重复推销）：浏览态 4096 无损 GPU 副本+放大渐进解码（视觉无损但属设计变更）、纹理平铺全 GPU 渲染（工程量过大）、直接 GPU 硬加速大图（厂商驱动超大 bitmap+matrix 渲染错误，正确性不允许） |
 
 **验证**：`:app:assembleDebug` + `:app:testDebugUnitTest`（180 tests，0 failures）通过；`gradlew --stop` 已执行。
 
