@@ -52,6 +52,39 @@ object ThumbnailCache {
     @Volatile
     private var scrollPaused = false
 
+    /**
+     * 扫描进行中计数（v1.16 性能监控实测新增）：12 并发预生成与扫描叠加时
+     * CPU/IO 打满导致主线程 5-6 秒饥饿（看门狗降级记录 + 帧 95 分位 70ms+）。
+     * 计数 >0 时图片预生成并发降为 [SCAN_THROTTLED_CONCURRENCY]，扫描结束自动恢复全速；
+     * 计数式支持多源扫描交错（begin/end 配对，任一扫描在跑即降速）
+     */
+    private val scanDepth = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 扫描进行中的图片预生成并发档位（视频恒为低并发 VIDEO_CONCURRENCY 无需再降） */
+    private const val SCAN_THROTTLED_CONCURRENCY = 2
+
+    /** 扫描入口调用（计数式，可与 [endScanThrottle] 交错配对） */
+    fun beginScanThrottle() { scanDepth.incrementAndGet() }
+
+    fun endScanThrottle() { scanDepth.decrementAndGet() }
+
+    /** 当前是否处于扫描降速中（预生成并发降档判定） */
+    private val isScanThrottled: Boolean get() = scanDepth.get() > 0
+
+    /**
+     * 包裹扫描入口：执行期间预生成降速，结束/异常（含取消）自动恢复。
+     * 注意：block 为普通 suspend lambda，调用方方法体内裸 return 需写
+     * `return@withScanThrottle`（suspend lambda 无法 inline，非局部返回不合法）
+     */
+    suspend fun <T> withScanThrottle(block: suspend () -> T): T {
+        beginScanThrottle()
+        try {
+            return block()
+        } finally {
+            endScanThrottle()
+        }
+    }
+
     /** 滚动期间暂停/恢复缩略图预生成（列表页 OnScrollListener 调用） */
     fun setScrollPaused(paused: Boolean) {
         scrollPaused = paused
@@ -235,11 +268,21 @@ object ThumbnailCache {
             }
         }
 
-        suspend fun runPool(items: List<MediaFileEntity>, poolConcurrency: Int) {
+        suspend fun runPool(items: List<MediaFileEntity>, isVideo: Boolean) {
             coroutineScope {
-                items.chunked(poolConcurrency).forEach { batch ->
-                    batch.map { media -> async { processBatch(media) } }.awaitAll()
-                    count += batch.size
+                // v1.16：批间动态并发——扫描进行中图片批降为低并发（视频恒低并发），
+                // 扫描结束下一批自动恢复全速；正在跑的池在批边界即时生效
+                var index = 0
+                while (index < items.size) {
+                    val batchConcurrency = when {
+                        isVideo -> VIDEO_CONCURRENCY
+                        isScanThrottled -> SCAN_THROTTLED_CONCURRENCY
+                        else -> concurrency
+                    }
+                    val end = minOf(index + batchConcurrency, items.size)
+                    items.subList(index, end).map { media -> async { processBatch(media) } }.awaitAll()
+                    count += end - index
+                    index = end
                     if (count % 200 == 0 || count >= total) {
                         AppLog.d("ThumbCache", "pregenerate: progress $count/$total (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
                     }
@@ -248,8 +291,8 @@ object ThumbnailCache {
             }
         }
 
-        runPool(uncachedImages, concurrency)
-        runPool(uncachedVideos, VIDEO_CONCURRENCY)
+        runPool(uncachedImages, isVideo = false)
+        runPool(uncachedVideos, isVideo = true)
 
         AppLog.d("ThumbCache", "pregenerateThumbnails: done, $total/$total processed (skipped=${skipped.get()}, generated=${generated.get()}, failed=${failed.get()})")
     }

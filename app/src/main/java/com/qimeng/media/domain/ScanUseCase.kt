@@ -6,6 +6,7 @@ import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.qimeng.media.core.AppLog
 import com.qimeng.media.core.ScanSourceLocks
+import com.qimeng.media.core.ThumbnailCache
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.CosWorkEntity
@@ -37,7 +38,7 @@ class ScanUseCase(
     private val isAutoRefreshing = AtomicBoolean(false)
 
     /** 扫描指定目录，返回扫描结果和扫描到的媒体文件列表 */
-    suspend fun scanDirectory(uri: Uri, displayName: String? = null): ScanResult {
+    suspend fun scanDirectory(uri: Uri, displayName: String? = null): ScanResult = ThumbnailCache.withScanThrottle {
         val startedAtMillis = System.currentTimeMillis()
         AppLog.d("Scan", "scanDirectory: start, uri=$uri")
         var scannedMedia = emptyList<MediaFileEntity>()
@@ -90,17 +91,17 @@ class ScanUseCase(
 
             // v1.7：检测大文件/大总量警告
             val warning = ScanResult.buildScanWarning(scannedMedia)
-            return ScanResult.Success(mediaFiles.size, 1, scannedMedia, warning)
+            return@withScanThrottle ScanResult.Success(mediaFiles.size, 1, scannedMedia, warning)
         } catch (e: CancellationException) {
             throw e
         } catch (exception: Exception) {
             AppLog.e("Scan", "scanDirectory failed: ${exception.message}", exception)
-            return ScanResult.Error(exception.message ?: "扫描失败", scannedMedia)
+            return@withScanThrottle ScanResult.Error(exception.message ?: "扫描失败", scannedMedia)
         }
     }
 
     /** 增量刷新已添加的扫描源 */
-    suspend fun refreshScanSource(uriString: String): ScanResult {
+    suspend fun refreshScanSource(uriString: String): ScanResult = ThumbnailCache.withScanThrottle {
         var refreshMedia = emptyList<MediaFileEntity>()
         try {
             val uri = uriString.toUri()
@@ -159,16 +160,16 @@ class ScanUseCase(
                 AppLog.d("Scan", "rematchAllTxtImports failed: ${e.message}")
             }
 
-            return ScanResult.Success(updatedCount, 1, refreshMedia)
+            return@withScanThrottle ScanResult.Success(updatedCount, 1, refreshMedia)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ScanResult.Error(e.message ?: "刷新失败", refreshMedia)
+            return@withScanThrottle ScanResult.Error(e.message ?: "刷新失败", refreshMedia)
         }
     }
 
     /** 扫描 COS 目录 */
-    suspend fun scanCosDirectory(uri: Uri, displayName: String? = null): ScanResult {
+    suspend fun scanCosDirectory(uri: Uri, displayName: String? = null): ScanResult = ThumbnailCache.withScanThrottle {
         var cosScanMedia = emptyList<MediaFileEntity>()
         AppLog.d("CosScan", "scanCosDirectory: start, uri=$uri")
         try {
@@ -224,17 +225,17 @@ class ScanUseCase(
             AppLog.d("CosScan", "scanCosDirectory: success, files=${newCosMedia.size}, authors=${newCosWorks.map { it.authorName }.distinct().size}, works=${newCosWorks.size}")
             // v1.7：检测大文件/大总量警告
             val warning = ScanResult.buildScanWarning(newCosMedia)
-            return ScanResult.Success(newCosMedia.size, 1, cosScanMedia, warning)
+            return@withScanThrottle ScanResult.Success(newCosMedia.size, 1, cosScanMedia, warning)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             AppLog.e("CosScan", "scanCosDirectory failed: ${e.message}", e)
-            return ScanResult.Error(e.message ?: "COS扫描失败", cosScanMedia)
+            return@withScanThrottle ScanResult.Error(e.message ?: "COS扫描失败", cosScanMedia)
         }
     }
 
     /** 增量刷新 COS 扫描源 */
-    suspend fun refreshCosSource(uriString: String): ScanResult {
+    suspend fun refreshCosSource(uriString: String): ScanResult = ThumbnailCache.withScanThrottle {
         var cosRefreshMedia = emptyList<MediaFileEntity>()
         try {
             val uri = uriString.toUri()
@@ -312,11 +313,11 @@ class ScanUseCase(
                 newOrUpdated.size
             }
 
-            return ScanResult.Success(updatedCount, 1, cosRefreshMedia)
+            return@withScanThrottle ScanResult.Success(updatedCount, 1, cosRefreshMedia)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ScanResult.Error(e.message ?: "COS刷新失败", cosRefreshMedia)
+            return@withScanThrottle ScanResult.Error(e.message ?: "COS刷新失败", cosRefreshMedia)
         }
     }
 
@@ -326,13 +327,13 @@ class ScanUseCase(
      * 防抖：常规目录 [AUTO_REFRESH_INTERVAL] 内不重复刷新；COS 目录按各自 lastScannedAtMillis 判断 [COS_AUTO_REFRESH_INTERVAL]。
      * 防重入：[isAutoRefreshing] 保证同一时刻只有一个自动刷新在跑，避免 onResume 频繁触发导致并发扫描。
      */
-    suspend fun autoRefreshAllSources(): List<MediaFileEntity> {
+    suspend fun autoRefreshAllSources(): List<MediaFileEntity> = ThumbnailCache.withScanThrottle {
         // 防重入：上一次自动刷新尚未完成则直接跳过（compareAndSet 原子操作，线程安全）
         if (!isAutoRefreshing.compareAndSet(false, true)) {
             AppLog.d("Scan", "autoRefresh skipped: already running")
-            return emptyList()
+            return@withScanThrottle emptyList()
         }
-        return try {
+        return@withScanThrottle try {
             doAutoRefreshAllSources()
         } finally {
             isAutoRefreshing.set(false)

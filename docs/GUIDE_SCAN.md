@@ -187,6 +187,7 @@ COS 目录的三种文件夹结构（作者→文件、作者→作品→文件�
 
 - **先检查本地缓存**：`ThumbnailCache.isThumbnailCached()` 已缓存的自动跳过
 - **批量预过滤短路**（2026-06-22 优化）：`ThumbnailCache.pregenerateThumbnails()` 入口先批量过滤已缓存文件，全量缓存命中时（如 autoRefresh 触发的预生成常出现 `skipped=total, generated=0`）直接返回，跳过 `coroutineScope` + `chunked(concurrency)` + `async` 并发池调度开销；部分缓存时只对未缓存文件走并发池，并发解码前二次检查防竞态
+- **扫描期预生成降速**（v1.16 性能监控实测新增）：`ThumbnailCache.withScanThrottle {}` 包裹全部六个扫描入口（手动/刷新/COS/COS 刷新/自动/观察者增量），扫描进行中图片预生成并发降为 2（批间动态批大小，正在跑的池在批边界即时生效），扫描结束自动恢复全速——实测高并发预生成与多源扫描叠加时 CPU/IO 打满，主线程出现 5-6 秒饥饿（看门狗降级记录 + 帧 95 分位 70ms+）。计数式 begin/end 支持多源扫描交错；调用方方法体内裸 return 需写 `return@withScanThrottle`
 - **cache_version 机制**：版本升级时自动清除视频缩略图缓存重新生成
 - **缓存规模治理（v1.16）**：有效文件的缩略图缓存永不因数量上限被删（v1.12 的 5000 文件数淘汰已移除——大库下误删有效缓存导致每次启动重新缓存一部分缩略图）。目录规模与库文件数成正比，不残留孤儿由「删除文件时同步清理 + 启动预生成前 `ThumbnailCache.pruneOrphanThumbnails` 全库 key 对账（仅清理写入超 24h 的孤儿）」保证，详见 `GUIDE_ALGORITHM.md`
 - **增量刷新同步预生成（v1.16）**：`MediaStoreObserver` 增量刷新产生新增/更新文件后，通过 `onFilesChanged` 回调同步触发缩略图预生成填充本地 WebP 缓存——视频无本地缓存时滚动中只有 Coil 首帧内存缓存，本地文件缓存靠此 + 启动预生成填充；图片滚动中 adapter 会按需解码兜底

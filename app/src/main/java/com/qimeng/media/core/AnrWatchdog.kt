@@ -94,11 +94,14 @@ class AnrWatchdog(
                         BlockKind.WORKING_SLOW -> {
                             // 高负载下主线程推进中变慢（栈顶在变化），非死锁。
                             // 重置时间戳避免单次慢操作被重复累积判定；保留连续计数以累积判断是否卡死。
+                            // v1.16：附栈顶前 8 行——实测 5-6 秒级的"推进中变慢"多次出现但仅摘要行
+                            // 无法定位代码位置（性能监控会话靠帧数据+内存交叉推断成因），补栈供直接定位
                             tickTimestamp = now
                             mainHandler.post(tickRunnable)
+                            val topLines = stackTrace.lineSequence().take(SLOW_LOG_STACK_LINES).joinToString("\n")
                             AppLog.d(
                                 "ANRWatchdog",
-                                "主线程慢 ${elapsed}ms（高负载推进中，栈顶变化），非死锁，降级记录"
+                                "主线程慢 ${elapsed}ms（高负载推进中，栈顶变化），非死锁，降级记录，栈顶:\n$topLines"
                             )
                         }
                         BlockKind.STUCK_ANR -> {
@@ -202,5 +205,7 @@ class AnrWatchdog(
         // 硬阈值兜底：阻塞超过此值无论栈顶是否变化都报 ANR，防罕见的"栈顶循环变化死循环"漏报
         // 远高于高负载抖动范围（实测误报均 < 6.5 秒），不影响推进变慢的降级
         private const val HARD_ANR_THRESHOLD_MS = 30_000L
+        // 降级记录（WORKING_SLOW）附栈顶行数：足够定位代码位置又控制日志体积
+        private const val SLOW_LOG_STACK_LINES = 8
     }
 }

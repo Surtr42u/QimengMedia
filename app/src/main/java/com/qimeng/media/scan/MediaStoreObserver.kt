@@ -9,6 +9,7 @@ import android.provider.MediaStore
 import androidx.core.net.toUri
 import com.qimeng.media.core.AppLog
 import com.qimeng.media.core.ScanSourceLocks
+import com.qimeng.media.core.ThumbnailCache
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.db.entity.ScanSourceEntity
 import com.qimeng.media.data.repository.LocalMediaRepository
@@ -145,7 +146,7 @@ class MediaStoreObserver(
         }
     }
 
-    private suspend fun refreshAllSources(mergedChangeCount: Int = 1) {
+    private suspend fun refreshAllSources(mergedChangeCount: Int = 1) = ThumbnailCache.withScanThrottle {
         // v1.12：每次刷新前从库重拉最新常规源——旧实现仅 register() 时冻结快照，
         // 且 updateSources 从未被调用：会话内新增源不被监听、删除的源仍被持有并
         // 在刷新时 upsertScanSource 复活。这里实时同步源列表，删除的源不再复活。
@@ -154,7 +155,7 @@ class MediaStoreObserver(
         }.getOrElse { registeredSources }
         if (sources.isEmpty()) {
             pendingChangeCount.set(0)
-            return
+            return@withScanThrottle
         }
 
         pendingChangeCount.set(0)
