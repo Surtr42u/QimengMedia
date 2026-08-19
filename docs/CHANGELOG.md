@@ -10,6 +10,20 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## TXT导入刷新回调 Fragment 分离崩溃修复（v1.16，2026-08-19）
+
+执行 AI：deepseek-v4-flash
+
+用户插上真机读取崩溃专项日志，`crash_log.txt` 捕获到一条历史崩溃：`IllegalStateException: Fragment DataManagementFragment not attached to a context`（2026-08-17 05:27:44，闪退后 05:27:52 自动重启）。崩溃点 `DataManagementFragment.kt:216` ← `MediaLibraryViewModel.kt:300`。
+
+| 类别 | 改动 |
+|---|---|
+| 根因 | 数据管理页「TXT 导入作者」刷新按钮调 `refreshTxtImport`，运行在 `viewModelScope + Dispatchers.IO`（**不随页面销毁取消**）。该次刷新重匹配 2 个 TXT（35+97 个 block，库中数千文件）耗时约 8 秒，匹配完成后回调回到主线程时用户已切走页面，fragment 已 detached，回调内 `requireContext()` 直接抛 `IllegalStateException` 崩溃。对比 `importAuthorsFromTxt` 路径用 `viewLifecycleOwner.lifecycleScope`（随页面销毁取消），只有刷新按钮这条路径会炸 |
+| 修复 | 回调内改用可空 `context ?: return@refreshTxtImport` 判空，fragment 已分离时跳过弹 Toast 不再崩溃 |
+| 日志佐证 | 同日几十条 ANRWatchdog 记录全部为 D 级降级日志（高负载推进中栈顶变化，非真 ANR），可忽略；最新几次启动日志干净 |
+
+**验证**：`:app:assembleDebug` 通过；`gradlew --stop` 已执行。
+
 ## 浏览趋势「全部」全量动态分桶 + 修周对齐周日缺陷（v1.16，2026-08-16）
 
 执行 AI：GLM-5.3

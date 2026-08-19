@@ -239,6 +239,8 @@ while ($true) {
 3. 读取日志，查找 `E/QimengMedia: Uncaught exception` 行
 4. 根据堆栈定位问题
 
+**已定位真凶案例**（v1.16 实测）：数据管理页「TXT 导入作者」刷新按钮闪退。崩溃堆栈 `Fragment DataManagementFragment not attached to a context` → `requireContext()` 抛 `IllegalStateException`。根因：`refreshTxtImport` 运行在 `viewModelScope + Dispatchers.IO`（不随页面销毁取消），TXT 重匹配耗时数秒，用户切走页面后回调才执行，回调内 `requireContext()` 崩溃。**修复**：回调内改用可空 `context ?: return` 判空跳过，不再弹 Toast。排查同类隐患时注意区分协程作用域——`viewLifecycleOwner.lifecycleScope` 随页面销毁取消，安全；`viewModelScope` 不随页面销毁取消，异步回调里访问 Fragment 必须判空。
+
 ### 扫描卡死诊断
 
 1. 触发扫描操作

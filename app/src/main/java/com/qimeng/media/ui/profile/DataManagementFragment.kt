@@ -213,7 +213,10 @@ class DataManagementFragment : Fragment() {
                     onRefresh = {
                         // 直接刷新：从URI重新读取文件，失败则用缓存重新匹配
                         viewModel.refreshTxtImport(fileName) { _, message ->
-                            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                            // viewModelScope 不随页面销毁取消，刷新完成时 Fragment 可能已分离，
+                            // requireContext() 会抛 IllegalStateException（真机实测崩溃），用可空 context 判空跳过
+                            val ctx = context ?: return@refreshTxtImport
+                            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
                         }
                     }
                 ))
