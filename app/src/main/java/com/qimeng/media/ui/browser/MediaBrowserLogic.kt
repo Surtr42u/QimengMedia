@@ -541,13 +541,14 @@ data class MediaDateGroup(
 
 /**
  * 搜索上下文：提供出处/角色/作者/作品名匹配能力
- * 用于首页搜索时匹配 COS 作者名/作品名和常规出处/角色名
+ * 用于首页搜索时匹配 COS 作者名/作品名、常规作者名和常规出处/角色名
  */
 class SearchContext(
     private val cosAuthorForMedia: Map<String, String>,   // recordKey → COS作者名
     private val cosWorkForMedia: Map<String, String>,     // recordKey → COS作品名
     private val sourceForMedia: Map<String, String?>,     // recordKey → 出处名（常规文件）
-    private val characterForMedia: Map<String, String?>   // recordKey → 角色名（常规文件）
+    private val characterForMedia: Map<String, String?>,  // recordKey → 角色名（常规文件）
+    private val regularAuthorForMedia: Map<String, String> // recordKey → 常规作者名（多作者 + 连接）
 ) {
     /**
      * 多关键词匹配：将查询词按空格拆分，每个关键词必须至少匹配一个维度（出处/角色/作者/作品）。
@@ -576,6 +577,9 @@ class SearchContext(
             if (it.contains(keyword)) return true
         }
         characterForMedia[key]?.lowercase(Locale.getDefault())?.let {
+            if (it.contains(keyword)) return true
+        }
+        regularAuthorForMedia[key]?.lowercase(Locale.getDefault())?.let {
             if (it.contains(keyword)) return true
         }
         return false

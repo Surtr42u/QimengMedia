@@ -10,6 +10,22 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 首页搜索新增常规作者维度（v1.17，2026-08-20）
+
+执行 AI：deepseek-v4-flash
+
+用户报告首页搜索只支持视频/角色/出处/标签等维度，不支持作者搜索。调研确认：作者搜索此前只覆盖 COS 作者（`CosAuthorIndex` 仅收录 `cos_` 前缀 authorId），TXT 导入的常规作者完全未参与搜索匹配与补全建议。
+
+| 类别 | 改动 |
+|---|---|
+| 新增索引 | `MediaGroupHelper.RegularAuthorIndex`：recordKey → 常规作者显示名列表（仅非 `cos_` 前缀作者，与 `CosAuthorIndex` 互斥互补），一个文件关联多个常规作者时列表收集并去重；循环内 O(1) 查找，替代逐条遍历 authorMedia 的 O(N×M) 嵌套扫描 |
+| 搜索维度 | `SearchContext` 新增常规作者维度（recordKey → 多作者 `+` 拼接串，与角色维度 joinToString 写法一致），`matchesSingleKeyword` 追加 contains 匹配——搜常规作者名可命中其关联文件 |
+| 补全建议 | `buildNameIndex` 新增「作者」类型标签，遍历常规文件提取实际有文件的常规作者（TXT 导入作者仅关联非 COS 文件，故只查常规 media，不显示孤立作者名） |
+| 指纹增强 | `computeDataFingerprint` 追加 authors 全量与 authorMedia 前 64 条摘要——作者改名/新增、关联内容变化会触发索引重建（此前指纹不含作者维度，TXT 导入后缓存的补全建议不会更新） |
+| 文档 | `GUIDE_UI.md` 搜索匹配维度/补全标签同步；`PROJECT_GUIDE.md` 首页功能描述同步 |
+
+**验证**：新增 `RegularAuthorIndex` 6 个单测 + `SearchContext` 常规作者维度 3 个单测全部通过；`:app:assembleDebug` 通过；`gradlew --stop` 已执行。
+
 ## TXT导入刷新回调 Fragment 分离崩溃修复（v1.16，2026-08-19）
 
 执行 AI：deepseek-v4-flash

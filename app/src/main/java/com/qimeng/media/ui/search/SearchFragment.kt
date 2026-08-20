@@ -635,6 +635,10 @@ class SearchFragment : Fragment() {
             // 内容摘要：取前 64 个元素的 hashCode 求和，避免全量 hashCode 开销
             hash = hash * 53L + media.take(64).sumOf { it.recordKey.hashCode().toLong() }
             hash = hash * 59L + cosMedia.take(64).sumOf { it.recordKey.hashCode().toLong() }
+            // v1.17：作者维度参与搜索后，作者表内容（改名/新增）与关联内容（换关联文件）变化也必须触发重建
+            // （作者表通常为 TXT 导入的少量条目，全量求和；关联表与 media 一样取前 64 条）
+            hash = hash * 61L + authors.sumOf { it.authorId.hashCode().toLong() * 31L + it.displayName.hashCode().toLong() }
+            hash = hash * 67L + authorMedia.take(64).sumOf { it.recordKey.hashCode().toLong() * 31L + it.authorId.hashCode().toLong() }
             return hash
         }
 
@@ -676,6 +680,15 @@ class SearchFragment : Fragment() {
             for (name in cosAuthors) { result.add(SearchSuggestItem("COS作者", name)) }
             for (name in cosWorkNames) { result.add(SearchSuggestItem("COS作品", name)) }
 
+            // 常规作者：TXT 导入作者仅关联非 COS 文件（rebuildAssociationsFromBlocks 匹配非 COS 文件），
+            // 遍历 media 提取实际有文件的作者，避免显示无关联的孤立作者名
+            val regularAuthorIndex = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
+            val regularAuthors = mutableSetOf<String>()
+            for (m in media) {
+                regularAuthors.addAll(regularAuthorIndex.authorsOf(m.recordKey))
+            }
+            for (name in regularAuthors) { result.add(SearchSuggestItem("作者", name)) }
+
             return result
         }
 
@@ -691,10 +704,12 @@ class SearchFragment : Fragment() {
             val cosWorkMap = mutableMapOf<String, String>()
             val sourceMap = mutableMapOf<String, String?>()
             val characterMap = mutableMapOf<String, String?>()
+            val regularAuthorMap = mutableMapOf<String, String>()
 
             // 建索引一次，循环内 O(1) 查找替代 O(N×M) 嵌套扫描
             val cosAuthorIndex = MediaGroupHelper.CosAuthorIndex.build(authorMedia, authors)
             val cosWorkIndex = MediaGroupHelper.CosWorkIndex.build(cosWorks)
+            val regularAuthorIndex = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
             for (m in cosMedia) {
                 val authorName = MediaGroupHelper.findCosAuthorForMedia(m, cosAuthorIndex)
                 if (authorName != "其他") cosAuthorMap[m.recordKey] = authorName
@@ -705,8 +720,11 @@ class SearchFragment : Fragment() {
                 val (source, characters) = SourceMatcher.matchAll(m.fileName)
                 if (source != null) sourceMap[m.recordKey] = source
                 if (characters.isNotEmpty()) characterMap[m.recordKey] = characters.sorted().joinToString("+")
+                // 常规作者：多作者与角色维度一致用 + 拼接，搜索时对拼接串做 contains 匹配
+                val authorNames = regularAuthorIndex.authorsOf(m.recordKey)
+                if (authorNames.isNotEmpty()) regularAuthorMap[m.recordKey] = authorNames.joinToString("+")
             }
-            return SearchContext(cosAuthorMap, cosWorkMap, sourceMap, characterMap)
+            return SearchContext(cosAuthorMap, cosWorkMap, sourceMap, characterMap, regularAuthorMap)
         }
 
         /** 预构建搜索索引（供首页等提前调用，用户打开搜索页时索引已就绪） */

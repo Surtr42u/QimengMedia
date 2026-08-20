@@ -14,6 +14,7 @@ import com.qimeng.media.ui.browser.MediaSortDirection
 import com.qimeng.media.ui.browser.MediaSortKey
 import com.qimeng.media.ui.browser.MediaTagMode
 import com.qimeng.media.ui.browser.MediaViewRange
+import com.qimeng.media.ui.browser.SearchContext
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
@@ -474,6 +475,60 @@ class MediaBrowserLogicRecommendTest {
             source, "action", MediaFilterState(), emptyMap(), tagMap
         )
         assertThat(byTag.map { it.recordKey }).containsExactly("key2")
+    }
+
+    @Test
+    fun applyFilter_query_matchesRegularAuthorViaSearchContext() {
+        // v1.17：SearchContext 新增常规作者维度，搜作者名可命中其关联文件
+        val source = listOf(
+            makeMedia("key1", fileName = "pic1.jpg"),
+            makeMedia("key2", fileName = "pic2.jpg")
+        )
+        val ctx = SearchContext(
+            cosAuthorForMedia = emptyMap(),
+            cosWorkForMedia = emptyMap(),
+            sourceForMedia = emptyMap(),
+            characterForMedia = emptyMap(),
+            regularAuthorForMedia = mapOf("key1" to "凉子", "key2" to "阿伟")
+        )
+        val result = MediaBrowserLogic.applyFilter(
+            source, "凉子", MediaFilterState(), emptyMap(), emptyMap(), searchContext = ctx
+        )
+        assertThat(result.map { it.recordKey }).containsExactly("key1")
+    }
+
+    @Test
+    fun applyFilter_query_multiKeywordAuthorPlusFileName() {
+        // 多关键词：一个词命中常规作者、一个词命中文件名，每词至少命中一个维度才算匹配
+        val source = listOf(
+            makeMedia("key1", fileName = "picture.jpg"),
+            makeMedia("key2", fileName = "photo.jpg")
+        )
+        val ctx = SearchContext(
+            cosAuthorForMedia = emptyMap(),
+            cosWorkForMedia = emptyMap(),
+            sourceForMedia = emptyMap(),
+            characterForMedia = emptyMap(),
+            regularAuthorForMedia = mapOf("key1" to "凉子", "key2" to "阿伟")
+        )
+        val result = MediaBrowserLogic.applyFilter(
+            source, "凉子 picture", MediaFilterState(), emptyMap(), emptyMap(), searchContext = ctx
+        )
+        assertThat(result.map { it.recordKey }).containsExactly("key1")
+    }
+
+    @Test
+    fun applyFilter_query_regularAuthorIgnoredWhenNoContext() {
+        // 未传 SearchContext 时搜作者名不应命中（保证旧行为不变，不误伤文件名相同的情况）
+        val source = listOf(
+            makeMedia("key1", fileName = "凉子.jpg"),
+            makeMedia("key2", fileName = "pic2.jpg")
+        )
+        val byAuthorName = MediaBrowserLogic.applyFilter(
+            source, "凉子", MediaFilterState(), emptyMap(), emptyMap()
+        )
+        // key1 靠文件名命中，key2 的作者关联不存在
+        assertThat(byAuthorName.map { it.recordKey }).containsExactly("key1")
     }
 
     @Test

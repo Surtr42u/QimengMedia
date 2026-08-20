@@ -105,7 +105,7 @@
 - 点击缩略图 → `MainActivity.showDetailFragment()` → `add` 模式，传当前页面已分页加载显示的文件列表（`adapter.currentList`，非完整排序列表 `tabSortedItems[currentTab]`），详情页仅可左右滑动浏览当前推荐页已可见的文件，数目与推荐页显示一致
 - 搜索框不可聚焦，点击跳转独立搜索界面（`SearchFragment`，通过 `MainActivity.showSearchFragment()` add 模式）
 - **搜索范围**：搜索时合并常规+COS文件（`cachedMedia + cachedCosMedia`），非搜索时按当前 tab 选择数据源
-- **搜索匹配维度**：除文件名/文件夹名/标签外，通过 `SearchContext` 额外匹配出处名（SourceMatcher）、角色名（SourceMatcher.matchAll）、COS作者名（MediaGroupHelper.findCosAuthorForMedia）、COS作品名（MediaGroupHelper.findCosCharacterForMedia）
+- **搜索匹配维度**：除文件名/文件夹名/标签外，通过 `SearchContext` 额外匹配出处名（SourceMatcher）、角色名（SourceMatcher.matchAll）、常规作者名（MediaGroupHelper.RegularAuthorIndex，TXT 导入作者）、COS作者名（MediaGroupHelper.findCosAuthorForMedia）、COS作品名（MediaGroupHelper.findCosCharacterForMedia）
 - 点赞计数缓存机制详见 `GUIDE_DATA.md`「点赞」章节
 - 每日推荐去重 `dailyShownCountMap`（`Map<String, Int>`）：已展示的文件下次推荐被 -0.8 惩罚，让新文件排到前面；下拉刷新时保留 map 不清空，每日零点自动清空
 
@@ -115,7 +115,7 @@
 - 顶部搜索栏：`[返回] [搜索输入框] [搜索按钮]`
 - **三层状态切换**：
   - **空状态（STATE_EMPTY）**：搜索框下方显示「推荐搜索」ChipGroup + 「搜索历史」ChipGroup（有历史时显示，含清除按钮）
-  - **补全状态（STATE_SUGGEST）**：输入文字时显示补全推荐列表（RecyclerView，一行一个，从短到长排序），每行左侧搜索图标+文字+右侧类型标签（出处/角色/COS作者/COS作品）
+  - **补全状态（STATE_SUGGEST）**：输入文字时显示补全推荐列表（RecyclerView，一行一个，从短到长排序），每行左侧搜索图标+文字+右侧类型标签（出处/角色/COS作者/COS作品/作者；「作者」=TXT 导入的常规作者）
   - **结果状态（STATE_RESULT）**：搜索结果网格（3列 RecyclerView + 空提示），搜索栏保留搜索词
 - **补全推荐机制**：预计算名字索引（`nameIndex`，数据变化时通过 `rebuildNameIndexAsync()` 在 `Dispatchers.Default` 异步重建），输入时 O(m) 匹配名字列表不遍历文件，最多显示 10 条；点击补全项自动填入搜索框并触发搜索
 - **名字索引缓存**：`cachedNameIndex`（companion object）跨实例复用，`cachedDataFingerprint`（各列表 size + 前64条 recordKey hashCode）精确检测数据变化，数据未变时跳过重建直接使用缓存索引，避免每次打开搜索页重复遍历所有文件做 SourceMatcher 匹配
@@ -125,7 +125,7 @@
 - **推荐搜索**：从名字索引随机取 10 条作为推荐；`onViewCreated` 中优先用 `cachedNameIndex` 立即填充（消除首次视觉延迟），数据流到达后指纹未变则跳过重建
 - **结果状态下点击搜索栏**：切回补全状态，可修改搜索词
 - **返回导航**：结果→空状态（清空搜索词）→补全→空状态→空状态→返回首页（popBackStack）
-- **搜索匹配维度**：文件名/文件夹名/标签 + `SearchContext`（出处名、角色名、COS作者名、COS作品名）
+- **搜索匹配维度**：文件名/文件夹名/标签 + `SearchContext`（出处名、角色名、常规作者名、COS作者名、COS作品名）
 - **搜索结果**：使用 `GroupedMediaAdapter`（与全部页一致，日期分组+3列网格），搜索和 `buildSearchContext()` 均在 `Dispatchers.Default` 异步执行；支持双指缩放列数 2-5 列（`ScaleGestureDetector`）
 - **键盘适配**：搜索页使用 `SOFT_INPUT_ADJUST_NOTHING`，键盘弹出时不调整布局，避免底部 tab 显示在键盘上方；退出搜索页恢复 `SOFT_INPUT_ADJUST_RESIZE`。底部导航通过 `BackStackChangedListener` 中 `SearchFragment` 判断隐藏（`GONE`），确保键盘弹出时底部 tab 不可见
 

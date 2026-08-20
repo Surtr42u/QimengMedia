@@ -86,6 +86,43 @@ object MediaGroupHelper {
     }
 
     /**
+     * 常规作者索引：recordKey → 常规作者显示名列表（仅非 `cos_` 前缀作者），O(1) 查找。
+     *
+     * 与 [CosAuthorIndex]（仅 COS 作者、单值取首条）互补：常规作者来自 TXT 导入，
+     * 一个文件可关联多个常规作者，故按列表收集并去重。
+     * 首页搜索的"作者"匹配维度（[com.qimeng.media.ui.browser.MediaBrowserLogic.SearchContext]）
+     * 与补全建议的"作者"标签均基于本索引，替代逐条遍历 authorMedia 的 O(N×M) 嵌套查找。
+     */
+    class RegularAuthorIndex private constructor(
+        private val recordKeyToAuthors: Map<String, List<String>>
+    ) {
+        /** 返回该文件关联的全部常规作者显示名；无关联时返回空列表 */
+        fun authorsOf(recordKey: String): List<String> = recordKeyToAuthors[recordKey] ?: emptyList()
+
+        companion object {
+            /** 从 authorMedia 关联表 + 作者表构建索引，O(关联数 + 作者数) */
+            fun build(
+                authorMedia: List<AuthorMediaCrossRef>,
+                authors: List<AuthorEntity>
+            ): RegularAuthorIndex {
+                if (authorMedia.isEmpty() || authors.isEmpty()) return RegularAuthorIndex(emptyMap())
+                val authorIdToName = authors.associate { it.authorId to it.displayName }
+                val map = HashMap<String, MutableList<String>>(authorMedia.size)
+                for (ref in authorMedia) {
+                    // 合并过滤条件为单个守卫（与 CosAuthorIndex 同构，避免循环内多个跳转语句）：
+                    // 仅收录非 cos_ 前缀作者（常规作者），且作者仍在 authors 表中
+                    val name = authorIdToName[ref.authorId]
+                    if (!ref.authorId.startsWith("cos_") && name != null) {
+                        val list = map.getOrPut(ref.recordKey) { mutableListOf() }
+                        if (name !in list) list.add(name) // 同一文件关联同一作者去重
+                    }
+                }
+                return RegularAuthorIndex(map.mapValues { it.value.toList() })
+            }
+        }
+    }
+
+    /**
      * COS 作品索引：作者名 → 该作者的作品名列表，O(1) 取作品集 + O(作品数) 查找。
      *
      * 替代旧 [findCosCharacterForMedia] 里每次调用都 `cosWorks.filter { it.authorName == authorName }`

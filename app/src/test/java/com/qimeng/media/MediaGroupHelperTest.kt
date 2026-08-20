@@ -286,6 +286,74 @@ class MediaGroupHelperTest {
         assertEquals("其他", index.authorNameOf("rk1"))
     }
 
+    // === RegularAuthorIndex 测试 ===
+
+    @Test
+    fun regularAuthorIndex_buildsRecordKeyToAuthorNames() {
+        val authorMedia = listOf(
+            createAuthorMedia("reg_a1", "rk1"),
+            createAuthorMedia("reg_a1", "rk2"),
+            createAuthorMedia("reg_a2", "rk1")
+        )
+        val authors = listOf(
+            createAuthor("reg_a1", "凉子"),
+            createAuthor("reg_a2", "阿伟")
+        )
+        val index = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
+        assertEquals(listOf("凉子", "阿伟"), index.authorsOf("rk1"))
+        assertEquals(listOf("凉子"), index.authorsOf("rk2"))
+    }
+
+    @Test
+    fun regularAuthorIndex_unknownRecordKeyReturnsEmpty() {
+        val index = MediaGroupHelper.RegularAuthorIndex.build(
+            listOf(createAuthorMedia("reg_a1", "rk1")),
+            listOf(createAuthor("reg_a1", "凉子"))
+        )
+        assertEquals(emptyList<String>(), index.authorsOf("not_exist"))
+    }
+
+    @Test
+    fun regularAuthorIndex_ignoresCosAuthor() {
+        // 与 CosAuthorIndex 相反：cos_ 前缀作者不进常规索引
+        val authorMedia = listOf(
+            createAuthorMedia("cos_a1", "rk1"),
+            createAuthorMedia("reg_a1", "rk1")
+        )
+        val authors = listOf(
+            createAuthor("cos_a1", "COS凉子"),
+            createAuthor("reg_a1", "凉子")
+        )
+        val index = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
+        assertEquals(listOf("凉子"), index.authorsOf("rk1"))
+    }
+
+    @Test
+    fun regularAuthorIndex_deduplicatesSameAuthorName() {
+        // 同一文件关联同一作者重复条目（authorMedia 主键去重后一般不会出现，防御性去重）
+        val authorMedia = listOf(
+            createAuthorMedia("reg_a1", "rk1"),
+            createAuthorMedia("reg_a1", "rk1")
+        )
+        val authors = listOf(createAuthor("reg_a1", "凉子"))
+        val index = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
+        assertEquals(listOf("凉子"), index.authorsOf("rk1"))
+    }
+
+    @Test
+    fun regularAuthorIndex_skipsAuthorNotInAuthorsTable() {
+        val authorMedia = listOf(createAuthorMedia("reg_deleted", "rk1"))
+        val authors = listOf(createAuthor("reg_a1", "凉子"))
+        val index = MediaGroupHelper.RegularAuthorIndex.build(authorMedia, authors)
+        assertEquals(emptyList<String>(), index.authorsOf("rk1"))
+    }
+
+    @Test
+    fun regularAuthorIndex_emptyInputsReturnsEmpty() {
+        val index = MediaGroupHelper.RegularAuthorIndex.build(emptyList(), emptyList())
+        assertEquals(emptyList<String>(), index.authorsOf("rk1"))
+    }
+
     // === CosWorkIndex 测试 ===
 
     @Test
