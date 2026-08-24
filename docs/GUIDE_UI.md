@@ -196,7 +196,7 @@
 - 控制器自动隐藏：5秒无操作后自动隐藏
 - ExoPlayer 生命周期：Fragment `onViewCreated` 创建并配置音频属性，`onPause` 暂停，`onResume` 恢复，`onDestroyView` 释放
 - 音频焦点：ExoPlayer 自动管理（`setAudioAttributes(handleAudioFocus=true)`）
-- 视频预览：优先使用 Coil `VideoFrameDecoder`（利用内存/磁盘缓存，`size(1440,2560)`），失败回退 `MediaMetadataRetriever`（`openAssetFileDescriptor` + `decodeFileDescriptor`，提取3秒帧 `OPTION_CLOSEST_SYNC`）
+- 视频预览：优先使用 Coil `VideoFrameDecoder`（利用内存/磁盘缓存，`size(1440,2560)`，`videoFrameMillis(0)` 取首帧），失败回退 `MediaMetadataRetriever`（`openAssetFileDescriptor` + `decodeFileDescriptor`，取首帧 `getFrameAtTime(0, OPTION_CLOSEST_SYNC)`）
 - Coil 全局配置：Coil 3.4.0，`QimengApplication` 通过 `SingletonImageLoader.setSafe` 注册 `VideoFrameDecoder.Factory()` + `AnimatedImageDecoder.Factory()` 到 ImageLoader；内存缓存25%堆大小；磁盘缓存20%磁盘空间（首次解码后缓存到磁盘，后续加载无感）
 - 缩略图缓存策略：Coil `size(480,270)` 限制缩略图解码尺寸；RecyclerView `setItemViewCacheSize(20)` + `RecycledViewPool(max=20)`；`onViewRecycled` 时取消未完成的缩略图解码任务（`decodeJob?.cancel()`）；扫描/导入时即开始缓存缩略图到磁盘
 

@@ -62,7 +62,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | `Zoom` | ZoomImageView 反射检测异常（仅非预期异常才记录，正常 NoSuchField 静默） |
 | `SourceMatcher` | 出处/角色匹配未命中采样日志（`charMiss(N): file=...`，每 50 次未命中记 1 条，N 为累计未命中总数） |
 | `AuthorImport` | 作者 TXT 导入/重建/匹配日志（`importFromText`/`rebuild`/`rematch`/`findMatch(累计N)`）。`findMatch` 循环内采样，每 50 次调用记 1 条（含未命中），避免重建时日志刷屏 |
-| `Thumb` | 缩略图/视频帧处理（`ThumbnailCache` 内 `loadFirstFrame: non-black at Xms` 首帧非黑探测；读取失败/内存探测等） |
+| `Thumb` | 缩略图/视频帧处理（`ThumbnailLoader` 内 `loadRepresentativeFrame: good frame at 35% (Xms)` 代表帧探测——35% 偏移+黑白帧检测；读取失败/内存探测等） |
 | `ThumbCache` | 缩略图预生成进度（`pregenerate: total=N`/`progress N/M`/`done`，以及读写缩略图缓存失败） |
 
 #### 添加日志的原则

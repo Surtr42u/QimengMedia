@@ -321,18 +321,19 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 
 **动图缩略图（loadImageThumbnail，mediaType=ANIMATED_IMAGE）**：与图片缩略图使用相同的三级策略，GIF 扩展名在扫描时被识别为 `ANIMATED_IMAGE` 类型
 
-**视频缩略图（loadVideoThumbnail）**：
+**视频缩略图（loadVideoThumbnail，v1.18 起对齐 Windows 资源管理器/Icaros 策略）**：
 
-1. **ContentResolver.loadThumbnail**（最快，30-100ms）：仅 MediaStore URI（`content://media/`），直接读取系统预生成缩略图缓存
-2. **MediaMetadataRetriever.getEmbeddedPicture**（较快）：读取视频内嵌封面（cover art），不需要解码视频流
-3. **截帧+黑帧检测**（最慢）：`loadFirstFrame()` 复用同一个 `MediaMetadataRetriever`，固定时间策略 0ms→1s→2s→3s→5s，自动跳过纯黑帧
+1. **MediaMetadataRetriever.getEmbeddedPicture**（有内嵌封面时最优）：读取视频内嵌封面（cover art），不需要解码视频流，画面质量最可控。注意内嵌封面覆盖**远低于直觉**：实测参考库 376 个视频 0 个带封面，绝大多数视频无内嵌封面，此策略"有就用"
+2. **35% 代表帧**（主路径）：`loadRepresentativeFrame()` 复用同一个 `MediaMetadataRetriever`，按视频时长 × 35% 偏移（对齐 Icaros 默认 offset=35%）截帧，黑/白帧不合格按比例序列向两侧扩散（35%→25%→45%→15%→55%→5%→65%→0ms），全失败回退首个取到的帧
+3. **ContentResolver.loadThumbnail**（兜底，30-100ms）：仅 MediaStore URI（`content://media/`），直接读取系统预生成缩略图缓存。系统缩略图帧位置不可控（可能黑帧/构图差），故排在代表帧之后——与 Icaros "覆盖 Windows 默认缩略图" 的体验一致
 
-### 黑帧检测算法详解
+### 黑白帧检测算法详解
 
-`loadFirstFrame()` 在截帧后对帧做黑帧检测：
+`loadRepresentativeFrame()` 在截帧后对帧做黑/白帧检测：
 - 采样 100 个像素点
-- 亮度 < 15 判定为纯黑帧
-- 纯黑帧自动跳过，尝试下一个时间点截帧
+- 全部亮度 < 15 判定为纯黑帧，全部亮度 > 240 判定为纯白帧（对齐 Icaros 黑白帧检测思路，Icaros 默认替换阈值 8%）
+- 黑/白帧自动跳过，尝试下一个比例位置截帧
+- 取不到时长时短路 0ms 帧（避免按比例序列重复取同一帧 8 次）
 - 复用同一个 `MediaMetadataRetriever` 实例，避免重复创建开销
 
 ### 缩略图加载流程（ThumbnailCache + Coil）
@@ -360,7 +361,7 @@ AI 更新检索表时必须遵循以下规则，违反任何一条即为错误�
 
 ### cache_version 机制
 
-版本升级时自动清除视频缩略图缓存重新生成（黑帧检测逻辑变更后需要重新缓存）。
+版本升级时自动清除视频缩略图缓存重新生成（v1.18 代表帧 + 黑白帧检测逻辑变更后需要重新缓存）。
 
 ### 缩略图缓存键（ThumbnailCacheKeys）
 

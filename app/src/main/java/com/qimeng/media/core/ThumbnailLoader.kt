@@ -17,26 +17,26 @@ import kotlinx.coroutines.withContext
 /**
  * 缩略图加载工具，提供三种策略按优先级使用：
  *
- * 1. ContentResolver.loadThumbnail（最快，30-100ms）
- *    - 仅支持 MediaStore URI（content://media/external/...）
- *    - 直接读取系统预生成的缩略图缓存，零 CPU 解码开销
- *    - 内存占用极低：系统缓存管理，不占用 App 堆内存
- *
- * 2. MediaMetadataRetriever.getEmbeddedPicture（较快，读取视频内嵌封面）
+ * 1. MediaMetadataRetriever.getEmbeddedPicture（有内嵌封面时最优）
  *    - 适用于有内嵌 cover art 的视频文件（如 MP4 with cover）
- *    - 比 getFrameAtTime 快得多，不需要解码视频帧
- *    - 仅对视频文件有效
+ *    - 比 getFrameAtTime 快得多，不需要解码视频帧，画面质量最可控
+ *    - 仅对视频文件有效；注意实际图库内嵌封面覆盖率很低（参考库 376 个视频
+ *      实测 0 个带封面），主流视频无封面，此策略"有就用"
  *
- * 3. 回退到 Coil VideoFrameDecoder（最慢，需要解码视频帧）
- *    - 由 MediaThumbnailAdapter 中的 Coil 加载处理
- *    - videoFrameMillis(0) 取首帧
+ * 2. 截取"代表帧"（主路径，v1.18 对齐 Windows 资源管理器缩略图体验）
+ *    - 取视频时长 35% 处帧（对齐 Icaros 默认偏移），黑/白帧自动跳过向两侧扩散
+ *    - 电脑缩略图友好的原因：Windows 用系统缩略图管道 + Icaros 这类 Shell 扩展
+ *      按"偏移百分比"抓中段画面，而不是首帧——视频开头多为黑屏/片头过渡
+ *
+ * 3. ContentResolver.loadThumbnail（兜底，30-100ms）
+ *    - 仅支持 MediaStore URI（content://media/external/...）
+ *    - 直接读取系统预生成的缩略图缓存，零 CPU 解码开销，内存占用极低
+ *    - 系统缩略图帧位置不可控（可能黑帧/构图差），故只作兜底
  */
 object ThumbnailLoader {
     private const val MAX_THUMB_WIDTH = 320
-    /** 视频详情帧提取时间：3秒（微秒单位） */
-    const val VIDEO_DETAIL_FRAME_US = 3_000_000L
-    /** 视频缩略图黑帧检测递进时间点（毫秒单位） */
-    private val FRAME_POSITIONS_MS = longArrayOf(0, 1_000, 2_000, 3_000, 5_000, 10_000, 20_000, 30_000)
+    /** 代表帧递进偏移比例：主选 35%（对齐 Icaros 默认 offset=35%），黑/白帧不合格按此序列向两侧扩散 */
+    private val FRAME_RATIOS = doubleArrayOf(0.35, 0.25, 0.45, 0.15, 0.55, 0.05, 0.65, 0.0)
 
     /** 判断 URI 是否为 MediaStore 格式（支持 loadThumbnail） */
     fun isMediaStoreUri(uriString: String): Boolean {
@@ -95,7 +95,9 @@ object ThumbnailLoader {
     }
 
     /**
-     * 获取视频缩略图：优先内嵌封面 → 回退首帧截取
+     * 获取视频缩略图：优先级 内嵌封面 → 35% 代表帧（黑白检测）→ 系统缩略图兜底
+     * v1.18 调整顺序（原系统缩略图第一）：系统缩略图帧位置不受控，先于代表帧
+     * 会出现"能用系统图就不切代表帧"的结果，与电脑缩略图体验不符
      */
     suspend fun loadVideoThumbnail(
         context: Context,
@@ -103,32 +105,33 @@ object ThumbnailLoader {
         width: Int = 480,
         height: Int = 270
     ): Bitmap? = withContext(Dispatchers.IO) {
-        // 策略1：MediaStore URI 用系统缩略图（最快）
-        val systemThumb = loadSystemThumbnail(context, uriString, width, height)
-        if (systemThumb != null) return@withContext systemThumb
-
-        // 策略2：尝试读取内嵌封面
+        // 策略1：内嵌封面（Icaros UseCoverArt 同款，有封面直接用）
         val embeddedCover = loadEmbeddedCover(context, uriString)
         if (embeddedCover != null) return@withContext embeddedCover
 
-        // 策略3：回退到首帧截取
-        loadFirstFrame(context, uriString)
+        // 策略2：35% 代表帧（Icaros 默认 offset，黑/白帧自动跳过）
+        val representativeFrame = loadRepresentativeFrame(context, uriString)
+        if (representativeFrame != null) return@withContext representativeFrame
+
+        // 策略3：系统缩略图兜底（仅 MediaStore URI 支持）
+        loadSystemThumbnail(context, uriString, width, height)
     }
 
     /**
-     * 截取视频帧，自动跳过纯黑帧
-     * 固定时间策略：0ms→1s→2s→3s→5s，找到非纯黑帧为止
-     * 优化：复用同一个 MediaMetadataRetriever，避免重复创建开销
+     * 截取视频"代表帧"，自动跳过纯黑/纯白帧。
+     * 位置策略（v1.18 对齐 Icaros）：主位置 = 视频时长 × 35%，不合格按比例序列
+     * 向两侧扩散（35%→25%→45%→…），全部失败回退首个取到的帧（有总比没有好）。
      *
      * 为什么不用帧率跳帧？因为 getFrameAtTime(OPTION_CLOSEST_SYNC) 只取关键帧(I帧)，
      * I帧间隔通常1-5秒，"跳3帧"在 CLOSEST_SYNC 下无实际意义，API直接跳到最近I帧。
-     * 固定时间更简单可靠，不依赖 METADATA_KEY_CAPTURE_FRAMERATE（经常返回null）。
+     * 比例偏移更简单可靠，且不依赖 METADATA_KEY_CAPTURE_FRAMERATE（经常返回null）；
+     * 时长本身通过 METADATA_KEY_DURATION 获取（稳定返回）。
      *
      * 性能考虑：整个循环复用同一个 MediaMetadataRetriever 实例，
      * 避免每次 getFrameAtTime 都重新 setDataSource（耗时约50-100ms），
      * 仅在方法结束时 release 一次
      */
-    suspend fun loadFirstFrame(
+    suspend fun loadRepresentativeFrame(
         context: Context,
         uriString: String
     ): Bitmap? = withContext(Dispatchers.IO) {
@@ -140,21 +143,28 @@ object ThumbnailLoader {
                 retriever.setDataSource(pfd.fileDescriptor)
             } ?: retriever.setDataSource(context, uri)
 
-            // 固定时间策略 0ms→1s→2s→3s→5s→10s→20s→30s 递进原因：
-            // 0ms取首帧（最快），但很多视频开头是黑屏过渡（淡入、logo淡出）；
-            // 逐步后移，覆盖常见黑屏过渡时长；
-            // 如果前5个位置都是黑帧，继续尝试10s/20s/30s，避免返回黑帧缩略图
-            val framePositions = FRAME_POSITIONS_MS
+            // 时长（毫秒）用于按比例计算取帧位置；取不到时长时只能退化 0ms 帧
+            // （不必按比例序列重复取同一帧 8 次）
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            if (durationMs <= 0) {
+                val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                if (frame != null) return@withContext convertTo565(frame)
+                return@withContext null
+            }
+
             var lastFrame: Bitmap? = null
-            for (positionMs in framePositions) {
+            for (ratio in FRAME_RATIOS) {
                 try {
+                    val positionMs = (durationMs * ratio).toLong()
                     val frame = retriever.getFrameAtTime(
                         positionMs * 1000,
                         MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                     )
-                    if (frame != null && !isBlackFrame(frame)) {
-                        AppLog.d("Thumb", "loadFirstFrame: non-black at ${positionMs}ms")
-                        // v1.15：找到非黑帧时先回收暂存的 lastFrame（黑帧），避免泄漏一张 Bitmap
+                    if (frame != null && !isExtremeFrame(frame)) {
+                        val percent = (ratio * 100).toInt()
+                        AppLog.d("Thumb", "loadRepresentativeFrame: good frame at ${percent}% (${positionMs}ms)")
+                        // v1.15：找到合格帧时先回收暂存的 lastFrame（不合格帧），避免泄漏一张 Bitmap
                         lastFrame?.recycle()
                         return@withContext convertTo565(frame)
                     }
@@ -164,14 +174,14 @@ object ThumbnailLoader {
                         frame?.recycle()
                     }
                 } catch (e: Exception) {
-                    AppLog.d("Thumb", "loadFirstFrame at ${positionMs}ms failed: ${e.message}")
+                    AppLog.d("Thumb", "loadRepresentativeFrame at ${(ratio * 100).toInt()}% failed: ${e.message}")
                 }
             }
-            // 所有位置都是纯黑或失败，返回 0ms 的帧（有总比没有好）
+            // 所有位置都是黑/白帧或失败，返回第一个取到的帧（有总比没有好）
             if (lastFrame != null) return@withContext convertTo565(lastFrame)
             retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
         } catch (e: Exception) {
-            AppLog.d("Thumb", "loadFirstFrame failed: ${e.message}")
+            AppLog.d("Thumb", "loadRepresentativeFrame failed: ${e.message}")
             null
         } finally {
             try { retriever.release() } catch (_: Exception) { /* release() 失败无害，忽略 */ }
@@ -179,14 +189,15 @@ object ThumbnailLoader {
     }
 
     /**
-     * 检测 Bitmap 是否为纯黑帧（采样检测，避免遍历全部像素）
-     * 采样 100 个像素点，如果所有采样点的亮度都低于阈值则判定为纯黑
+     * 检测 Bitmap 是否为"极端帧"（纯黑或纯白，均不适合当缩略图）。
+     * 采样 100 个像素点，全部亮度低于 [minLuma] 判定纯黑，全部高于 [maxLuma] 判定纯白。
      *
-     * 阈值15的依据：正常视频帧即使暗场景也有环境光/噪点，亮度通常>20；
-     * 纯黑帧的像素值接近0，阈值15留出余量排除极暗但非纯黑的帧（如夜景），
-     * 同时确保真正的黑帧（亮度0-5）被可靠检测
+     * 阈值依据：正常视频帧即使暗场景也有环境光/噪点，亮度通常>20（纯黑帧≈0）；
+     * 对应地正常画面总有暗部，纯白帧≈255。minLuma=15 / maxLuma=240 留出余量排除
+     * 极暗（夜景）与极亮（曝光过度）但非极端帧。对齐 Icaros 黑白帧检测思路
+     * （Icaros 默认替换阈值 8%，检测"too dark or too light"帧并前移重找）。
      */
-    private fun isBlackFrame(bitmap: Bitmap, threshold: Int = 15, sampleCount: Int = 100): Boolean {
+    private fun isExtremeFrame(bitmap: Bitmap, minLuma: Int = 15, maxLuma: Int = 240, sampleCount: Int = 100): Boolean {
         val w = bitmap.width
         val h = bitmap.height
         if (w <= 0 || h <= 0) return true
@@ -194,6 +205,8 @@ object ThumbnailLoader {
         val stepX = (w / Math.sqrt(sampleCount.toDouble())).toInt().coerceAtLeast(1)
         val stepY = (h / Math.sqrt(sampleCount.toDouble())).toInt().coerceAtLeast(1)
 
+        var allDark = true
+        var allBright = true
         for (x in 0 until w step stepX) {
             for (y in 0 until h step stepY) {
                 val pixel = bitmap.getPixel(x, y)
@@ -202,10 +215,13 @@ object ThumbnailLoader {
                 val b = android.graphics.Color.blue(pixel)
                 // 亮度计算
                 val luminance = (0.299 * r + 0.587 * g + 0.114 * b).toInt()
-                if (luminance > threshold) return false
+                if (luminance >= minLuma) allDark = false
+                if (luminance <= maxLuma) allBright = false
+                // 已同时排除黑/白两种可能，提前结束
+                if (!allDark && !allBright) return false
             }
         }
-        return true
+        return allDark || allBright
     }
 
     /**

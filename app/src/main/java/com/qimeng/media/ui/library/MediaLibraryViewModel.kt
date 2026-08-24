@@ -101,10 +101,10 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
         }
         // 启动时从数据库预加载已有文件的缩略图到本地缓存
         viewModelScope.launch(Dispatchers.IO) {
-            // 版本升级时清除视频缩略图缓存（黑帧检测需要重新生成）
+            // 版本升级时清除视频缩略图缓存（代表帧策略变更后需要重新生成）
             val prefs = getApplication<Application>().getSharedPreferences("thumb_cache_meta", android.content.Context.MODE_PRIVATE)
             val lastVersion = prefs.getInt("cache_version", 0)
-            val currentVersion = 2 // 黑帧检测版本
+            val currentVersion = 3 // v1.18 代表帧策略(35%偏移+黑白帧检测)，帧位置逻辑变更后需重新生成
             if (lastVersion < currentVersion) {
                 AppLog.d("Scan", "init: cache version upgrade $lastVersion → $currentVersion, clearing video thumbnails")
                 val videos = repository.getMediaByType(MediaType.VIDEO)
