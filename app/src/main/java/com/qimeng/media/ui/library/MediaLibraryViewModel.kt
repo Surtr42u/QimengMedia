@@ -3,6 +3,7 @@ package com.qimeng.media.ui.library
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
@@ -52,6 +53,8 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     val scanSources = repository.observeScanSources()
     val allStats = repository.observeAllStats()
     val allTags = repository.observeAllTags()
+    /** 详情页标签弹窗：按创建时间倒序（新标签置顶） */
+    val allTagsNewestFirst = repository.observeAllTagsNewestFirst()
     val allMediaTags = repository.observeAllMediaTagNames()
     val history = repository.observeLatestHistory()
     /** v1.14：按天浏览聚合（无限保留，统计页趋势/窗口排行/沉浸时长唯一数据来源） */
@@ -500,6 +503,8 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
 
     fun addTag(recordKey: String, tagName: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            // 临时诊断日志：标签写库链路耗时
+            val t0 = SystemClock.uptimeMillis()
             val media = repository.getMediaByKey(recordKey) ?: return@launch
             val existingTag = repository.getTagByName(tagName)
             val tag = existingTag ?: repository.insertTag(
@@ -512,16 +517,22 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
                 MediaTagCrossRef(
                     recordKey = recordKey,
                     tagId = tag.tagId,
-                    fileName = media.fileName
+                    fileName = media.fileName,
+                    createdAtMillis = System.currentTimeMillis()
                 )
             )
+            // 先打写库耗时再触发自动同步（备份耗时另见 AutoSync 日志，避免混入误导）
+            AppLog.d("TagSheet", "addTag: 写库完成 name=$tagName 耗时=${SystemClock.uptimeMillis() - t0}ms")
             autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
 
     fun removeTag(recordKey: String, tagId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
+            // 临时诊断日志：标签删除链路耗时
+            val t0 = SystemClock.uptimeMillis()
             repository.removeTagFromMedia(recordKey, tagId)
+            AppLog.d("TagSheet", "removeTag: 删库完成 tagId=$tagId 耗时=${SystemClock.uptimeMillis() - t0}ms")
             autoSyncUseCase.triggerAutoSyncIfNeeded()
         }
     }
@@ -544,6 +555,9 @@ class MediaLibraryViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun tagEntitiesForMedia(recordKey: String) = repository.observeTagEntitiesForMedia(recordKey)
+
+    /** 详情页标签弹窗：文件标签按创建时间倒序（新标签置顶） */
+    fun tagEntitiesForMediaNewestFirst(recordKey: String) = repository.observeTagEntitiesForMediaNewestFirst(recordKey)
 
     // ===== 时间轴标签 =====
 

@@ -99,8 +99,10 @@ class AutoSyncUseCase(
 
         return try {
             val manager = BackupManager(application)
+            // 临时诊断日志：全量备份耗时（标签增删后 30s 防抖触发，可能造成偶发卡顿）
+            val t0 = System.currentTimeMillis()
             val result = manager.exportToDirectory(backupUri.toUri(), database, appPrefsManager) > 0
-            AppLog.d("AutoSync", "${logTag}完成")
+            AppLog.d("AutoSync", "${logTag}完成 耗时=${System.currentTimeMillis() - t0}ms")
             result
         } catch (e: Exception) {
             AppLog.e("AutoSync", "${logTag}失败", e)

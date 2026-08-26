@@ -32,6 +32,9 @@ interface LocalMediaRepository {
     fun observeScanSources(): Flow<List<ScanSourceEntity>>
     fun observeAllStats(): Flow<List<ViewStatsEntity>>
     fun observeAllTags(): Flow<List<TagEntity>>
+
+    /** 详情页标签弹窗使用：全部标签按创建时间倒序（新标签置顶） */
+    fun observeAllTagsNewestFirst(): Flow<List<TagEntity>>
     fun observeAllMediaTagNames(): Flow<List<MediaTagName>>
     fun observeSetting(key: String): Flow<SettingEntity?>
 
@@ -114,6 +117,9 @@ interface LocalMediaRepository {
     suspend fun updateBrowseSeconds(recordKey: String, seconds: Long)
     fun observeTagsForMedia(recordKey: String): Flow<List<MediaTagCrossRef>>
     fun observeTagEntitiesForMedia(recordKey: String): Flow<List<TagEntity>>
+
+    /** 详情页标签弹窗使用：文件标签按创建时间倒序（新标签置顶） */
+    fun observeTagEntitiesForMediaNewestFirst(recordKey: String): Flow<List<TagEntity>>
     suspend fun updateMediaMetadata(recordKey: String, width: Int?, height: Int?, durationMillis: Long?)
 
     // 时间轴标签

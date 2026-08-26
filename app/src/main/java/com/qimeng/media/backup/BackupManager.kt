@@ -131,7 +131,9 @@ class BackupManager(private val context: Context) {
                         MediaTagCrossRef(
                             recordKey = recordKey,
                             tagId = localTag.tagId,
-                            fileName = mediaMap[recordKey] ?: recordKey
+                            fileName = mediaMap[recordKey] ?: recordKey,
+                            // v1.19：旧备份无关联时间字段时用导入时刻（全批同值，排序回落到名字序稳定）
+                            createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
                         )
                     )
                 }
@@ -277,6 +279,7 @@ class BackupManager(private val context: Context) {
                         JSONObject().apply {
                             put("recordKey", xref.recordKey)
                             put("tagName", tagIdToName[xref.tagId]?.name ?: "")
+                            put("createdAtMillis", xref.createdAtMillis)
                         }
                     })
                     // albumRules 导出全部规则（含禁用）：禁用规则需随备份迁移，恢复后按 enabled 字段还原

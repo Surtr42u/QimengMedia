@@ -16,7 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -53,14 +52,12 @@ import coil3.size.Size
 import coil3.video.VideoFrameDecoder
 import coil3.video.videoFrameMillis
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.chip.Chip
 import com.qimeng.media.MainActivity
 import com.qimeng.media.R
 import com.qimeng.media.ThemeHelper
 import com.qimeng.media.isNightMode
 import com.qimeng.media.resolveThemeColor
 import com.qimeng.media.data.db.entity.MediaFileEntity
-import com.qimeng.media.data.db.entity.TagEntity
 import com.qimeng.media.data.db.entity.TimelineTagEntity
 import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.core.AppLog
@@ -895,6 +892,7 @@ class MediaDetailFragment : Fragment() {
     private fun showTagSheet() {
         val media = currentMedia ?: return
         val ctx = requireContext()
+        AppLog.d("TagSheet", "open: 标签管理弹窗打开 recordKey=${media.recordKey}")
         val dialog = BottomSheetDialog(ctx)
         val container = sheetContainer(ctx)
         container.addView(sheetTitle(ctx, "标签管理"))
@@ -907,6 +905,9 @@ class MediaDetailFragment : Fragment() {
         container.addView(tagScroll, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
         ))
+
+        // 标签区域：ChipGroup 多行自适应 + 数据库 Flow 驱动增量刷新（见 TagSheetHelper）
+        val tagFlowJob = TagSheetHelper.bind(viewLifecycleOwner, ctx, viewModel, media.recordKey, tagContent)
 
         val inputRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -933,8 +934,7 @@ class MediaDetailFragment : Fragment() {
                     viewModel.addTag(media.recordKey, name)
                     Toast.makeText(ctx, "标签已添加：$name", Toast.LENGTH_SHORT).show()
                     input.text.clear()
-                    // 不关闭对话框，刷新标签列表
-                    refreshTagContent(tagContent, ctx, media.recordKey, dialog)
+                    // 标签列表由 TagSheetHelper 的 Flow 自动刷新，无需手动重建
                 }
             }
         }
@@ -942,67 +942,10 @@ class MediaDetailFragment : Fragment() {
         inputRow.addView(addButton)
         container.addView(inputRow)
         container.addView(sheetDone(ctx, dialog))
+        // 弹窗关闭时取消 Flow 收集（后续标签变化不再操作已销毁视图）
+        dialog.setOnDismissListener { tagFlowJob.cancel() }
         dialog.setContentView(container)
         dialog.show()
-
-        // 首次加载标签
-        refreshTagContent(tagContent, ctx, media.recordKey, dialog)
-    }
-
-    /** 刷新标签管理对话框的内容区域 */
-    private fun refreshTagContent(
-        tagContent: LinearLayout,
-        ctx: Context,
-        recordKey: String,
-        dialog: BottomSheetDialog
-    ) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val currentTags = viewModel.tagEntitiesForMedia(recordKey).firstOrNull().orEmpty()
-            val allTags = viewModel.allTags.firstOrNull().orEmpty()
-            tagContent.removeAllViews()
-
-            val currentLabel = sheetSubText(ctx, "当前标签")
-            tagContent.addView(currentLabel)
-            if (currentTags.isEmpty()) {
-                tagContent.addView(sheetSubText(ctx, "暂无标签"))
-            } else {
-                val activeRow = HorizontalScrollView(ctx).apply {
-                    isHorizontalScrollBarEnabled = false
-                    setPadding(0, 4.dp(requireContext()), 0, 8.dp(requireContext()))
-                }
-                val activeStrip = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
-                currentTags.forEach { tag ->
-                    activeStrip.addView(activeTagChip(ctx, recordKey, tag) {
-                        // 删除后刷新列表
-                        refreshTagContent(tagContent, ctx, recordKey, dialog)
-                    })
-                }
-                activeRow.addView(activeStrip)
-                tagContent.addView(activeRow)
-            }
-
-            val otherTags = allTags.filter { it.name !in currentTags.map { t -> t.name } }
-            if (otherTags.isNotEmpty()) {
-                tagContent.addView(sheetSubText(ctx, "其他标签"))
-                val suggestRow = HorizontalScrollView(ctx).apply {
-                    isHorizontalScrollBarEnabled = false
-                    setPadding(0, 4.dp(requireContext()), 0, 8.dp(requireContext()))
-                }
-                val suggestStrip = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
-                otherTags.forEach { tag ->
-                    suggestStrip.addView(suggestTagChip(ctx, recordKey, tag) {
-                        // 添加后刷新列表
-                        refreshTagContent(tagContent, ctx, recordKey, dialog)
-                    })
-                }
-                suggestRow.addView(suggestStrip)
-                tagContent.addView(suggestRow)
-            }
-        }
     }
 
     private fun showJumpSheet() {
@@ -1076,28 +1019,6 @@ class MediaDetailFragment : Fragment() {
                     })
                 }
             }
-        }
-    }
-
-    private fun activeTagChip(ctx: Context, recordKey: String, tag: TagEntity, onRemoved: () -> Unit = {}): Chip = Chip(ctx).apply {
-        text = tag.name
-        isCloseIconVisible = true
-        setOnCloseIconClickListener {
-            viewModel.removeTag(recordKey, tag.tagId)
-            (parent as? ViewGroup)?.removeView(this)
-            Toast.makeText(ctx, "标签已移除", Toast.LENGTH_SHORT).show()
-            onRemoved()
-        }
-    }
-
-    private fun suggestTagChip(
-        ctx: Context, recordKey: String, tag: TagEntity, onAdded: () -> Unit = {}
-    ): Chip = Chip(ctx).apply {
-        text = tag.name
-        setOnClickListener {
-            viewModel.addTag(recordKey, tag.name)
-            Toast.makeText(ctx, "标签已添加：${tag.name}", Toast.LENGTH_SHORT).show()
-            onAdded()
         }
     }
 

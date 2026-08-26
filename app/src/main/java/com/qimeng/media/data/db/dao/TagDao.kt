@@ -15,6 +15,10 @@ interface TagDao {
     @Query("SELECT * FROM tags ORDER BY name ASC")
     fun observeTags(): Flow<List<TagEntity>>
 
+    /** 详情页标签弹窗使用：按创建时间倒序（新标签置顶），创建时间相同按名字 */
+    @Query("SELECT * FROM tags ORDER BY createdAtMillis DESC, name ASC")
+    fun observeTagsNewestFirst(): Flow<List<TagEntity>>
+
     @Query("""
         SELECT media_tag_cross_refs.recordKey AS recordKey, tags.tagId AS tagId, tags.name AS name
         FROM media_tag_cross_refs
@@ -30,6 +34,15 @@ interface TagDao {
         ORDER BY tags.name ASC
     """)
     fun observeTagEntitiesForMedia(recordKey: String): Flow<List<TagEntity>>
+
+    /** 详情页标签弹窗使用：按文件-标签关联时间倒序（最近添加的标签置顶，删除后重新添加同样置顶） */
+    @Query("""
+        SELECT tags.* FROM tags
+        INNER JOIN media_tag_cross_refs ON tags.tagId = media_tag_cross_refs.tagId
+        WHERE media_tag_cross_refs.recordKey = :recordKey
+        ORDER BY media_tag_cross_refs.createdAtMillis DESC, tags.name ASC
+    """)
+    fun observeTagEntitiesForMediaNewestFirst(recordKey: String): Flow<List<TagEntity>>
 
     @Query("SELECT * FROM tags ORDER BY name ASC")
     suspend fun getAllTags(): List<TagEntity>

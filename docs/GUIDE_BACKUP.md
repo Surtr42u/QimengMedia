@@ -53,6 +53,7 @@
 - 先解析 `schemaVersion`（**v1.15：导入时校验，备份 schemaVersion > 当前支持版本（1）则拒绝导入并记日志，防未来版本文件被静默错解析**）。
 - 对缺失字段使用默认值。
 - 对未知字段忽略但保留兼容空间。
+- **mediaTagRefs 兼容（v1.19）**：导出新增可选字段 `createdAtMillis`（文件-标签关联时间）；旧备份缺省时导入回退为导入时刻（全批同值，详情页标签弹窗排序回落到名字序稳定，不影响数据正确性）。
 - 找不到媒体文件时跳过未匹配记录（跨引用安全：authorMediaRefs/mediaTagRefs/mediaStats/history/timelineTags 仅当 recordKey 存在于 media_files 时才建立关联）。
 - 导入前可提示是否覆盖、合并或跳过冲突。
 - **media_files 合并策略**：本地 `media_files` 为空（全新重装未扫描）→ 导入备份 media_files 全量 → 浏览历史/统计/标签**立即可见**，无需重新扫描；本地非空（已扫描）→ 跳过 media_files（保留新扫描的有效 URI），引用数据按稳定 key 直接合并。

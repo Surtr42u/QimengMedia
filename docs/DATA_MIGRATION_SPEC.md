@@ -165,13 +165,14 @@
 ### mediaTagRefs
 
 ```json
-"mediaTagRefs": [{ "recordKey": "示例文件A.mp4", "tagName": "示例标签X" }]
+"mediaTagRefs": [{ "recordKey": "示例文件A.mp4", "tagName": "示例标签X", "createdAtMillis": 1700000000000 }]
 ```
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | recordKey | String | 关联 mediaFiles.recordKey |
 | tagName | String | 标签名（关联 tags.name，冗余写出便于 AI 直接理解） |
+| createdAtMillis | Long | 文件-标签关联时间（v1.19 新增，详情页标签弹窗按此倒序；旧备份缺省时导入回退为导入时刻） |
 
 ### albumRules
 

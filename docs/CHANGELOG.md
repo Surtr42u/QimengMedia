@@ -10,6 +10,25 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 详情页标签管理多行显示与增删卡顿修复（v1.19，2026-08-26）
+
+执行 AI：deepseek-v4-flash
+
+用户反馈：详情页标签管理弹窗标签区单行水平滚动、标签多时拥挤；标签增删偶发卡顿/有延迟（删除后 chip 短暂不消失）。
+
+真机实测定位（真机 / Android 16，全库 18 个标签）：每次增删后 `refreshTagContent` 走「手动查库 → removeAllViews 全量重画全部 chip」，主线程阻塞 17~63ms（其中查询仅 4~19ms、写库 2~11ms），18 个 Material Chip 就要 20~60ms；且「立即查库重建」与异步写库竞态——实测删除完成后 8ms 的刷新查询仍命中旧数据（20:04:04.602 删库完成 → 查询读旧 → 重建后已删 chip 复活约 500ms，直到下一次操作才消失），即用户感知的"删除延迟"；连续快速增删时重建背靠背叠加。
+
+| 类别 | 改动 |
+|---|---|
+| 提取 Helper | 新增 `ui/detail/TagSheetHelper.kt`（object）：承接标签管理弹窗的 Flow 驱动渲染——`combine(tagEntitiesForMedia, allTags)` 观察流发射后按 tagId 双指针 diff 同步两组 ChipGroup，只移除/新增变化段，未变化 chip 原实例保留；空态（暂无标签）与其他标签区显隐随流数据切换；返回 Job 供弹窗 `setOnDismissListener` 取消（防泄漏与重复监听） |
+| 布局多行 | 两组「当前标签/其他标签」由 `HorizontalScrollView` 单行横滑改为 `ChipGroup` 多行自适应（chipSpacing 8dp/4dp，标签少一行、多则自动 2~N 行，弹窗外层 ScrollView 可上下滚动），消除拥挤 |
+| 竞态修复 | 删除「手动查库 + removeAllViews 全量重建」路径（`refreshTagContent`/`activeTagChip`/`suggestTagChip` 删除）；渲染唯一数据源为 Room 观察流，写入完成后必然回放，不再读到旧数据、不再出现删除复活 |
+| 排序调整 | 详情页标签弹窗排序改为「最近添加的标签置顶」（满足用户语义 abcd+新添 q→qabcd / 删 c→qabd / 再添 c→cqabd）：`MediaTagCrossRef` 新增 `createdAtMillis` 关联时间字段（数据库 v7→v8 Migration，旧关联按标签创建时间回填近似），当前标签组按关联时间倒序（新 DAO `observeTagEntitiesForMediaNewestFirst`）；其他标签组按标签创建时间倒序（`observeTagsNewestFirst`）；备份 JSON `mediaTagRefs` 段新增可选 `createdAtMillis`（旧备份缺省用导入时刻），仅详情页弹窗使用，筛选面板/统计等保持名字序 |
+| 数据安全 | 数据层零改动：TagDao/TagEntity/MediaTagCrossRef/Repository/备份 JSON（`tags.json`）均不变；增删仍走 viewModel.addTag/removeTag，详情页删除仍只解除当前文件关联（全局删除仍在筛选面板 `deleteTagById`） |
+| 文档 | `GUIDE_UI.md` 详情页标签管理描述；`GUIDE_CODE_MAINTENANCE.md` 备案行数（1423→1344，未跨档）+ 共享组件表 `TagSheetHelper`；`GUIDE_DEBUG.md` TagSheet 日志说明 |
+
+**验证**：`:app:assembleDebug` + `./gradlew test` 通过；`gradlew --stop` 已执行；真机安装复测增量流更新日志（`render: 流更新 … 增量同步耗=Xms`，X 降至个位数 ms 量级）。
+
 ## 视频缩略图代表帧策略（v1.18，2026-08-24）
 
 执行 AI：deepseek-v4-flash

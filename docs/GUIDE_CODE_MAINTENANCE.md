@@ -225,7 +225,7 @@
 | 文件/方法 | 圈复杂度 | 区位 | 备案理由 |
 |---|---|---|---|
 | `BiliPlayerView.onTouchEvent` | 31 | 黄色（合理复杂度） | 触摸事件状态机，11 个状态变量在 DOWN/MOVE/UP 间流转，时序敏感，拆分有 bug 风险 |
-| `MediaDetailFragment` | 1402 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，二次巡检新增 viewCount 会话级去重/播放幂等/同步触发后 1371→1402，未跨档；v1.16 审查新增空库重试/同源续播后 1402→1423，未跨档） |
+| `MediaDetailFragment` | 1344 行 | 红色（类总行数，合理复杂度备案） | 详情页 chrome 四层结构 + 图片/视频双分支 + 预渲染，已提取 showImage/showVideo/setupVideoTouchOverlay/TimelineTagHelper/TagSheetHelper。详情页天然多分支，拆分会割裂 chrome 层级内聚，按 §8「合理复杂度」认可（v1.15 巡检修复后 1291→1371，二次巡检新增 viewCount 会话级去重/播放幂等/同步触发后 1371→1402，未跨档；v1.16 审查新增空库重试/同源续播后 1402→1423，未跨档；v1.19 提取 TagSheetHelper 标签管理弹窗流渲染后 1423→1344，未跨档） |
 | `ProfileFragment` | 259 行 | 绿色 | v1.13 数据管理/数据备份迁移至独立页面（DataManagementFragment/DataBackupFragment）后大幅瘦身；保留推荐偏好/兼容性检查弹层编排 |
 | `StatsDetailFragment` | 931 行 | 黄色（类总行数） | 统计详情页：统计摘要 + 数据洞察 + 趋势图表 + Top 20 排行榜/分布对比，四种模式（类型趋势/常看文件/常看作者标签/分布对比）+ 文件模式热度/时长排序切换。逻辑内聚于单一详情页，拆分会破坏模式间共享的 summary/insights 渲染（2026-08-14 巡检同步至 931；v1.16 审查聚合移 Default+序号防重后 931→994，未跨档） |
 | `BiliPlayerView` | 834 行 | 黄色（类总行数） | B站风格播放器控制器：手势控制 + 倍速 PopupWindow + 时间轴标签 + 全屏切换 + 媒体按钮。控件内部各交互天然耦合（播放/进度/手势共享 player 状态），硬拆需跨类传递状态，增加复杂度（v1.15 修复手势轮询竞争/倍速恢复/listener 对称后 819→834） |
@@ -294,6 +294,7 @@
 | `MediaPillsHelper` | `ui/browser/MediaPillsHelper.kt` | 出处/角色/分区/类型药丸渲染 | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AlbumDetailFragment, AuthorFilesFragment |
 | `MediaRenderHelper` | `ui/browser/MediaRenderHelper.kt` | 渲染共享计算（applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建） | AllFilesFragment, FavoriteFragment, BrowseHistoryFragment, AuthorFilesFragment（AlbumDetailFragment 仅用 applyTypeFilter/computeDisplayed，不用 buildFingerprint） |
 | `TimelineTagHelper` | `ui/detail/TimelineTagHelper.kt` | 视频时间轴标签弹窗交互 | MediaDetailFragment |
+| `TagSheetHelper` | `ui/detail/TagSheetHelper.kt` | 详情页标签管理弹窗流驱动渲染（ChipGroup 多行自适应 + combine 观察流 + 双指针 diff 增量同步 chip + 空态/其他标签区显隐；v1.19 从 MediaDetailFragment 提取） | MediaDetailFragment |
 | `SheetUiHelper` | `ui/profile/SheetUiHelper.kt` | 弹窗 UI 组件构建（标题/行/按钮/区块分隔标题） | ProfileFragment |
 | `DimenExt` | `ui/widget/DimenExt.kt` | dp/dpFloat 尺寸转换扩展函数（Int.dp(Context)/Float.dp(Context)/Int.dpFloat(Context)） | MediaDetailFragment, BiliPlayerView, HomeFragment, AlbumFragment, ZoomImageView, AuthorListFragment, MediaFilterSheet, GroupedMediaAdapter, TimelineTagHelper, SheetUiHelper |
 | `MediaBrowserLogic` | `ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组/格式化工具 | HomeFragment, AllFilesFragment, AlbumDetailFragment, MediaDetailFragment, MediaThumbnailAdapter |

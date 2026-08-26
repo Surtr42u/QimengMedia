@@ -35,7 +35,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 - `ViewHistoryEntity`：浏览历史，最多 500 条。
 - `DailyBrowseEntity`：按天浏览聚合（每文件每天一行：次数+播放+时长，**无限保留**，v1.14 新增；统计页趋势/窗口排行/沉浸时长的唯一数据来源，与 view_history 明细并存）。
 - `TagEntity`：全局标签。
-- `MediaTagCrossRef`：文件与标签关联。
+- `MediaTagCrossRef`：文件与标签关联（v1.19 增加 `createdAtMillis` 关联时间，详情页标签弹窗按此倒序）。
 - `TimelineTagEntity`：视频时间轴标签（recordKey + timeMillis + name，按视频内时间点标记，DAO 已有 observeForVideo/upsert/deleteById）。**与文件标签完全独立**：不同实体、不同表、不同 DAO、不同备份 JSON（`tags.json` vs `timeline_tags.json`），无外键或数据交叉；文件标签是整个文件级别，时间轴标签是视频内某个时间点级别。
 - `AlbumRuleEntity`：作品出处识别规则。
 - `AuthorEntity`：作者。
@@ -104,6 +104,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 - 标签是 App 内记录，不写入原始文件。
 - 一个标签可以关联多个文件，一个文件可以关联多个标签。
 - 标签双向同步：浏览文件中添加的新标签自动同步到筛选面板的可选标签列表。
+- **列表排序**：常规查询按 `name ASC`（筛选面板/统计沿用）；详情页标签管理弹窗使用 `observeTagsNewestFirst`/`observeTagEntitiesForMediaNewestFirst`——其他标签组按标签创建时间倒序，当前标签组按**文件-标签关联时间**（`MediaTagCrossRef.createdAtMillis`）倒序（v1.19：最近添加的标签置顶，**删除后重新添加同样置顶**，满足"abcd+新添 q → qabcd / 删 c → qabd / 再添 c → cqabd"语义；旧库 v7→v8 Migration 按标签创建时间回填近似值）。排序是纯查询层差异，备份 JSON 的 `mediaTagRefs` 段新增可选 `createdAtMillis` 字段（旧备份缺省时导入用导入时刻）。
 - 详情页标签管理：点击关闭图标仅移除文件与标签的关联（`removeTagFromMedia`），不删除标签选项本身。
 - 筛选面板标签管理：长按标签可删除标签选项本身（`deleteTagById`），`MediaTagCrossRef` 外键 CASCADE 自动清理关联。
 - 筛选面板支持"+ 添加标签"按钮创建不关联文件的新标签（`createTag`）。
@@ -155,7 +156,7 @@ App 记录默认使用完整文件名含扩展名作为主要关联键。
 | `authors` | `AuthorEntity` |
 | `authorMediaRefs` | `AuthorMediaCrossRef`（含 isMatched，v2.0 新增） |
 | `tags` | `TagEntity` |
-| `mediaTagRefs` | `MediaTagCrossRef` + `TagEntity`（含 tagName 冗余） |
+| `mediaTagRefs` | `MediaTagCrossRef` + `TagEntity`（含 tagName 冗余；v1.19 新增 createdAtMillis 关联时间） |
 | `albumRules` | `AlbumRuleEntity` |
 | `mediaStats` | `ViewStatsEntity` |
 | `dailyBrowse` | `DailyBrowseEntity`（v1.14 新增，按天聚合段：recordKey/fileName/mediaType/dayStartMillis/viewCount/playCount/totalBrowseSeconds/updatedAtMillis） |

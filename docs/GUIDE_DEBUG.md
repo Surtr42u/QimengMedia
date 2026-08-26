@@ -64,6 +64,7 @@ AppLog.e(tag, msg, throwable?)  // ERROR，可选异常堆栈
 | `AuthorImport` | 作者 TXT 导入/重建/匹配日志（`importFromText`/`rebuild`/`rematch`/`findMatch(累计N)`）。`findMatch` 循环内采样，每 50 次调用记 1 条（含未命中），避免重建时日志刷屏 |
 | `Thumb` | 缩略图/视频帧处理（`ThumbnailLoader` 内 `loadRepresentativeFrame: good frame at 35% (Xms)` 代表帧探测——35% 偏移+黑白帧检测；读取失败/内存探测等） |
 | `ThumbCache` | 缩略图预生成进度（`pregenerate: total=N`/`progress N/M`/`done`，以及读写缩略图缓存失败） |
+| `TagSheet` | 详情页标签管理链路（`open`/`render: 流更新`（v1.19 起 Flow 发射后增量同步 chip 的数量与耗时）/`addTag`/`removeTag`——用于定位标签增删卡顿，见 GUIDE_UI.md 详情页标签管理） |
 
 #### 添加日志的原则
 

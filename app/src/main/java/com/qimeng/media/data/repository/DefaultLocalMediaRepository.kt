@@ -70,6 +70,7 @@ class DefaultLocalMediaRepository(
         database.dailyBrowseDao().observeSince(0L, Int.MAX_VALUE)
 
     override fun observeAllTags(): Flow<List<TagEntity>> = database.tagDao().observeTags()
+    override fun observeAllTagsNewestFirst(): Flow<List<TagEntity>> = database.tagDao().observeTagsNewestFirst()
 
     override fun observeAllMediaTagNames(): Flow<List<MediaTagName>> =
         database.tagDao().observeAllMediaTagNames()
@@ -535,6 +536,9 @@ class DefaultLocalMediaRepository(
 
     override fun observeTagEntitiesForMedia(recordKey: String): Flow<List<TagEntity>> =
         database.tagDao().observeTagEntitiesForMedia(recordKey)
+
+    override fun observeTagEntitiesForMediaNewestFirst(recordKey: String): Flow<List<TagEntity>> =
+        database.tagDao().observeTagEntitiesForMediaNewestFirst(recordKey)
 
     // 时间轴标签
     override fun observeTimelineTags(recordKey: String): Flow<List<TimelineTagEntity>> =

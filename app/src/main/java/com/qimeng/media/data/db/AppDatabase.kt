@@ -45,7 +45,7 @@ import com.qimeng.media.data.db.entity.ViewStatsEntity
         CosWorkEntity::class,
         DailyBrowseEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -128,13 +128,24 @@ abstract class AppDatabase : RoomDatabase() {
             it.execSQL("CREATE INDEX IF NOT EXISTS index_media_files_isCosFile ON media_files(isCosFile)")
         }
 
+        // v1.19：media_tag_cross_refs 增加关联时间列（详情页标签弹窗按"最近添加的标签置顶"排序）。
+        // 旧关联没有真实关联时间，按标签创建时间回填（近似：创建早的关联调用早），
+        // 新写入的关联使用当前时间——升级后历史顺序保持稳定且新添加的始终排最前。
+        private val MIGRATION_7_8 = androidx.room.migration.Migration(7, 8) { db ->
+            db.execSQL("ALTER TABLE media_tag_cross_refs ADD COLUMN createdAtMillis INTEGER NOT NULL DEFAULT 0")
+            db.execSQL(
+                "UPDATE media_tag_cross_refs SET createdAtMillis = " +
+                    "(SELECT createdAtMillis FROM tags WHERE tags.tagId = media_tag_cross_refs.tagId)"
+            )
+        }
+
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .build().also { instance = it }
         }
     }
