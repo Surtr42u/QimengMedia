@@ -10,6 +10,27 @@
 - 模型名使用执行时的真实命名（品牌-版本），不写模糊描述（如"某个 AI"）。
 - 2026-06 及更早的历史条目不补录 AI 身份；2026-08-08 当天条目已于 2026-08-09 补录完毕。
 
+## 硬编码清理与扩展名映射统一（v1.20，2026-08-29）
+
+执行 AI：GLM-5.3-Flash
+
+全库硬编码排查（Kotlin 字符串/数字、Kotlin 颜色、XML 资源三路扫描）后按方案基线清理真问题；页面级中文文案（2026-06-20 既有 Lint HardcodedText 豁免决策）、播放器固定色、图表图例色、路径/URI 字面量属「有意设计」保持现状。
+
+| 类别 | 改动 |
+|---|---|
+| 布局颜色入主题 | 6 个布局 26 处 `@color/qm_*` → `?attr/qmColor*`（text_secondary×24、text_primary×1、bg×1），消除对「页面禁止硬编码 `@color/qm_*`」禁令的违规 |
+| 缩略图占位符统一 | 新增 `drawable/qm_placeholder_bg.xml`（shape 引用 `?attr/qmColorChipBg`，明暗取值与原 qm_placeholder #F0F0F2/#2E2E2E 逐字节一致），`MediaThumbnailAdapter` 8 处 Coil placeholder/error 改用之；删除 values/values-night 两处 `qm_placeholder` 颜色定义（无残留引用） |
+| 扩展名单一真相源 | `MediaType` 新增扩展名集合与 `mediaTypeForExtension()`（逻辑自 `ScanUtils` 迁入，ScanUtils 改委托、调用方零改动）；`AuthorImportUseCase` 媒体集合改引 MediaType，TXT 行识别容错集拆为 `MEDIA_NON_INDEXED_FILE_EXTENSIONS`（wmv/bmp/svg/tiff/tif）+ 文档类（txt/doc/pdf）；`MediaDetailFragment`/`MediaThumbnailAdapter` 散落 `equals("gif")/("png")` 改集合判断 |
+| 浏览统计分类修复 | `DefaultLocalMediaRepository` 浏览兜底分类改走 MediaType 映射：mkv/avi/flv/webm 不再误判为 image（原仅认 mp4/mov）；无点文件名经 `MediaType.extensionOf`（显式空串默认）保持原兜底语义 |
+| 共享组件文案参数化 | `LineChartView` 空态文案/气泡单位改构造参数 `emptyText`/`valueSuffix`（默认值不变，调用方零改动）；`GroupedMediaAdapter` 量词改 `countSuffix` 参数（HeaderHolder 透传）；默认渲染与改前逐字节一致 |
+| 魔法数字收拢 | `BackupManager` `pruneToLimit(500)` → `LocalMediaRepository.HISTORY_LIMIT`；`SpngDecoder` 256MB → `LargeImageDecoder.MAX_DECODE_BYTES`（去 private）；`AuthorListFragment` 七天毫秒 → `StatsFormatHelper.WEEK_MILLIS`（去 private）；`MainActivity` 两处 `delay(3000)` → `SCAN_START_DELAY_MILLIS` |
+| 重复文案常量化 | `DataBackupFragment` 3 对、`DataManagementFragment` 3 对同文件逐字重复 Toast 文案收为 private const（插值改 `.format()` 模板，文案逐字节一致） |
+| 文档 | `GUIDE_THEME`（颜色清理与占位符选型依据）、`GUIDE_DATA`（MediaType 真相源）、`GUIDE_SCAN`（委托说明）、`GUIDE_AUTHOR`（扩展名判定口径）、`GUIDE_UI`（组件参数化合约）、`GUIDE_CODE_MAINTENANCE`（跨文件共享常量表） |
+
+**审查**：reviewer 对抗审查抓出 2 处返工并已修复——`hasExt` 集合误收窄（wmv/bmp/svg/tiff/tif 恢复，22 个扩展名新旧布尔对照逐项一致）；兜底 `substringAfterLast('.')` 丢空串默认参数（无点文件名会误判，改用 `MediaType.extensionOf`）。
+
+**验证**：`gradlew assembleDebug testDebugUnitTest` 通过（返工后重跑）；`gradlew --stop` 已执行。
+
 ## 详情页标签管理多行显示与增删卡顿修复（v1.19，2026-08-26）
 
 执行 AI：deepseek-v4-flash

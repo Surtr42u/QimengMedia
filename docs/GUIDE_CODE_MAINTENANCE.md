@@ -304,7 +304,7 @@
 | `StatsDetailFragment` | `ui/stats/StatsDetailFragment.kt` | 统计详情页（点击卡片进入全新界面，统计摘要+数据洞察+趋势图表+Top 20 排行榜/分布对比，四种模式，常看文件模式支持热度/时长排序切换，标签条目可跳搜索页） | DataStatsFragment |
 | `PressAnimation` | `ui/widget/PressAnimation.kt` | 按钮按下反馈动画（View.addPressAnimation() 扩展函数，缩放 0.92 + 100ms AccelerateDecelerateInterpolator） | MediaDetailFragment, HomeFragment |
 | `GpuInfo` | `core/GpuInfo.kt` | GPU 纹理上限探测（EGL14 创建临时 context 查 `GL_MAX_TEXTURE_SIZE`，懒加载+@Volatile 缓存，探测失败回退 4096） | QimengApplication（ImageLoader maxBitmapSize 配置，放开超大图解码原图）, ZoomImageView（仅诊断日志显示 gpuMax；渲染层判断改用 `HARDWARE_RENDER_SAFE_SIZE=4096` 常量，不再用 maxTextureSize——见 GUIDE_UI.md「智能分层渲染」阈值根因） |
-| `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶 + v1.14 按天浏览聚合计算 cutoffForRange/groupDailyByDay/Week/ByType/aggregateDailyByType/BySource，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment |
+| `StatsFormatHelper` | `ui/stats/StatsFormatHelper.kt` | 数据统计页共享格式化与聚合（formatNumber 大数压缩/formatSize 字节单位/groupByDay 按天分桶/groupByWeek 按周分桶 + v1.14 按天浏览聚合计算 cutoffForRange/groupDailyByDay/Week/ByType/aggregateDailyByType/BySource，纯计算无 Context 依赖，统一 Locale.US 数字格式化） | DataStatsFragment, StatsDetailFragment, AuthorListFragment（仅 WEEK_MILLIS 常量） |
 | `ScanSourceLocks` | `core/ScanSourceLocks.kt` | 按 sourceUri 的共享扫描互斥（ConcurrentHashMap<String, Mutex>，withSourceLock 包裹"读 existingKeys→upsert→删 stale"库临界区；v1.16 审查新增，消除手动/刷新/观察者/自动刷新四方并发互删） | ScanUseCase（六入口）, MediaStoreObserver |
 
 ### 共享胶囊筛选体系
@@ -371,6 +371,18 @@ private fun mergeGroups(regular: Map<String, List<MediaFileEntity>>, cos: Map<St
 - 禁止为共享组件引入 Fragment/Activity 依赖（应通过参数传递）
 - 禁止共享组件直接操作 ViewModel（应通过回调）
 - 禁止在共享组件中硬编码字符串（应通过参数传入）
+
+### 跨文件共享常量
+
+语义同源的魔法数字必须在唯一定义处收敛为 `const val`，跨文件直接引用，禁止重复字面量（重复字面量会导致改一处漏一处的语义漂移）：
+
+| 常量 | 定义处 | 引用方 | 语义 |
+|------|------|------|------|
+| `LocalMediaRepository.HISTORY_LIMIT` | `data/repository/LocalMediaRepository.kt` | LocalMediaRepository, BackupManager | 导入后浏览历史上限（500） |
+| `LargeImageDecoder.MAX_DECODE_BYTES` | `core/LargeImageDecoder.kt` | LargeImageDecoder, SpngDecoder | 大图解码像素预算上限（256MB） |
+| `StatsFormatHelper.WEEK_MILLIS` | `ui/stats/StatsFormatHelper.kt` | StatsFormatHelper, AuthorListFragment | 7 天毫秒数 |
+
+同文件逐字重复的 Toast/对话框文案收拢为所在文件 companion object 内 `private const val`（如 DataBackupFragment、DataManagementFragment 的恢复/扫描提示文案）。
 
 ## Fragment/类规模弹性规范
 
@@ -470,4 +482,4 @@ class XxxFragment : Fragment() {
 - 重构后必须更新对应指南文档
 - 禁止在重构中夹带功能修改
 
-> 最后更新：2026-08-10（v1.15 巡检修复后同步备案行数）
+> 最后更新：2026-08-29（跨文件魔法数字收拢为共享常量，新增「跨文件共享常量」表）

@@ -16,5 +16,4 @@
     <!-- 胶囊和分割线浅灰 -->
     <color name="qm_chip_bg">#F0F0F2</color>
     <color name="qm_divider">#ECECEE</color>
-    <color name="qm_placeholder">#F0F0F2</color>
 </resources>

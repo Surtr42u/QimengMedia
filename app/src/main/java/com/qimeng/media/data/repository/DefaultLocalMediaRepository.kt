@@ -20,6 +20,7 @@ import com.qimeng.media.data.db.entity.TimelineTagEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.data.db.model.MediaTagName
+import com.qimeng.media.data.model.MediaType
 import kotlinx.coroutines.flow.Flow
 import java.util.Calendar
 
@@ -503,11 +504,12 @@ class DefaultLocalMediaRepository(
                 )
             )
 
-            // 按天聚合同步累计（mediaType 从 media_files 查，聚合行缺失时补建）
+            // 按天聚合同步累计（mediaType 从 media_files 查，聚合行缺失时按扩展名映射补建，
+            // 未知扩展名兜底 IMAGE，避免 mkv/avi/flv/webm 等被误判为 image）
             val mediaFile = mediaFileDao.getByRecordKey(recordKey)
-            val mediaType = mediaFile?.mediaType ?: existing.fileName.substringAfterLast('.', "").let { ext ->
-                if (ext.equals("gif", ignoreCase = true)) "animated_image" else if (ext.equals("mp4", ignoreCase = true) || ext.equals("mov", ignoreCase = true)) "video" else "image"
-            }
+            val mediaType = mediaFile?.mediaType
+                ?: MediaType.mediaTypeForExtension(MediaType.extensionOf(existing.fileName))
+                ?: MediaType.IMAGE
             recordDailyBrowse(recordKey, existing.fileName, mediaType, now) { dayKey, dayStart ->
                 val updated = database.dailyBrowseDao().addBrowseSeconds(dayKey, seconds, now)
                 if (updated == 0) {

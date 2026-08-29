@@ -4,7 +4,6 @@ import com.qimeng.media.core.RecordKeyFactory
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
 import java.security.MessageDigest
-import java.util.Locale
 
 /**
  * 扫描器共享工具方法。
@@ -16,13 +15,9 @@ object ScanUtils {
     /**
      * 根据文件扩展名判断媒体类型。
      * GIF 在 MediaStore.Images 中查询但被识别为 ANIMATED_IMAGE。
+     * 映射真相源为 [MediaType.mediaTypeForExtension]，保持原签名委托以兼容扫描包调用方。
      */
-    fun mediaTypeForExtension(extension: String): String? = when (extension.lowercase(Locale.ROOT)) {
-        "jpg", "jpeg", "png", "webp" -> MediaType.IMAGE
-        "gif" -> MediaType.ANIMATED_IMAGE
-        "mp4", "mkv", "avi", "mov", "flv", "webm" -> MediaType.VIDEO
-        else -> null
-    }
+    fun mediaTypeForExtension(extension: String): String? = MediaType.mediaTypeForExtension(extension)
 
     /**
      * SHA-256 前8字符短哈希，用于路径去重和 recordKey 高级区分。

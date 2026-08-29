@@ -75,7 +75,7 @@ object SpngDecoder {
 
             // 防止 OOM：估算内存占用，超过 256MB 拒绝解码
             val estimatedBytes = width.toLong() * height * 4
-            if (estimatedBytes > 256L * 1024 * 1024) {
+            if (estimatedBytes > LargeImageDecoder.MAX_DECODE_BYTES) {
                 AppLog.w(TAG, "PNG 过大 (${estimatedBytes / 1024 / 1024}MB)，回退到 BitmapFactory")
                 return null
             }

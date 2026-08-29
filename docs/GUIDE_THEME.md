@@ -115,6 +115,12 @@ setTheme(R.style.Theme_绮梦影库)
 context.isNightMode()
 ```
 
+## 布局颜色与缩略图占位符（2026-08-29 清理）
+
+- **布局颜色走主题属性**：`fragment_favorite` / `fragment_browse_history` / `fragment_album_detail` / `fragment_author_list` / `fragment_all_files` / `fragment_author_files` 六个布局中 26 处 `@color/qm_text_secondary` / `@color/qm_text_primary` / `@color/qm_bg` 已全部改为 `?attr/qmColorTextSecondary` / `?attr/qmColorTextPrimary` / `?attr/qmColorBg`，布局层不再引用 `@color/qm_*`（themes.xml 中 attr→color 映射定义除外）。
+- **缩略图占位符改 drawable**：Coil `placeholder`/`error` 统一使用 `res/drawable/qm_placeholder_bg.xml`（shape + solid 引用 `?attr/qmColorChipBg`）。选型依据：`qm_chip_bg` 明暗取值（`#F0F0F2` / `#2E2E2E`）与原 `qm_placeholder` 颜色资源完全一致（`qm_surface_soft` 白天为 `#F2F2F4` 有差异），视觉零变化。minSdk 31，shape 内引用 `?attr` 无兼容问题。
+- **`qm_placeholder` 颜色资源已删除**（`values/colors.xml` 与 `values-night/colors.xml`），禁止再以 `R.color.qm_placeholder` 形式引用，占位符一律用 `R.drawable.qm_placeholder_bg`。
+
 ## 圆角规范（5 档统一）
 
 | 档位 | dp | 用途 |
@@ -149,4 +155,4 @@ context.isNightMode()
 - **明暗主题差异**：白天/夜间两套主题必须有明显差异，不只是换主色，整体观感要可区分。
 - **设计克制**：不做"白底列表 + 默认按钮"的普通工具 UI；禁止为了美观牺牲文件名、作者、统计等核心信息可读性。
 
-> 最后更新：2026-08-12
+> 最后更新：2026-08-29（布局 26 处硬编码颜色改走 ?attr；qm_placeholder 颜色资源删除，占位符改 qm_placeholder_bg drawable）

@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
             // v1.16 修复：原 Handler.postDelayed 持有 Activity，回调触发前退出会在已销毁
             // Activity 上触发扫描；lifecycleScope 随销毁自动取消（默认主线程，行为等价）
             lifecycleScope.launch {
-                delay(3000)
+                delay(SCAN_START_DELAY_MILLIS)
                 ViewModelProvider(this@MainActivity)[MediaLibraryViewModel::class.java]
                     .autoRefreshAllSources()
             }
@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity() {
             // v1.16 修复：同 permissionLauncher——lifecycleScope 延迟任务随 Activity 销毁自动取消，
             // 替代裸 Handler.postDelayed（销毁后仍执行导致在已销毁 Activity 上触发扫描）
             lifecycleScope.launch {
-                delay(3000)
+                delay(SCAN_START_DELAY_MILLIS)
                 ViewModelProvider(this@MainActivity)[MediaLibraryViewModel::class.java]
                     .autoRefreshAllSources()
             }
@@ -404,6 +404,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 启动/权限授予后延迟触发自动扫描，等待 UI 先稳定渲染 */
+        private const val SCAN_START_DELAY_MILLIS = 3_000L
+
         /** tab Fragment tag 前缀，配合 rebuildTabFragmentCache() 在 recreate() 后还原缓存 */
         private const val TAB_FRAGMENT_TAG_PREFIX = "tab_"
     }

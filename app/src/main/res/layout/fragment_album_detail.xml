@@ -33,7 +33,7 @@
             android:layout_marginStart="12dp"
             android:layout_weight="1"
             android:text="相册详情"
-            android:textColor="@color/qm_text_primary"
+            android:textColor="?attr/qmColorTextPrimary"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -79,7 +79,7 @@
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
                 android:text="角色"
-                android:textColor="@color/qm_text_secondary"
+                android:textColor="?attr/qmColorTextSecondary"
                 android:textSize="12sp" />
 
             <View
@@ -97,7 +97,7 @@
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
                 android:text="类型"
-                android:textColor="@color/qm_text_secondary"
+                android:textColor="?attr/qmColorTextSecondary"
                 android:textSize="12sp" />
         </LinearLayout>
     </HorizontalScrollView>
@@ -109,7 +109,7 @@
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         android:paddingTop="4dp"
-        android:textColor="@color/qm_text_secondary"
+        android:textColor="?attr/qmColorTextSecondary"
         android:textSize="13sp" />
 
     <FrameLayout
@@ -155,7 +155,7 @@
         android:layout_weight="1"
         android:gravity="center"
         android:text="该出处下没有匹配的文件"
-        android:textColor="@color/qm_text_secondary"
+        android:textColor="?attr/qmColorTextSecondary"
         android:textSize="14sp"
         android:visibility="gone" />
 

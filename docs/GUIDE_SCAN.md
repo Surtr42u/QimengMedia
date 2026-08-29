@@ -9,7 +9,7 @@
 - `MediaStoreScanner`：基于 MediaStore ContentResolver 查询系统媒体数据库，毫秒级返回结果。常规扫描和 COS 扫描共用。
 - `MediaStoreObserver`：基于 ContentObserver 监听 MediaStore 变化，自动增量更新已注册的常规扫描目录。5 秒防抖合并变更通知。**只监听常规目录，不监听 COS 目录。**
 - `SafMediaScanner`：基于 SAF `DocumentFile` 递归扫描用户授权目录。MediaStore 查不到时的回退方案。单个子目录访问失败（权限被拒/IO 异常）时跳过该目录继续扫描，不中断整个扫描流程（v1.15 由仅捕获 SecurityException 扩展为捕获全部异常并记日志）。
-- `ScanUtils`：扫描器共享工具方法（`mediaTypeForExtension`、`shortHash`、`buildEntities`），MediaStoreScanner 和 SafMediaScanner 共用，消除重复代码。
+- `ScanUtils`：扫描器共享工具方法（`mediaTypeForExtension`、`shortHash`、`buildEntities`），MediaStoreScanner 和 SafMediaScanner 共用，消除重复代码。其中 `mediaTypeForExtension` 已改为委托 `data/model/MediaType.kt`（扩展名映射唯一真相源），保持原签名，扫描包调用方零改动。
 - `DataManagementFragment`：通过 `OpenDocumentTree` 获取目录授权并只持久化读权限；常规目录入口统一放在"数据管理页/常规目录"。
 - `MediaLibraryViewModel`：触发扫描、读取既有 `ScanSourceEntity`，统一调度双引擎。
 
@@ -238,7 +238,7 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 
 视频：`mp4`、`mkv`、`avi`、`mov`、`flv`、`webm`。
 
-**类型判断**：`queryMedia()` 中根据文件扩展名判断实际类型（`ScanUtils.mediaTypeForExtension()`），而非使用传入的 mediaType 参数。GIF 在 MediaStore.Images 中查询但被正确识别为 `ANIMATED_IMAGE`。
+**类型判断**：`queryMedia()` 中根据文件扩展名判断实际类型（`ScanUtils.mediaTypeForExtension()`），而非使用传入的 mediaType 参数。GIF 在 MediaStore.Images 中查询但被正确识别为 `ANIMATED_IMAGE`。映射集合与归一化逻辑的真相源在 `data/model/MediaType.kt`（`IMAGE_EXTENSIONS`/`ANIMATED_IMAGE_EXTENSIONS`/`VIDEO_EXTENSIONS`），`ScanUtils` 仅保持原签名委托，扩展名口径变更只改 MediaType。
 
 ## 扫描字段
 
@@ -298,4 +298,4 @@ Android 16 上，非标准媒体目录（不在 Pictures/DCIM/Movies 等系统�
 - Uri 失效时提示重新授权
 - Android 16+ 仍优先 SAF，不依赖 READ_EXTERNAL_STORAGE 旧逻辑（见 GUIDE_ANDROID_COMPAT.md）
 
-> 最后更新：2026-08-10
+> 最后更新：2026-08-29（ScanUtils.mediaTypeForExtension 改为委托 MediaType 真相源，签名与调用方不变）

@@ -234,5 +234,5 @@ object StatsFormatHelper {
         return cal.timeInMillis
     }
 
-    private const val WEEK_MILLIS = 7L * 24 * 60 * 60 * 1000
+    const val WEEK_MILLIS = 7L * 24 * 60 * 60 * 1000
 }

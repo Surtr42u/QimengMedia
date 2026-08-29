@@ -20,6 +20,7 @@ import com.qimeng.media.data.db.entity.TimelineTagEntity
 import com.qimeng.media.data.db.entity.ViewHistoryEntity
 import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.data.prefs.AppPrefsManager
+import com.qimeng.media.data.repository.LocalMediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
@@ -183,7 +184,7 @@ class BackupManager(private val context: Context) {
             history.forEach { database.viewHistoryDao().upsert(it) }
             // 导入条目可能超过本地 500 条上限（导出上限 HISTORY_EXPORT_LIMIT=1000 维持不变），
             // 立即裁剪对齐数据规则
-            database.viewHistoryDao().pruneToLimit(500)
+            database.viewHistoryDao().pruneToLimit(LocalMediaRepository.HISTORY_LIMIT)
             if (history.isNotEmpty()) count++
 
             // 9. scanSources

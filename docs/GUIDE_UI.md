@@ -29,7 +29,7 @@
 | `app/src/main/java/com/qimeng/media/ui/favorite/FavoriteFragment.kt` | 收藏页（分区/作品/角色/类型筛选+药丸+COS芯片） |
 | `app/src/main/res/layout/fragment_favorite.xml` | 收藏页布局 |
 | `app/src/main/java/com/qimeng/media/ui/adapter/MediaThumbnailAdapter.kt` | 缩略图列表适配器（Coil + DiffUtil） |
-| `app/src/main/java/com/qimeng/media/ui/adapter/GroupedMediaAdapter.kt` | 日期分组适配器（复用 MediaThumbnailAdapter.Holder） |
+| `app/src/main/java/com/qimeng/media/ui/adapter/GroupedMediaAdapter.kt` | 日期分组适配器（复用 MediaThumbnailAdapter.Holder；分组头计数后缀经构造参数 `countSuffix` 传入，默认"项"） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaBrowserLogic.kt` | 推荐/排行/筛选/日期分组逻辑/`SearchContext`（出处/角色/作者/作品名搜索匹配） |
 | `app/src/main/java/com/qimeng/media/ui/browser/MediaFilterSheet.kt` | 底部筛选面板（万能筛选，`FilterConfig` 控制可见筛选项） |
 | `app/src/main/java/com/qimeng/media/ui/author/AuthorListFragment.kt` | 作者列表（全部/常规/COS胶囊筛选+按名搜索+排序） |
@@ -210,7 +210,7 @@
   - 第一行：总浏览次数 / 总播放次数 / 总浏览时长（窗口内聚合）
   - 第二行：总文件数 / 总占用空间 / 平均浏览次数（窗口内总浏览 ÷ 窗口内有浏览的文件数，v1.14 由「平均浏览深度」改名）
   - **快速切换防覆盖（v1.15）**：`renderOverviewExtra` 增加序号防重（`renderOverviewSeq`，回写 UI 前校验仍是最新），与 `renderTrend` 的 `renderTrendSeq` 模式一致，快速切换时间范围时旧协程晚完成不再覆盖新结果
-- 浏览趋势折线图卡片（`LineChartView`，**v1.15 起基于按天浏览聚合 daily_browse** 而非浏览历史明细——history 同文件只保留最新一条且上限 500，多次浏览只算 1 次导致趋势图数值偏小、与详情页/数字卡对不上；改后主页面与详情页分类型趋势同源同口径，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**；**点击卡片进入分类型趋势详情**，右上角"分类型趋势 ›"）。**v1.16「全部」范围动态分桶**：7天/30天仍按天分桶；「全部」改按数据实际跨度动态选粒度——≤12 周按周（标签 MM/dd）、12 周~24 月按月（同年标签 MM月/跨年 yy/MM）、更长按季（yy/Qn），从最早数据铺到当前周期全量不丢弃，各桶之和 = 数字卡「全部」总量（原实现固定只画最近 12 周且周标签无"周"字样，数据集中在近期时视觉上"全堆一根柱"）；空数据走图表"暂无趋势数据"空态
+- 浏览趋势折线图卡片（`LineChartView`，**v1.15 起基于按天浏览聚合 daily_browse** 而非浏览历史明细——history 同文件只保留最新一条且上限 500，多次浏览只算 1 次导致趋势图数值偏小、与详情页/数字卡对不上；改后主页面与详情页分类型趋势同源同口径，渐变面积填充 + 折线 + 数据点 + **点击数据点高亮并显示数值气泡**；**点击卡片进入分类型趋势详情**，右上角"分类型趋势 ›"）。**v1.16「全部」范围动态分桶**：7天/30天仍按天分桶；「全部」改按数据实际跨度动态选粒度——≤12 周按周（标签 MM/dd）、12 周~24 月按月（同年标签 MM月/跨年 yy/MM）、更长按季（yy/Qn），从最早数据铺到当前周期全量不丢弃，各桶之和 = 数字卡「全部」总量（原实现固定只画最近 12 周且周标签无"周"字样，数据集中在近期时视觉上"全堆一根柱"）；空数据走图表"暂无趋势数据"空态（文案为 `LineChartView` 构造参数 `emptyText` 的默认值，调用方可覆写）
 - 分布统计小入口卡片（纯文字「类型与来源的库存构成 / 查看详情 ›」，**点击进入原分布详情页**；v1.14 移除库存环形图，简化外形）
 - 常看文件卡片（文件名 + 浏览次数紧凑文本列表 Top 3，**点击进入常看详情**）
 - 常看作者与标签卡片（作者/标签按窗口浏览聚合混合 Top 3，**点击进入常看详情**；v1.15 修复"常看作者"完全失效——`cachedAuthorData` 从未被赋值，已补 `viewModel.authors` 收集）
@@ -241,7 +241,7 @@
 - 标签浏览聚合：`viewModel.allMediaTags`（MediaTagName，关联 recordKey 匹配窗口浏览）
 
 **自绘图表组件**（`ui/widget/`）：
-- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；**v1.15 触摸拦截修复**——`onTouchEvent` 改为 ACTION_DOWN 决策：命中数据点（48dp 阈值内）才消费事件保持点击高亮/气泡，未命中返回 false 放行外层 NestedScrollView/ScrollView 滚动，图表区域内不再无法滚动页面；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除
+- `LineChartView`：折线/面积趋势图，入场动画 + 网格线 + 稀疏 X 轴标签；**v1.14 支持多系列对比**（`setMultiSeries`：不同颜色折线叠加同一时间轴 + 顶部图例 + 点击气泡含系列名，多系列不画面积避免叠加杂乱）；**v1.15 触摸拦截修复**——`onTouchEvent` 改为 ACTION_DOWN 决策：命中数据点（48dp 阈值内）才消费事件保持点击高亮/气泡，未命中返回 false 放行外层 NestedScrollView/ScrollView 滚动，图表区域内不再无法滚动页面；原 `BarChartView`/`PieChartView`/`BrowseStatsChartView` 因删除库存环形图与柱状排行卡已无使用者，随 v1.14 移除；**文案参数化**（共享组件禁硬编码文案）：构造参数 `emptyText`（空态文案，默认"暂无趋势数据"）与 `valueSuffix`（数值气泡单位后缀，默认"次"）供调用方覆写，不传走默认值行为不变
 
 **排行榜组件**（`ui/stats/`）：
 - `RankListAdapter`：通用排行榜列表 Adapter，支持点击跳转，前三名高亮，副标题可选；v1.16 审查修复：areItemsTheSame 只比 id（title 并入内容比较，防同名误判）；submitList 覆写（单参+双参）对空列表自动显示"暂无数据"占位条目（不可点击），排行卡空数据不再只剩标题
@@ -472,7 +472,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-29（v2.1：标签 chip 统一为胶囊风格——新增 QimengTagChip style + color state-list，详情页标签弹窗/筛选面板标签区套用；文档体系删除 GUIDE_USAGE_MATRIX.md，触发定位职责并入 GUIDE_README 模块索引）
+> 最后更新：2026-08-29（v2.1：标签 chip 统一为胶囊风格——新增 QimengTagChip style + color state-list，详情页标签弹窗/筛选面板标签区套用；文档体系删除 GUIDE_USAGE_MATRIX.md，触发定位职责并入 GUIDE_README 模块索引；共享组件文案参数化——LineChartView 新增 emptyText/valueSuffix 构造参数、GroupedMediaAdapter 新增 countSuffix 构造参数，默认值保留现有文案，行为不变）
 
 ## 应用图标
 

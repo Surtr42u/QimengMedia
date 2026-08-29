@@ -25,7 +25,7 @@ import com.qimeng.media.resolveThemeColor
  * - 渐变面积填充 + 折线 + 数据点，专业报表风格
  * - 入场动画（折线从左到右展开，面积渐显）
  * - 点击数据点显示数值（通过回调通知 Fragment 显示 Tooltip）
- * - 空数据时显示"暂无数据"提示
+ * - 空数据时显示空态提示（文案 [emptyText]，默认"暂无趋势数据"）
  * - 使用主题色（qmColorPrimary）保持视觉一致
  *
  * v1.14 支持多系列对比：新增 [setMultiSeries]，多条不同颜色的线画在同一张图上
@@ -37,7 +37,11 @@ import com.qimeng.media.resolveThemeColor
 class LineChartView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
+    defStyleAttr: Int = 0,
+    /** 空态提示文案（默认"暂无趋势数据"，调用方可覆写） */
+    private val emptyText: String = "暂无趋势数据",
+    /** 数值气泡单位后缀（默认"次"，调用方可覆写） */
+    private val valueSuffix: String = "次"
 ) : View(context, attrs, defStyleAttr) {
 
     /** 一条趋势数据：X 轴标签 + Y 轴数值 */
@@ -194,7 +198,7 @@ class LineChartView @JvmOverloads constructor(
         pointFillPaint.color = bgColor
 
         if (points.isEmpty()) {
-            canvas.drawText("暂无趋势数据", w / 2f, h / 2f, emptyPaint)
+            canvas.drawText(emptyText, w / 2f, h / 2f, emptyPaint)
             return
         }
 
@@ -326,7 +330,7 @@ class LineChartView @JvmOverloads constructor(
         pointFillPaint.color = bgColor
 
         if (multiSeries.isEmpty()) {
-            canvas.drawText("暂无趋势数据", w / 2f, h / 2f, emptyPaint)
+            canvas.drawText(emptyText, w / 2f, h / 2f, emptyPaint)
             return
         }
 
@@ -477,9 +481,9 @@ class LineChartView @JvmOverloads constructor(
 
         // 数值气泡（多系列含系列名，如"视频  06/15  12次"）
         val labelText = if (entry.seriesLabel.isEmpty()) {
-            "${entry.point.label}  ${entry.point.value}次"
+            "${entry.point.label}  ${entry.point.value}$valueSuffix"
         } else {
-            "${entry.seriesLabel}  ${entry.point.label}  ${entry.point.value}次"
+            "${entry.seriesLabel}  ${entry.point.label}  ${entry.point.value}$valueSuffix"
         }
         val bubblePadH = 8f.dp(context)
         val bubblePadV = 5f.dp(context)

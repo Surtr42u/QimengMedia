@@ -5,6 +5,7 @@ import com.qimeng.media.data.db.dao.MediaFileDao
 import com.qimeng.media.data.db.entity.AuthorEntity
 import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.SettingEntity
+import com.qimeng.media.data.model.MediaType
 import com.qimeng.media.data.repository.LocalMediaRepository
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -60,8 +61,9 @@ class AuthorImportUseCase(
         if (normalized.isBlank()) return emptyList()
         val collapsed = normalized.replace("\\s+".toRegex(), "")
         val ext = normalized.substringAfterLast('.', "").lowercase()
-        val hasExt = ext in setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
-            "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff", "tif")
+        // 与原 16 项集合口径一致：MediaType 映射口径 + 扫描器不索引的媒体扩展名
+        // （txt/doc/pdf 不计入 hasExt，保持旧版"X.txt"不剥扩展名的行为）
+        val hasExt = MediaType.mediaTypeForExtension(ext) != null || ext in MEDIA_NON_INDEXED_FILE_EXTENSIONS
         val nameNoExt = if (hasExt) normalized.substringBeforeLast('.') else normalized
         val collapsedNoExt = if (hasExt) collapsed.substringBeforeLast('.') else collapsed
         // 序号括号模式：匹配尾部 (N) 或 (NN) 等
@@ -332,11 +334,19 @@ class AuthorImportUseCase(
     companion object {
         internal data class AuthorBlock(val authorNames: List<String>, val sources: List<String>, val works: List<String>)
 
+        /** 扫描器不索引的媒体扩展名（TXT 匹配时计入"带扩展名"，但无对应媒体类型映射） */
+        private val MEDIA_NON_INDEXED_FILE_EXTENSIONS = setOf("wmv", "bmp", "svg", "tiff", "tif")
+
+        /**
+         * 扫描器不索引、但 TXT 导入解析时需识别为文件行的扩展名（含文档类型与
+         * 未纳入扫描口径的媒体类型），避免对应文本行被误判为作者名。
+         */
+        private val NON_INDEXED_FILE_EXTENSIONS = MEDIA_NON_INDEXED_FILE_EXTENSIONS + setOf("txt", "doc", "pdf")
+
         /** 判断文本是否为文件名（带媒体/文档扩展名），用于排除误判为作者名的文件行 */
         private fun looksLikeFileName(text: String): Boolean {
             val ext = text.substringAfterLast('.', "").lowercase()
-            return ext in setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
-                "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff", "tif", "txt", "doc", "pdf")
+            return MediaType.mediaTypeForExtension(ext) != null || ext in NON_INDEXED_FILE_EXTENSIONS
         }
 
         /** findMatch 日志采样间隔：每 50 次调用记 1 条（含未命中），避免 TXT 导入重建时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志） */

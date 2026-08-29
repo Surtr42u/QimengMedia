@@ -16,5 +16,4 @@
     <!-- 夜间胶囊和分割线深灰 -->
     <color name="qm_chip_bg">#2E2E2E</color>
     <color name="qm_divider">#383838</color>
-    <color name="qm_placeholder">#2E2E2E</color>
 </resources>

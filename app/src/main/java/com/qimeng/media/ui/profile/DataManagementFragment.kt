@@ -138,11 +138,11 @@ class DataManagementFragment : Fragment() {
                 container.addView(SheetUiHelper.sheetSourceRow(ctx, source.displayName, source.uriString,
                     onDelete = {
                         viewModel.deleteScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "已移除：${source.displayName}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_SOURCE_REMOVED_FMT.format(source.displayName), Toast.LENGTH_SHORT).show()
                     },
                     onRefresh = {
                         viewModel.refreshScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "正在增量刷新：${source.displayName}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_SOURCE_REFRESHING_FMT.format(source.displayName), Toast.LENGTH_SHORT).show()
                     }
                 ))
             }
@@ -150,7 +150,7 @@ class DataManagementFragment : Fragment() {
 
         container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择文件夹") {
             if (viewModel.scanStatus.value is ScanStatus.Running) {
-                Toast.makeText(requireContext(), "正在扫描中，请稍候", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), MSG_SCAN_RUNNING, Toast.LENGTH_SHORT).show()
                 return@sheetActionButton
             }
             try {
@@ -176,11 +176,11 @@ class DataManagementFragment : Fragment() {
                 container.addView(SheetUiHelper.sheetSourceRow(ctx, source.displayName, source.uriString,
                     onDelete = {
                         viewModel.deleteCosScanSource(source.uriString)
-                        Toast.makeText(requireContext(), "已移除：${source.displayName}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_SOURCE_REMOVED_FMT.format(source.displayName), Toast.LENGTH_SHORT).show()
                     },
                     onRefresh = {
                         viewModel.refreshCosSource(source.uriString)
-                        Toast.makeText(requireContext(), "正在增量刷新：${source.displayName}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_SOURCE_REFRESHING_FMT.format(source.displayName), Toast.LENGTH_SHORT).show()
                     }
                 ))
             }
@@ -188,7 +188,7 @@ class DataManagementFragment : Fragment() {
 
         container.addView(SheetUiHelper.sheetActionButton(ctx, "+ 选择COS文件夹") {
             if (viewModel.scanStatus.value is ScanStatus.Running) {
-                Toast.makeText(requireContext(), "正在扫描中，请稍候", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), MSG_SCAN_RUNNING, Toast.LENGTH_SHORT).show()
                 return@sheetActionButton
             }
             cosDirectoryLauncher.launch(null)
@@ -280,6 +280,10 @@ class DataManagementFragment : Fragment() {
     }
 
     companion object {
+        private const val MSG_SOURCE_REMOVED_FMT = "已移除：%s"
+        private const val MSG_SOURCE_REFRESHING_FMT = "正在增量刷新：%s"
+        private const val MSG_SCAN_RUNNING = "正在扫描中，请稍候"
+
         fun newInstance(): DataManagementFragment = DataManagementFragment()
     }
 }

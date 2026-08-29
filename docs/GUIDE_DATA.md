@@ -307,6 +307,24 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - `removeImportedTxtUri` 在删除 TXT 导入时清理对应的 URI 数据。
 - `deleteSetting(key)` 用于按 key 删除 settings 表中的单条记录，支持 blocks 和 URI 数据清理。
 
+## 媒体类型映射真相源（MediaType）
+
+扩展名→媒体类型映射的唯一真相源是 `data/model/MediaType.kt`（v1.19 后自 `ScanUtils` 迁入）：
+
+| 成员 | 说明 |
+|---|---|
+| `IMAGE_EXTENSIONS` | jpg/jpeg/png/webp（扫描索引口径） |
+| `ANIMATED_IMAGE_EXTENSIONS` | gif（识别为 `ANIMATED_IMAGE` 而非 `IMAGE`） |
+| `VIDEO_EXTENSIONS` | mp4/mkv/avi/mov/flv/webm（mkv/avi/flv/webm 与 mp4/mov 同为 `VIDEO`） |
+| `PNG_EXTENSIONS` | png 单列（详情页走 SpngDecoder 专用解码路径） |
+| `mediaTypeForExtension(extension)` | 扩展名小写归一化后返回媒体类型常量，未知扩展名返回 null |
+| `extensionOf(fileName)` | 从文件名提取小写扩展名，供散落扩展名判断统一复用 |
+
+- `ScanUtils.mediaTypeForExtension()` 保持原签名委托 `MediaType`，scan 包调用方零改动（详见 `GUIDE_SCAN.md`）。
+- `DefaultLocalMediaRepository.updateBrowseSeconds` 的 daily_browse 兜底分支改为 `MediaType.mediaTypeForExtension(ext) ?: MediaType.IMAGE`（`mediaFile?.mediaType` 优先逻辑不变），修复旧版兜底只认 mp4/mov 导致 mkv/avi/flv/webm 聚合行误判 `image` 的缺陷。
+- 散落扩展名判断（`MediaThumbnailAdapter`/`MediaDetailFragment` 的 gif/png 判断、`AuthorImportUseCase` TXT 匹配）统一引用 MediaType 集合/函数，禁止新增裸扩展名字符串 equals。
+- `AuthorImportUseCase` 中扫描器不索引、仅用于 TXT 行识别容错的扩展名（wmv/bmp/svg/tiff/tif/txt/doc/pdf）保留为该文件本地常量 `NON_INDEXED_FILE_EXTENSIONS`，不属于媒体映射真相源。
+
 ## UseCase 层
 
 `MediaLibraryViewModel` 按职责拆分为 4 个 UseCase，文件位于 `app/src/main/java/com/qimeng/media/domain/`：
@@ -348,4 +366,4 @@ App 偏好使用独立 JSON 文件存储，与 Room 数据库分离，方便迁�
 - Repository 负责历史上限、统计规则、作者关联规则
 - 媒体列表查询避免一次加载无关大字段
 
-> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重、点赞/收藏写入即触发自动同步）
+> 最后更新：2026-08-29（扩展名→媒体类型映射真相源迁至 MediaType，修复 mkv/avi/flv/webm 聚合兜底误判 image）

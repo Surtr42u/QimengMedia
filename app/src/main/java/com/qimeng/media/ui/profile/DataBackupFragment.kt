@@ -176,13 +176,13 @@ class DataBackupFragment : Fragment() {
     /** 从已设置的备份目录导入恢复（空库恢复提示按钮） */
     private fun importFromCurrentBackup() {
         viewLifecycleOwner.lifecycleScope.launch {
-            Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), MSG_RESTORING, Toast.LENGTH_SHORT).show()
             viewModel.importFromBackupDirectory { count ->
                 if (count > 0) {
-                    Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), MSG_RESTORED_FMT.format(count), Toast.LENGTH_SHORT).show()
                     viewModel.clearRestoreSuggestion()
                 } else {
-                    Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), MSG_RESTORE_FAILED, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -212,12 +212,12 @@ class DataBackupFragment : Fragment() {
                 .setMessage(message)
                 .setPositiveButton("导入") { _, _ ->
                     viewLifecycleOwner.lifecycleScope.launch {
-                        Toast.makeText(requireContext(), "正在导入恢复...", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_RESTORING, Toast.LENGTH_SHORT).show()
                         viewModel.importFromDirectoryUri(uri) { count ->
                             if (count > 0) {
-                                Toast.makeText(requireContext(), "已恢复 $count 个数据文件", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), MSG_RESTORED_FMT.format(count), Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(requireContext(), "恢复失败或无可恢复数据", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), MSG_RESTORE_FAILED, Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -451,6 +451,10 @@ class DataBackupFragment : Fragment() {
     }
 
     companion object {
+        private const val MSG_RESTORING = "正在导入恢复..."
+        private const val MSG_RESTORED_FMT = "已恢复 %d 个数据文件"
+        private const val MSG_RESTORE_FAILED = "恢复失败或无可恢复数据"
+
         fun newInstance(): DataBackupFragment = DataBackupFragment()
     }
 }

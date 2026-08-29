@@ -51,7 +51,7 @@ object LargeImageDecoder {
      * 超预算的图（如 16384² 级）直接拒绝直解，由调用方回退 Coil 走受控解码，
      * 避免详情页原生堆 OOM 崩溃。
      */
-    private const val MAX_DECODE_BYTES = 256L * 1024 * 1024
+    const val MAX_DECODE_BYTES = 256L * 1024 * 1024
 
     /**
      * 解码当前显示的图片。

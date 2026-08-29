@@ -30,7 +30,6 @@ import com.qimeng.media.core.ThumbnailLoader
 import com.qimeng.media.data.db.entity.MediaFileEntity
 import com.qimeng.media.data.model.MediaType
 import java.io.File
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -100,7 +99,7 @@ class MediaThumbnailAdapter(
             // GIF 项复用时旧视频/图片解码 job 未被取消，继续在后台跑、decodeJob 引用残留。
             decodeJob?.cancel()
             val isVideo = item.mediaType == MediaType.VIDEO
-            val isGif = item.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
+            val isGif = MediaType.extensionOf(item.fileName) in MediaType.ANIMATED_IMAGE_EXTENSIONS
 
             durationBadge.isVisible = isVideo && item.durationMillis != null
             durationBadge.text = item.durationMillis?.let(::formatDuration).orEmpty()
@@ -111,8 +110,8 @@ class MediaThumbnailAdapter(
                 val uri = item.uriString.toUri()
                 image.load(uri) {
                     crossfade(false)
-                    placeholder(R.color.qm_placeholder)
-                    error(R.color.qm_placeholder)
+                    placeholder(R.drawable.qm_placeholder_bg)
+                    error(R.drawable.qm_placeholder_bg)
                     allowHardware(false)
                     memoryCacheKey(item.recordKey)
                     decoderFactory(AnimatedImageDecoder.Factory())
@@ -125,8 +124,8 @@ class MediaThumbnailAdapter(
             if (cacheFile.exists()) {
                 image.load(cacheFile) {
                     crossfade(false)
-                    placeholder(R.color.qm_placeholder)
-                    error(R.color.qm_placeholder)
+                    placeholder(R.drawable.qm_placeholder_bg)
+                    error(R.drawable.qm_placeholder_bg)
                     size(tw, th)
                     allowHardware(true)
                     memoryCacheKey(item.recordKey)
@@ -139,8 +138,8 @@ class MediaThumbnailAdapter(
             if (isVideo) {
                 image.load(uri) {
                     crossfade(false)
-                    placeholder(R.color.qm_placeholder)
-                    error(R.color.qm_placeholder)
+                    placeholder(R.drawable.qm_placeholder_bg)
+                    error(R.drawable.qm_placeholder_bg)
                     size(tw, th)
                     // VideoFrameDecoder 不支持硬件 Bitmap，必须 false
                     allowHardware(false)
@@ -157,8 +156,8 @@ class MediaThumbnailAdapter(
             }
             image.load(uri) {
                 crossfade(false)
-                placeholder(R.color.qm_placeholder)
-                error(R.color.qm_placeholder)
+                placeholder(R.drawable.qm_placeholder_bg)
+                error(R.drawable.qm_placeholder_bg)
                 size(tw, th)
                 allowHardware(true)
                 memoryCacheKey(item.recordKey)

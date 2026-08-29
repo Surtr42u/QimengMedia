@@ -440,8 +440,9 @@ class MediaDetailFragment : Fragment() {
         binding.detailImageView.isVisible = true
         // 保留旧画面作为 placeholder，避免切换瞬间闪白
         binding.detailImageView.setBackgroundColor(0)
-        val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
-        val isPng = media.fileName.substringAfterLast('.', "").equals("png", ignoreCase = true)
+        val ext = MediaType.extensionOf(media.fileName)
+        val isGif = ext in MediaType.ANIMATED_IMAGE_EXTENSIONS
+        val isPng = ext in MediaType.PNG_EXTENSIONS
 
         // 主线程同步检查 Coil 内存缓存：命中则直接 Coil load，跳过 LargeImageDecoder 的 IO 线程切换
         // （40MB+ 超大图场景下，线程切换开销 13-34ms，同步命中可零延迟显示）
@@ -724,7 +725,7 @@ class MediaDetailFragment : Fragment() {
                 if (!memoryComfortable || hugeEnqueued >= MAX_PRELOAD_HUGE) continue
                 hugeEnqueued++
             }
-            val isGif = media.fileName.substringAfterLast('.', "").equals("gif", ignoreCase = true)
+            val isGif = MediaType.extensionOf(media.fileName) in MediaType.ANIMATED_IMAGE_EXTENSIONS
             val request = LargeImageDecoder.buildPreloadRequest(
                 requireContext(),
                 media.uriString.toUri(),

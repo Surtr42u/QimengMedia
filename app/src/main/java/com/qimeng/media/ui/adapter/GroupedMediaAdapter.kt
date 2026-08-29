@@ -20,7 +20,9 @@ import kotlinx.coroutines.withContext
 
 class GroupedMediaAdapter(
     private val onItemClick: (MediaFileEntity, List<MediaFileEntity>) -> Unit,
-    private val lifecycleScope: LifecycleCoroutineScope? = null
+    private val lifecycleScope: LifecycleCoroutineScope? = null,
+    /** 分组头计数后缀（默认"项"，调用方可覆写） */
+    private val countSuffix: String = "项"
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private val differ = AsyncListDiffer(this, RowDiffCallback())
     private var source: List<MediaFileEntity> = emptyList()
@@ -184,7 +186,7 @@ class GroupedMediaAdapter(
                 textSize = 16f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 setPadding(4.dp(context), 18.dp(context), 4.dp(context), 10.dp(context))
-            })
+            }, countSuffix)
         } else {
             val view = LayoutInflater.from(parent.context).inflate(R.layout.item_media_thumbnail, parent, false)
             MediaThumbnailAdapter.Holder(view, lifecycleScope)
@@ -210,9 +212,12 @@ class GroupedMediaAdapter(
         }
     }
 
-    private class HeaderHolder(private val textView: TextView) : RecyclerView.ViewHolder(textView) {
+    private class HeaderHolder(
+        private val textView: TextView,
+        private val countSuffix: String
+    ) : RecyclerView.ViewHolder(textView) {
         fun bind(header: Row.Header) {
-            textView.text = "${header.label}  ${header.count} 项"
+            textView.text = "${header.label}  ${header.count} $countSuffix"
         }
     }
 

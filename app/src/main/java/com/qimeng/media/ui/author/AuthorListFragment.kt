@@ -30,6 +30,7 @@ import com.qimeng.media.data.db.entity.AuthorMediaCrossRef
 import com.qimeng.media.data.db.entity.ViewStatsEntity
 import com.qimeng.media.databinding.FragmentAuthorListBinding
 import com.qimeng.media.ui.library.MediaLibraryViewModel
+import com.qimeng.media.ui.stats.StatsFormatHelper
 import com.qimeng.media.ui.widget.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -230,7 +231,7 @@ class AuthorListFragment : Fragment() {
 
     /** 计算每个作者7天内的浏览次数（viewCount + playCount 之和） */
     private fun computeAuthorRecentViewCounts(): Map<String, Int> {
-        val sevenDaysAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+        val sevenDaysAgo = System.currentTimeMillis() - StatsFormatHelper.WEEK_MILLIS
         val statsByKey = cachedStats.associateBy { it.recordKey }
         val result = mutableMapOf<String, Int>()
         for (ref in cachedAuthorMedia) {
