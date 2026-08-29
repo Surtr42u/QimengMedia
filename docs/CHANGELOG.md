@@ -29,7 +29,9 @@
 
 **审查**：reviewer 对抗审查抓出 2 处返工并已修复——`hasExt` 集合误收窄（wmv/bmp/svg/tiff/tif 恢复，22 个扩展名新旧布尔对照逐项一致）；兜底 `substringAfterLast('.')` 丢空串默认参数（无点文件名会误判，改用 `MediaType.extensionOf`）。
 
-**验证**：`gradlew assembleDebug testDebugUnitTest` 通过（返工后重跑）；`gradlew --stop` 已执行。
+**遗留清理（同日）**：`DataManagementFragment` TXT 文件删除 Toast 收拢至既有 `MSG_SOURCE_REMOVED_FMT`（格式串同源，此前为基线外遗留）；`findMatchingMediaLight` 自实例区迁入 companion object（纯函数无实例状态，参照同区 `parseAuthorBlocks` 的单测先例，类内调用点零改动）；补 `AuthorImportUseCaseTest.findMatchingMediaLight` 4 个用例锁定扩展名判定口径（wmv 等媒体非索引扩展名计入 hasExt 回归锁 / txt 文档扩展名视为无扩展名 / 有扩展名精确匹配含扩展名检查 / 无扩展名精确+序号括号双规则，该类现共 20 个，弥补审查指出的非索引扩展名测试盲区）；构建版本号同步 v1.20（versionCode 12，v1.16~v1.19 未递增）。
+
+**验证**：`gradlew assembleDebug testDebugUnitTest` 通过（返工与遗留清理后重跑）；`gradlew --stop` 已执行。
 
 ## 详情页标签管理多行显示与增删卡顿修复（v1.19，2026-08-26）
 

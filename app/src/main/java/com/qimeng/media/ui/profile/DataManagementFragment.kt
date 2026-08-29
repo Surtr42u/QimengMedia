@@ -208,7 +208,7 @@ class DataManagementFragment : Fragment() {
                 container.addView(SheetUiHelper.sheetSourceRow(ctx, fileName, fileName,
                     onDelete = {
                         viewModel.removeImportedTxtFile(fileName)
-                        Toast.makeText(requireContext(), "已移除：$fileName", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), MSG_SOURCE_REMOVED_FMT.format(fileName), Toast.LENGTH_SHORT).show()
                     },
                     onRefresh = {
                         // 直接刷新：从URI重新读取文件，失败则用缓存重新匹配

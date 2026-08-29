@@ -50,64 +50,6 @@ class AuthorImportUseCase(
         }
     }
 
-    /** 轻量版匹配：使用 NonCosKeyFileName 替代完整 MediaFileEntity
-     *  匹配规则（按优先级）：
-     *  1. 精确匹配：去空格+去扩展名后完整一致
-     *  2. 基础名+序号括号匹配：TXT 作品名是文件基础名，文件尾部仅有 (N) 序号括号差异
-     *     例如 TXT 写 "守望先锋  朱诺 6" 可匹配 "守望先锋  朱诺 6 (1).jpg"
-     *  不做前缀匹配：TXT 写 "崩坏 星穹铁道" 不会匹配 "崩坏 星穹铁道 卡芙卡 1.mp4" */
-    fun findMatchingMediaLight(workName: String, allMedia: List<MediaFileDao.NonCosKeyFileName>): List<MediaFileDao.NonCosKeyFileName> {
-        val normalized = workName.trim()
-        if (normalized.isBlank()) return emptyList()
-        val collapsed = normalized.replace("\\s+".toRegex(), "")
-        val ext = normalized.substringAfterLast('.', "").lowercase()
-        // 与原 16 项集合口径一致：MediaType 映射口径 + 扫描器不索引的媒体扩展名
-        // （txt/doc/pdf 不计入 hasExt，保持旧版"X.txt"不剥扩展名的行为）
-        val hasExt = MediaType.mediaTypeForExtension(ext) != null || ext in MEDIA_NON_INDEXED_FILE_EXTENSIONS
-        val nameNoExt = if (hasExt) normalized.substringBeforeLast('.') else normalized
-        val collapsedNoExt = if (hasExt) collapsed.substringBeforeLast('.') else collapsed
-        // 序号括号模式：匹配尾部 (N) 或 (NN) 等
-        val suffixPattern = Regex("""\(\d+\)$""")
-        // 基础名：去掉尾部的序号括号（如 "守望先锋  朱诺 6 (1)" → "守望先锋  朱诺 6"）
-        val collapsedBase = collapsedNoExt.replace(suffixPattern, "")
-
-        val result = allMedia.filter { media ->
-            val nameNoExtMedia = media.fileName.substringBeforeLast('.')
-            val collapsedMedia = nameNoExtMedia.replace("\\s+".toRegex(), "")
-
-            // 规则1：精确匹配（去空格后完整一致）
-            val exactMatch = nameNoExtMedia.equals(nameNoExt, ignoreCase = true) ||
-                (collapsedNoExt.isNotBlank() && collapsedMedia.equals(collapsedNoExt, ignoreCase = true))
-            if (exactMatch) {
-                // 扩展名检查
-                return@filter if (hasExt) {
-                    val mediaExt = media.fileName.substringAfterLast('.', "").lowercase()
-                    mediaExt == ext
-                } else true
-            }
-
-            // 规则2：基础名+序号括号匹配（仅当 TXT 作品名不含扩展名且不含序号括号时）
-            // 例如 TXT 写 "守望先锋  朱诺 6" 可匹配 "守望先锋  朱诺 6 (1).jpg"
-            if (!hasExt && collapsedBase == collapsedNoExt && collapsedBase.isNotBlank()) {
-                // TXT 作品名不含序号括号，检查文件名是否 = 基础名 + (N)
-                val mediaBase = collapsedMedia.replace(suffixPattern, "")
-                if (mediaBase.equals(collapsedBase, ignoreCase = true) && collapsedMedia != collapsedBase) {
-                    // 文件名去序号括号后与 TXT 基础名一致，且文件名确实有序号括号
-                    return@filter true
-                }
-            }
-
-            false
-        }
-        // 诊断日志：每 [FIND_MATCH_LOG_INTERVAL] 次调用记 1 条（含未命中），
-        // 避免 rebuild 批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
-        val matchCall = findMatchLogCounter.incrementAndGet()
-        if (matchCall % FIND_MATCH_LOG_INTERVAL == 1) {
-            AppLog.d("AuthorImport", "findMatch(累计$matchCall): workName=[$workName] collapsedNoExt=[$collapsedNoExt] collapsedBase=[$collapsedBase] matched=${result.size} files: ${result.take(3).map { it.fileName }}")
-        }
-        return result
-    }
-
     private suspend fun cleanupFileNameAuthors() {
         val authors = repository.getAllAuthors()
         val fileNameAuthorIds = authors.filter { looksLikeFileName(it.displayName) }.map { it.authorId }
@@ -354,6 +296,64 @@ class AuthorImportUseCase(
 
         /** findMatch 日志采样计数器，线程安全 */
         private val findMatchLogCounter = AtomicInteger(0)
+
+        /** 轻量版匹配：使用 NonCosKeyFileName 替代完整 MediaFileEntity。纯函数，无实例状态依赖，便于单元测试。
+         *  匹配规则（按优先级）：
+         *  1. 精确匹配：去空格+去扩展名后完整一致
+         *  2. 基础名+序号括号匹配：TXT 作品名是文件基础名，文件尾部仅有 (N) 序号括号差异
+         *     例如 TXT 写 "守望先锋  朱诺 6" 可匹配 "守望先锋  朱诺 6 (1).jpg"
+         *  不做前缀匹配：TXT 写 "崩坏 星穹铁道" 不会匹配 "崩坏 星穹铁道 卡芙卡 1.mp4" */
+        fun findMatchingMediaLight(workName: String, allMedia: List<MediaFileDao.NonCosKeyFileName>): List<MediaFileDao.NonCosKeyFileName> {
+            val normalized = workName.trim()
+            if (normalized.isBlank()) return emptyList()
+            val collapsed = normalized.replace("\\s+".toRegex(), "")
+            val ext = normalized.substringAfterLast('.', "").lowercase()
+            // 与原 16 项集合口径一致：MediaType 映射口径 + 扫描器不索引的媒体扩展名
+            // （txt/doc/pdf 不计入 hasExt，保持旧版"X.txt"不剥扩展名的行为）
+            val hasExt = MediaType.mediaTypeForExtension(ext) != null || ext in MEDIA_NON_INDEXED_FILE_EXTENSIONS
+            val nameNoExt = if (hasExt) normalized.substringBeforeLast('.') else normalized
+            val collapsedNoExt = if (hasExt) collapsed.substringBeforeLast('.') else collapsed
+            // 序号括号模式：匹配尾部 (N) 或 (NN) 等
+            val suffixPattern = Regex("""\(\d+\)$""")
+            // 基础名：去掉尾部的序号括号（如 "守望先锋  朱诺 6 (1)" → "守望先锋  朱诺 6"）
+            val collapsedBase = collapsedNoExt.replace(suffixPattern, "")
+
+            val result = allMedia.filter { media ->
+                val nameNoExtMedia = media.fileName.substringBeforeLast('.')
+                val collapsedMedia = nameNoExtMedia.replace("\\s+".toRegex(), "")
+
+                // 规则1：精确匹配（去空格后完整一致）
+                val exactMatch = nameNoExtMedia.equals(nameNoExt, ignoreCase = true) ||
+                    (collapsedNoExt.isNotBlank() && collapsedMedia.equals(collapsedNoExt, ignoreCase = true))
+                if (exactMatch) {
+                    // 扩展名检查
+                    return@filter if (hasExt) {
+                        val mediaExt = media.fileName.substringAfterLast('.', "").lowercase()
+                        mediaExt == ext
+                    } else true
+                }
+
+                // 规则2：基础名+序号括号匹配（仅当 TXT 作品名不含扩展名且不含序号括号时）
+                // 例如 TXT 写 "守望先锋  朱诺 6" 可匹配 "守望先锋  朱诺 6 (1).jpg"
+                if (!hasExt && collapsedBase == collapsedNoExt && collapsedBase.isNotBlank()) {
+                    // TXT 作品名不含序号括号，检查文件名是否 = 基础名 + (N)
+                    val mediaBase = collapsedMedia.replace(suffixPattern, "")
+                    if (mediaBase.equals(collapsedBase, ignoreCase = true) && collapsedMedia != collapsedBase) {
+                        // 文件名去序号括号后与 TXT 基础名一致，且文件名确实有序号括号
+                        return@filter true
+                    }
+                }
+
+                false
+            }
+            // 诊断日志：每 [FIND_MATCH_LOG_INTERVAL] 次调用记 1 条（含未命中），
+            // 避免 rebuild 批量匹配时日志刷屏（GUIDE_DEBUG 日志原则：循环内不加高频日志）
+            val matchCall = findMatchLogCounter.incrementAndGet()
+            if (matchCall % FIND_MATCH_LOG_INTERVAL == 1) {
+                AppLog.d("AuthorImport", "findMatch(累计$matchCall): workName=[$workName] collapsedNoExt=[$collapsedNoExt] collapsedBase=[$collapsedBase] matched=${result.size} files: ${result.take(3).map { it.fileName }}")
+            }
+            return result
+        }
 
         /** 解析 TXT 文本为作者块列表。纯函数，无类状态依赖，便于单元测试。
          *

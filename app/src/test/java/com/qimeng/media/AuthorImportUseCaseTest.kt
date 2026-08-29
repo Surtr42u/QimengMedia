@@ -1,12 +1,14 @@
 package com.qimeng.media
 
 import com.google.common.truth.Truth.assertThat
+import com.qimeng.media.data.db.dao.MediaFileDao
 import com.qimeng.media.domain.AuthorImportUseCase
 import org.junit.Test
 
 /**
- * AuthorImportUseCase.parseAuthorBlocks 纯逻辑单元测试
- * 覆盖：编号行/出处/作品区解析、括号别名去除、多别名合并、数字开头文件名误判编号行的修复
+ * AuthorImportUseCase 纯逻辑单元测试
+ * 覆盖：编号行/出处/作品区解析、括号别名去除、多别名合并、数字开头文件名误判编号行的修复、
+ * findMatchingMediaLight 扩展名判定口径（hasExt 含媒体非索引扩展名、不含文档扩展名）
  */
 class AuthorImportUseCaseTest {
 
@@ -247,5 +249,49 @@ class AuthorImportUseCaseTest {
         val original = """[{"s":"a\"}b{"},{"t":"[x,]"}]"""
         val elements = AuthorImportUseCase.splitJsonArrayElements(original)
         assertThat(elements).containsExactly("""{"s":"a\"}b{"}""", """{"t":"[x,]"}""").inOrder()
+    }
+
+    // ==================== findMatchingMediaLight 扩展名判定口径 ====================
+
+    /** 构造非 COS 媒体轻量项（匹配仅依赖 fileName，recordKey 透传） */
+    private fun media(fileName: String) =
+        MediaFileDao.NonCosKeyFileName(recordKey = "rk_$fileName", fileName = fileName)
+
+    @Test
+    fun findMatchingMediaLight_workWithNonIndexedMediaExt_doesNotMatchBaseNameFile() {
+        // v1.20 回归锁：wmv 等媒体非索引扩展名必须计入 hasExt（作品名剥扩展名后再匹配）。
+        // 若 hasExt 误收窄，"X.wmv" 会整体按基础名匹配错误命中 "X.wmv (1).jpg"
+        val result = AuthorImportUseCase.findMatchingMediaLight("X.wmv", listOf(media("X.wmv (1).jpg")))
+        assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun findMatchingMediaLight_workWithDocExt_treatedAsNoExtension() {
+        // txt/doc/pdf 不计入 hasExt："X.txt" 按无扩展名走规则2，可命中基础名一致的序号文件
+        val result = AuthorImportUseCase.findMatchingMediaLight("X.txt", listOf(media("X.txt (1).jpg")))
+        assertThat(result.map { it.fileName }).containsExactly("X.txt (1).jpg")
+    }
+
+    @Test
+    fun findMatchingMediaLight_workWithIndexedExt_exactMatchRequiresSameExtension() {
+        // 有扩展名时：规则1 精确匹配且扩展名一致；不做序号括号匹配（规则2 仅限无扩展名）
+        val result = AuthorImportUseCase.findMatchingMediaLight(
+            "X.mp4",
+            listOf(media("X.mp4"), media("X.mp4 (1).mp4"), media("X.mp4 (1).jpg"))
+        )
+        assertThat(result.map { it.fileName }).containsExactly("X.mp4")
+    }
+
+    @Test
+    fun findMatchingMediaLight_workWithoutExt_matchesExactAndSequenceFiles() {
+        // 无扩展名：精确同名与"基础名+序号括号"文件均命中
+        val result = AuthorImportUseCase.findMatchingMediaLight(
+            "守望先锋  朱诺 6",
+            listOf(media("守望先锋  朱诺 6.jpg"), media("守望先锋  朱诺 6 (1).jpg"), media("守望先锋  朱诺 6 卡芙卡.jpg"))
+        )
+        assertThat(result.map { it.fileName }).containsExactly(
+            "守望先锋  朱诺 6.jpg",
+            "守望先锋  朱诺 6 (1).jpg"
+        ).inOrder()
     }
 }

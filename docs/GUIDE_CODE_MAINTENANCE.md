@@ -216,7 +216,7 @@
 | 方法长度 | 绿色区 | 阈值 120（detekt.yml，逐步收紧）；当前最大方法为 `BackupManager.importFromDirectory`（单事务导入 13 个数据段，事务编排合理复杂度已备案） | Detekt LongMethod |
 | 圈复杂度 | 绿色区 | 阈值 20（detekt.yml），逐步收紧 | Detekt CyclomaticComplexMethod |
 | 嵌套深度 | 绿色区 | 达标 | Detekt NestedBlockDepth |
-| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 10 个核心测试类（180 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest，v1.16 审查新增 ScanUtilsMetadataTest 8 个 + AppPrefsImportSanitizeTest 12 个 + AuthorImportUseCaseTest 分片分节 7 个） | ./gradlew test |
+| 测试覆盖率 | > 60%（纯逻辑类 > 80%） | 已有 10 个核心测试类（184 测试；v1.12 新增 MediaBrowserLogicRecommendTest 25 个，v1.13 新增 AuthorImportUseCaseTest，v1.16 审查新增 ScanUtilsMetadataTest 8 个 + AppPrefsImportSanitizeTest 12 个 + AuthorImportUseCaseTest 分片分节 7 个，v1.20 追加 AuthorImportUseCaseTest findMatchingMediaLight 4 个） | ./gradlew test |
 | Lint 警告 | 0 个 Error | 命令行 `lintDebug` 实测约 1m48s 可完成（7 Error 已全部修复清零：UseAppTint + ResAuto×3 命名空间拼写 + UnsafeOptInUsage disable），225 Warning（从 252 经多轮优化降至 225，详见下方 Warning 处理记录） | `./gradlew lintDebug`，报告 `app/build/reports/lint-results-debug.html` |
 | Detekt 问题 | 逐步减少 | 已配置 ignoreFailures | ./gradlew detekt |
 
@@ -261,7 +261,7 @@
 | `SourceMatcherTest` | 出处匹配/变体/版本号合并/自定义出处（23 个测试） |
 | `MediaGroupHelperTest` | 分组算法（partition/source/character 模式）（26 个测试） |
 | `MediaRenderHelperTest` | applyTypeFilter 类型筛选/computeDisplayed 选中状态过滤/buildFingerprint 渲染指纹构建（19 个测试） |
-| `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（v1.13 新增 9 个；v1.16 审查追加 blocks 分片分节 7 个：往返还原/单片上限/旧格式兼容/片丢失回退/转义边界，现共 16 个） |
+| `AuthorImportUseCaseTest` | parseAuthorBlocks TXT 块解析（编号行/出处/作品区/括号别名去除/多别名合并/数字开头文件名误判编号行修复/格式 C 与空文本边界）（v1.13 新增 9 个；v1.16 审查追加 blocks 分片分节 7 个：往返还原/单片上限/旧格式兼容/片丢失回退/转义边界；v1.20 追加 findMatchingMediaLight 扩展名判定 4 个：wmv 等媒体非索引扩展名计入 hasExt 回归锁/txt 文档扩展名视为无扩展名/有扩展名精确匹配含扩展名检查/无扩展名精确+序号括号双规则，现共 20 个） |
 | `ThumbnailCacheKeysTest` | 缩略图缓存键 hash 生成/提取（UTF-8 编码/负字节格式化/16 位 hex 长度/`_frame` 兼容/确定性，v1.16 新增，期望值外部预计算防自证自）（12 个测试） |
 | `ScanUtilsMetadataTest` | hasScanMetadataChanged 元数据变更判定（null 不判变更/真实变更判定/相同值/边界，v1.16 审查新增）（8 个测试） |
 | `AppPrefsImportSanitizeTest` | 偏好导入钳制纯函数（列数 0/负/超大/边界、themeMode 白名单、权重 NaN/无穷/越界，v1.16 审查新增）（12 个测试） |
