@@ -1,7 +1,9 @@
 package com.qimeng.media.ui.detail
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.os.SystemClock
+import android.view.ContextThemeWrapper
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -63,9 +65,14 @@ internal object TagSheetHelper {
         content.addView(suggestSection)
         suggestSection.visibility = View.GONE
 
-        fun activeChip(tag: TagEntity): Chip = Chip(ctx).apply {
+        fun activeChip(tag: TagEntity): Chip = Chip(ContextThemeWrapper(ctx, R.style.ThemeOverlay_QimengTagChip)).apply {
             text = tag.name
             setTag(tag.tagId)
+            // 当前标签=已选中语义：不启用 checkable（防 Filter chip 点击本体自动 toggle 取消实底），
+            // 直接实底主题色 + 背景色文字，与筛选药丸选中态同一套胶囊语言
+            isCheckable = false
+            chipBackgroundColor = ColorStateList.valueOf(ctx.resolveThemeColor(R.attr.qmColorPrimary))
+            setTextColor(ctx.resolveThemeColor(R.attr.qmColorBg))
             isCloseIconVisible = true
             setOnCloseIconClickListener {
                 // 详情页删除：仅解除当前文件与该标签的关联，不删除标签选项本身
@@ -74,9 +81,10 @@ internal object TagSheetHelper {
             }
         }
 
-        fun suggestChip(tag: TagEntity): Chip = Chip(ctx).apply {
+        fun suggestChip(tag: TagEntity): Chip = Chip(ContextThemeWrapper(ctx, R.style.ThemeOverlay_QimengTagChip)).apply {
             text = tag.name
             setTag(tag.tagId)
+            isCheckable = false
             setOnClickListener {
                 viewModel.addTag(recordKey, tag.name)
                 Toast.makeText(ctx, "标签已添加：${tag.name}", Toast.LENGTH_SHORT).show()

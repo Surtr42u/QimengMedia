@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 标签胶囊 Chip 文字色：选中（checked）背景色（实底主色上反白），未选中次级文字 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_checked="true" android:color="?attr/qmColorBg" />
+    <item android:color="?attr/qmColorTextSecondary" />
+</selector>

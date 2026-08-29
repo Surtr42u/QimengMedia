@@ -44,6 +44,5 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 1. 用户最新要求。
 2. `docs/PROJECT_GUIDE.md`。
 3. `docs/GUIDE_*.md`。
-4. `docs/GUIDE_USAGE_MATRIX.md`（触发规则定义）。
 
 如果发现自己没有读取当前任务对应指南，必须停止实现并补读。

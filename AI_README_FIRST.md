@@ -6,12 +6,12 @@
 
 ### 首次接手项目（以前没做过这个项目）
 
-按《总读取顺序》完整走一遍（约 9 步），建好全局认知。
+按《总读取顺序》完整走一遍（约 8 步），建好全局认知。
 
 ### 日常任务（已经了解项目，来做具体修改）
 
 1. **读 `docs/GUIDE_CODE_MAINTENANCE.md`**（代码规范是写代码的前提，必须先于功能指南阅读）
-2. 打开 `docs/GUIDE_USAGE_MATRIX.md`，匹配用户请求的触发词
+2. 打开 `docs/GUIDE_README.md`，按任务语义定位命中的指南
 3. 只读命中的指南和文档
 4. 基于文档定位代码片段修改
 5. 改完后更新对应文档 + 回复末尾加 `📋` 签名
@@ -22,13 +22,12 @@
 2. `AI_README_FIRST.md`
 3. `AGENTS.md`
 4. **`docs/GUIDE_CODE_MAINTENANCE.md`**（代码规范第一要务，必须在功能指南之前阅读）
-5. `docs/GUIDE_USAGE_MATRIX.md`
-6. `docs/PROJECT_GUIDE.md`
-7. `docs/GUIDE_README.md`
-8. 与任务相关的 `docs/GUIDE_*.md`
-9. 对应源码（仅限本文档允许的片段读取，禁止全文通读）
+5. `docs/PROJECT_GUIDE.md`
+6. `docs/GUIDE_README.md`
+7. 与任务相关的 `docs/GUIDE_*.md`
+8. 对应源码（仅限本文档允许的片段读取，禁止全文通读）
 
-完整任务触发矩阵见 `docs/GUIDE_USAGE_MATRIX.md`。
+各模块指南的职责与定位见 `docs/GUIDE_README.md`（模块索引）。
 
 ## 源码隔离原则
 
@@ -100,7 +99,6 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 | 修改调试/日志/ADB | `docs/GUIDE_DEBUG.md` |
 | 修改代码结构/重构/测试 | `docs/GUIDE_CODE_MAINTENANCE.md` |
 | 修改模块索引/快速导航 | `docs/GUIDE_README.md` |
-| 新任务触发关系 | `docs/GUIDE_USAGE_MATRIX.md` |
 
 文档更新优先级：先更新 `docs/PROJECT_GUIDE.md`，再更新对应 `docs/GUIDE_*.md`。
 
@@ -135,10 +133,9 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 |---|---|---|
 | 1 | 建项目专属指南 | 创建 `docs/GUIDE_XXX.md`，参照 `docs/_GUIDE_TEMPLATE.md` 模板 |
 | 2 | 更新项目总览 | `docs/PROJECT_GUIDE.md`：实现进度加一行 + 目录结构加对应文件 |
-| 3 | 更新触发矩阵 | `docs/GUIDE_USAGE_MATRIX.md`：新增触发词节 + 更新复合触发示例表 |
-| 4 | 更新模块索引 | `docs/GUIDE_README.md`：模块索引表加一行 + 快速导航加场景 |
-| 5 | 更新维护规则表 | 本文档《文档维护规则》表格加新行 |
-| 6 | 更新开发计划 | `docs/DEVELOPMENT_PLAN.md`：新增阶段或阶段内新增待办项 |
+| 3 | 更新模块索引 | `docs/GUIDE_README.md`：模块索引表加一行 + 快速导航加场景 |
+| 4 | 更新维护规则表 | 本文档《文档维护规则》表格加新行 |
+| 5 | 更新开发计划 | `docs/DEVELOPMENT_PLAN.md`：新增阶段或阶段内新增待办项 |
 
 ### GUIDE_XXX.md 最少要写什么
 
@@ -154,14 +151,11 @@ AI 代理理解项目时，**禁止直接通读完整源码文件**。必须通�
 
 ## 任务级触发规则
 
-所有任务的指南触发关系必须以 `docs/GUIDE_USAGE_MATRIX.md` 为唯一权威来源。本文件不再单独列出高频任务清单。
+任务发生时，按以下步骤定位指南：
 
-任务发生时，按以下步骤查矩阵：
-
-1. 打开 `docs/GUIDE_USAGE_MATRIX.md`
-2. 根据用户请求的语义匹配触发词（矩阵已覆盖大量口语/大白话表达）
-3. 读取命中的所有项目专属指南
-4. 如果用户请求不在任何已知触发词范围内，也至少读 `docs/PROJECT_GUIDE.md` + `docs/GUIDE_README.md`
+1. 打开 `docs/GUIDE_README.md`（模块索引），按用户请求的语义匹配模块
+2. 读取命中的所有项目专属指南（同义词、口语、大白话、情绪化表达都算命中；一个请求可能命中多个模块，全部要读）
+3. 如果任务不在任何已知模块范围内，也至少读 `docs/PROJECT_GUIDE.md` + `docs/GUIDE_README.md`
 
 ## 工具调用增强原则
 
@@ -254,7 +248,6 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 1. 用户最新要求。
 2. `docs/PROJECT_GUIDE.md`。
 3. `docs/GUIDE_*.md`。
-4. `docs/GUIDE_USAGE_MATRIX.md`（触发规则定义）。
 
 如果发现自己没有读取当前任务对应指南，必须停止实现并补读。
 
@@ -262,4 +255,4 @@ AI 运行 `gradlew assembleDebug` 等构建命令后，**必须执行 `gradlew -
 
 如果任务明显属于某个模块，但 AI 没有先读取对应指南，应该停止实现并先补读指南。
 
-如果任务不在已知模块范围内，也必须去 `docs/GUIDE_USAGE_MATRIX.md` 查找对应模块。
+如果任务不在已知模块范围内，也必须查 `docs/GUIDE_README.md` 模块索引确认是否存在对应模块。

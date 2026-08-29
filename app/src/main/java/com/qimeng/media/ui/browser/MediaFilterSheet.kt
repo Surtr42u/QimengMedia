@@ -3,6 +3,7 @@ package com.qimeng.media.ui.browser
 import android.app.AlertDialog
 import android.content.Context
 import android.text.InputType
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -223,7 +224,7 @@ object MediaFilterSheet {
         tagId: Long?,
         onDeleteTag: (Long) -> Unit
     ): Chip {
-        return Chip(context).apply {
+        return Chip(ContextThemeWrapper(context, R.style.ThemeOverlay_QimengTagChip)).apply {
             text = name
             isCheckable = true
             isChecked = name in holder.value.selectedTags

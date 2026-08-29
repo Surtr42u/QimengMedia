@@ -5,7 +5,7 @@
 ## 阶段 0：AI 接手规则与文档体系
 
 - 目标：建立 AI 接手规则与项目专属指南。
-- 状态：已完成。`README.md` / `AI_README_FIRST.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.github/copilot-instructions.md` 就位；`docs/GUIDE_*.md` 放项目专属指南，`docs/GUIDE_USAGE_MATRIX.md` 为任务触发矩阵。
+- 状态：已完成。`README.md` / `AI_README_FIRST.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.github/copilot-instructions.md` 就位；`docs/GUIDE_*.md` 放项目专属指南，`docs/GUIDE_README.md` 为模块索引。（2026-08-29 原任务触发矩阵 `GUIDE_USAGE_MATRIX.md` 已删除，触发定位职责并入模块索引）
 
 ## 阶段 1：Android 基础架构
 

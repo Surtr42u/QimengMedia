@@ -167,9 +167,9 @@ app/src/main/java/com/qimeng/media/
 
 任何 AI 或开发者在修改代码前，必须按顺序阅读：
 
-**首次接手**：`README.md` → `AI_README_FIRST.md` → `AGENTS.md` → `docs/GUIDE_USAGE_MATRIX.md` → 对应 `docs/GUIDE_*.md`
+**首次接手**：`README.md` → `AI_README_FIRST.md` → `AGENTS.md` → `docs/GUIDE_README.md` → 对应 `docs/GUIDE_*.md`
 
-**日常任务**：打开 `docs/GUIDE_USAGE_MATRIX.md` 匹配触发词 → 只读命中的指南 → 改代码 + 同步文档
+**日常任务**：打开 `docs/GUIDE_README.md` 按任务语义定位指南 → 只读命中的指南 → 改代码 + 同步文档
 
 ### 文档索引
 
@@ -179,7 +179,7 @@ app/src/main/java/com/qimeng/media/
 | `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` | 不同 AI 工具的接手入口 |
 | `.github/copilot-instructions.md` | GitHub Copilot 指令 |
 | `docs/GUIDE_*.md` | 各模块详细开发指南（13 篇） |
-| `docs/GUIDE_USAGE_MATRIX.md` | 任务触发词与指南映射 |
+| `docs/GUIDE_README.md` | 模块索引：各指南职责与快速导航 |
 | `docs/PROJECT_GUIDE.md` | 项目总览与架构说明 |
 
 ---

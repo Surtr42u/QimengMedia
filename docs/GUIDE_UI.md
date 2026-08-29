@@ -169,7 +169,7 @@
 - 按需解码媒体元数据（`showInfoSheet`）：**v1.15 防重复弹窗 + 先 show 再补解码 + 占位行原地更新 + 无"完成"按钮**——`infoSheetShowing` 标志防解码期间重复点击堆叠多个对话框；解码协程改 `viewLifecycleOwner.lifecycleScope`（Fragment 退栈后自动取消，不再操作已销毁视图）；先展示已有行与"解码中…"占位，解码完成后**原地替换占位行文本**（`addInfoRow` 返回 value TextView 引用，避免追加重复"尺寸"行）；详细信息弹窗**无"完成"按钮**（BottomSheet 下滑手势 / 点外部空白关闭即可，显式关闭按钮冗余，v1.0 历史遗留已删除；`sheetDone` 保留供标签管理/快速转跳弹窗使用）。
 - 时间轴标签弹窗（v1.15）：打开添加标记弹窗前暂停播放，dismiss 后恢复（`wasPlaying` 快照）——标记时间点与实际画面一致，不再因播放中弹窗而偏移。
 - 顶部操作层：返回（胶囊图标） / 当前序号 / 信息（胶囊图标），背景使用 `bg_detail_top_gradient` 渐变遮罩（从 `qmColorBg` 90% 不透明度渐变到透明），与背景层一体无分割感，点击信息图标弹出 BottomSheet 显示文件名/出处/尺寸/时长等详细信息（区分图片和视频）；尺寸/时长等元数据在扫描时未解码（`scanTreeFast` 跳过），打开信息面板时按需解码并缓存到数据库
-- 底部操作层：点赞（胶囊图标）/ 收藏（胶囊图标）/ 标签（胶囊图标）/ 快速转跳（胶囊图标），四个图标均匀分布居中，背景使用 `bg_detail_bottom_gradient` 渐变遮罩（从透明渐变到 `qmColorBg` 90% 不透明度），过长图片时 tab 用渐变背景遮挡图片内容而非透明覆盖；收藏图标区分空心/实心状态；标签点击弹出 BottomSheet 标签管理——**当前文件标签与可用标签各组为 ChipGroup 多行自适应显示**（v1.19：标签少时一行、多时自动换行 2~N 行，弹窗内可上下滚动；原为单行水平滚动，标签多时拥挤且需横滑），**标签列表由数据库 Flow 驱动增量刷新**（`ui/detail/TagSheetHelper.kt`：combine `tagEntitiesForMediaNewestFirst`+`allTagsNewestFirst` 观察流 → 双指针 diff 只增删变化 chip，未变化 chip 原实例保留；替代 v1.19 前每次增删"手动查库 + removeAllViews 全量重建"，根治增删卡顿与写读竞态导致的删除后 chip 短暂复活），**排序为文件-标签关联时间倒序（最近添加的标签置顶，删除后重新添加同样置顶，v1.19 满足"abcd+新添 q→qabcd / 删 c→qabd / 再添 c→cqabd"；点「其他标签」中已有标签同样置顶）**，点击关闭图标仅移除文件与标签关联不删除标签选项，输入框可添加新标签（添加后由 Flow 自动刷新，无手动重建）；快速转跳点击弹出 BottomSheet 显示当前文件关联的作者列表，点击作者名跳转到作者文件浏览页
+- 底部操作层：点赞（胶囊图标）/ 收藏（胶囊图标）/ 标签（胶囊图标）/ 快速转跳（胶囊图标），四个图标均匀分布居中，背景使用 `bg_detail_bottom_gradient` 渐变遮罩（从透明渐变到 `qmColorBg` 90% 不透明度），过长图片时 tab 用渐变背景遮挡图片内容而非透明覆盖；收藏图标区分空心/实心状态；标签点击弹出 BottomSheet 标签管理——**当前文件标签与可用标签各组为 ChipGroup 多行自适应显示**（v1.19：标签少时一行、多时自动换行 2~N 行，弹窗内可上下滚动；原为单行水平滚动，标签多时拥挤且需横滑），**标签 chip 统一为胶囊风格**（v2.1：`QimengTagChip` style，100dp 圆角无描边 12sp 30dp 高；「当前标签」实底 `qmColorPrimary` + 背景色文字 + 关闭图标，「其他标签」软底 `qmColorChipBg`，与筛选药丸同一套胶囊语言），**标签列表由数据库 Flow 驱动增量刷新**（`ui/detail/TagSheetHelper.kt`：combine `tagEntitiesForMediaNewestFirst`+`allTagsNewestFirst` 观察流 → 双指针 diff 只增删变化 chip，未变化 chip 原实例保留；替代 v1.19 前每次增删"手动查库 + removeAllViews 全量重建"，根治增删卡顿与写读竞态导致的删除后 chip 短暂复活），**排序为文件-标签关联时间倒序（最近添加的标签置顶，删除后重新添加同样置顶，v1.19 满足"abcd+新添 q→qabcd / 删 c→qabd / 再添 c→cqabd"；点「其他标签」中已有标签同样置顶）**，点击关闭图标仅移除文件与标签关联不删除标签选项，输入框可添加新标签（添加后由 Flow 自动刷新，无手动重建）；快速转跳点击弹出 BottomSheet 显示当前文件关联的作者列表，点击作者名跳转到作者文件浏览页
 - **按钮按下反馈动画**：详情页 6 个按钮（返回/info/点赞/收藏/标签/快速转跳）通过 `View.addPressAnimation()` 扩展函数添加按下缩放反馈（ACTION_DOWN 缩放 0.92，ACTION_UP 回弹 1.0，100ms `AccelerateDecelerateInterpolator`），增强触控感知
 - 弹窗：`BottomSheetDialog`，颜色统一用 `resolveThemeColor()` 跟随主题
 - 单击显隐 chrome（alpha 动画）
@@ -305,6 +305,7 @@
 - Kotlin 代码用 `ctx.resolveThemeColor(R.attr.qmColor*)` 或 `ThemeHelper.resolve(context)` / `ThemeHelper.resolveGenerated(context)`（优先从 ThemeManager 获取热更新颜色）。
 - 缩略图加载参数：Coil size(480,270) crossfade(false)；原始URI加载 allowHardware(false)（纯软件渲染），本地缓存文件加载 allowHardware(true)（GPU加速）。
 - `QimengCapsuleChip` 样式：`height=32dp minWidth=48dp paddingHorizontal=14dp textSize=12sp`（100dp 圆角胶囊）。
+- **标签胶囊 Chip**（`QimengTagChip`，v2.1）：Material Chip 套用统一胶囊语言——100dp 圆角、无描边、12sp、`chipMinHeight=30dp`、`chipMinTouchTargetSize=0dp`（防 Material 默认 48dp 触达要求撑高）、水平 padding 14dp；选中/未选中态经 `@color/qm_tag_chip_bg`/`qm_tag_chip_text` 的 `state_checked` 自动切换（实底 `qmColorPrimary`+背景色文字 / 软底 `qmColorChipBg`+次级文字，全部 `?attr/qmColor*`）；代码动态创建时用 `Chip(ContextThemeWrapper(ctx, R.style.ThemeOverlay_QimengTagChip))` 套用。使用处：详情页标签管理弹窗（`TagSheetHelper`，「当前标签」实底=已选中语义、「其他标签」软底）、万能筛选面板标签区（`MediaFilterSheet`）。
 - 底部导航：`elevation=8dp` 与内容区分层，选中指示器 `Widget.Qimeng.BottomNavigationView.ActiveIndicator`（pill 形状，`qmColorPrimarySoft` 背景），选中态 `qmColorPrimary`，label 始终显示。
 - 卡片统一无描边，靠 bg/surface/surfaceSoft 三层色差制造层次（详见 GUIDE_THEME.md「设计理念」）。
 - 圆角规范：卡片 16dp / 统计卡 20dp / 胶囊 100dp / 底部 Sheet 28dp。
@@ -316,6 +317,8 @@
 ## 万能筛选组件
 
 `MediaFilterSheet` + `FilterConfig` 实现万能筛选，各页面通过 `FilterConfig` 控制显示哪些筛选项。完整的筛选区域枚举和预设配置详见 `GUIDE_ALGORITHM.md`。
+
+- 标签区 chip 套用 `QimengTagChip` 胶囊样式（与详情页标签弹窗统一）：isCheckable 状态经 color state-list（`@color/qm_tag_chip_bg`/`qm_tag_chip_text`）自动切换实底主色/软底，点击切换选中、长按删除逻辑不变
 
 - 筛选同时作用于搜索结果：`applyFilter()` 接收 `query` 和 `filterState`，搜索和筛选同时生效
 - 新增页面只需传入对应 `FilterConfig` 即可复用筛选面板
@@ -469,7 +472,7 @@ COS 数据（cos_works、COS 媒体文件、COS 作者关联）随备份主文�
 - 列表不自动播放视频
 - 禁止使用网络图片加载能力访问外网
 
-> 最后更新：2026-08-14（v1.15 巡检：详情页 viewCount 会话级去重/播放幂等、首页指纹加点赞维度（浏览统计不入指纹防内容跳动）、收藏页与作者页 SP 监听、相册 COS 其他桶与切模式默认展开、全部页/作者文件页指纹补 tags 维度（不含 stats）、列表提交异步化、LineChartView 触摸放行滚动、统计页序号防重、列数持久化）
+> 最后更新：2026-08-29（v2.1：标签 chip 统一为胶囊风格——新增 QimengTagChip style + color state-list，详情页标签弹窗/筛选面板标签区套用；文档体系删除 GUIDE_USAGE_MATRIX.md，触发定位职责并入 GUIDE_README 模块索引）
 
 ## 应用图标
 

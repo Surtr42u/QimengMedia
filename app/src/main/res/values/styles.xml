@@ -14,6 +14,31 @@
         <item name="android:textStyle">normal</item>
     </style>
 
+    <!-- 标签胶囊 Chip：与筛选药丸/QimengCapsuleChip 统一的胶囊语言（100dp 圆角、无描边、12sp、30dp 高）。
+         背景与文字色走 color state-list（@color/qm_tag_chip_*），checked 态自动切实底主色；
+         代码创建 Chip 时经 ThemeOverlay.QimengTagChip 的 ContextThemeWrapper 套用。
+         详见 GUIDE_UI「标签胶囊 Chip 样式」 -->
+    <style name="QimengTagChip" parent="Widget.Material3.Chip.Filter">
+        <item name="checkedIconEnabled">false</item>
+        <item name="chipBackgroundColor">@color/qm_tag_chip_bg</item>
+        <item name="android:textColor">@color/qm_tag_chip_text</item>
+        <item name="chipCornerRadius">100dp</item>
+        <item name="chipStrokeWidth">0dp</item>
+        <item name="chipMinHeight">30dp</item>
+        <item name="chipMinTouchTargetSize">0dp</item>
+        <item name="chipStartPadding">14dp</item>
+        <item name="chipEndPadding">14dp</item>
+        <item name="textStartPadding">0dp</item>
+        <item name="textEndPadding">0dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="closeIconTint">?attr/qmColorBg</item>
+    </style>
+
+    <!-- 代码动态创建 Chip 时的主题 overlay：ContextThemeWrapper(context, R.style.ThemeOverlay_QimengTagChip) -->
+    <style name="ThemeOverlay.QimengTagChip" parent="">
+        <item name="chipStyle">@style/QimengTagChip</item>
+    </style>
+
     <!-- 个人页行项：16dp 圆角白色卡片，与暖白背景形成层次 -->
     <style name="QimengProfileRow">
         <item name="android:layout_width">match_parent</item>

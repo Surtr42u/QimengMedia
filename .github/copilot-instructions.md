@@ -3,7 +3,7 @@
 在为本项目生成或修改代码前，必须遵守：
 
 1. 阅读 `AI_README_FIRST.md`。
-2. 阅读 `docs/GUIDE_USAGE_MATRIX.md`。
+2. 阅读 `docs/GUIDE_README.md`（模块索引，按任务语义定位指南）。
 3. 根据任务类型读取对应指南文档。
 4. 保持原始媒体文件只读。
 5. 新增或修改功能后同步更新 `docs/PROJECT_GUIDE.md` 和相关 `docs/GUIDE_*.md`。

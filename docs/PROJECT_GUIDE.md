@@ -218,7 +218,7 @@ QimengMedia/
 │   ├── GUIDE_AUTHOR.md
 │   ├── GUIDE_DEBUG.md
 │   ├── GUIDE_CODE_MAINTENANCE.md
-│   └── GUIDE_USAGE_MATRIX.md
+│   └── GUIDE_README.md
 ├── detekt.yml
 └── gradle/
     └── libs.versions.toml

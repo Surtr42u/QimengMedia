@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 标签胶囊 Chip 背景色：选中（checked）实底主色，未选中软底（与 bg_capsule_soft 同色源） -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_checked="true" android:color="?attr/qmColorPrimary" />
+    <item android:color="?attr/qmColorChipBg" />
+</selector>
